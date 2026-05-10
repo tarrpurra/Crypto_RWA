@@ -1,0 +1,488 @@
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-sans)}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+.page{padding:0 0 2rem}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:1.5rem;border-bottom:0.5px solid var(--color-border-tertiary);padding-bottom:12px}
+.tab{font-size:12px;font-weight:500;padding:6px 14px;border-radius:20px;border:0.5px solid var(--color-border-tertiary);background:transparent;color:var(--color-text-secondary);cursor:pointer;transition:all .15s}
+.tab.active{background:var(--color-background-info);color:var(--color-text-info);border-color:var(--color-border-info)}
+.panel{display:none}.panel.active{display:block}
+
+/* shared */
+.sec-title{font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--color-text-secondary);margin:0 0 10px}
+.card{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:1rem 1.25rem;margin-bottom:12px}
+.card.accent-green{border-left:3px solid var(--color-border-success)}
+.card.accent-warn{border-left:3px solid var(--color-border-warning)}
+.card.accent-danger{border-left:3px solid var(--color-border-danger)}
+.card.accent-info{border-left:3px solid var(--color-border-info)}
+.label{font-size:11px;font-weight:500;padding:2px 9px;border-radius:12px;display:inline-block;margin-bottom:6px}
+.label-green{background:var(--color-background-success);color:var(--color-text-success)}
+.label-warn{background:var(--color-background-warning);color:var(--color-text-warning)}
+.label-danger{background:var(--color-background-danger);color:var(--color-text-danger)}
+.label-info{background:var(--color-background-info);color:var(--color-text-info)}
+.label-gray{background:var(--color-background-secondary);color:var(--color-text-secondary)}
+.card-title{font-size:14px;font-weight:500;color:var(--color-text-primary);margin-bottom:4px}
+.card-body{font-size:13px;color:var(--color-text-secondary);line-height:1.6}
+.chip-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.chip{font-size:11px;padding:2px 8px;border-radius:10px;background:var(--color-background-secondary);color:var(--color-text-secondary);border:0.5px solid var(--color-border-tertiary)}
+
+/* difficulty meter */
+.meter-wrap{display:flex;align-items:center;gap:10px;margin:8px 0}
+.meter-bg{flex:1;height:8px;background:var(--color-background-tertiary);border-radius:4px;overflow:hidden}
+.meter-fill{height:8px;border-radius:4px}
+.fill-green{background:var(--color-background-success);border:0.5px solid var(--color-border-success)}
+.fill-warn{background:var(--color-background-warning);border:0.5px solid var(--color-border-warning)}
+.fill-danger{background:var(--color-background-danger);border:0.5px solid var(--color-border-danger)}
+.fill-info{background:var(--color-background-info);border:0.5px solid var(--color-border-info)}
+.meter-label{font-size:12px;color:var(--color-text-secondary);min-width:140px}
+.meter-val{font-size:12px;font-weight:500;color:var(--color-text-primary);min-width:28px;text-align:right}
+
+/* overall score */
+.score-hero{display:flex;align-items:center;gap:20px;background:var(--color-background-secondary);border-radius:var(--border-radius-lg);padding:1.25rem;margin-bottom:1.5rem}
+.score-circle{width:72px;height:72px;border-radius:50%;background:var(--color-background-warning);border:2px solid var(--color-border-warning);display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0}
+.score-num{font-size:26px;font-weight:500;color:var(--color-text-warning);line-height:1}
+.score-denom{font-size:11px;color:var(--color-text-warning)}
+.score-info-title{font-size:16px;font-weight:500;color:var(--color-text-primary);margin-bottom:4px}
+.score-info-sub{font-size:13px;color:var(--color-text-secondary);line-height:1.5}
+
+/* methods */
+.method-card{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:1.25rem;margin-bottom:14px}
+.method-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px}
+.method-title{font-size:14px;font-weight:500;color:var(--color-text-primary)}
+.method-body{font-size:13px;color:var(--color-text-secondary);line-height:1.6;margin-bottom:10px}
+.pro-con{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.pc-box{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:8px 10px}
+.pc-title{font-size:11px;font-weight:500;margin-bottom:4px}
+.pc-green{color:var(--color-text-success)}
+.pc-red{color:var(--color-text-danger)}
+.pc-item{font-size:12px;color:var(--color-text-secondary);padding:2px 0;display:flex;gap:5px}
+
+/* week timeline */
+.week-row{display:grid;grid-template-columns:70px 1fr;gap:14px;margin-bottom:16px;align-items:start}
+.week-badge{background:var(--color-background-info);color:var(--color-text-info);font-size:12px;font-weight:500;padding:4px 10px;border-radius:8px;text-align:center}
+.week-content{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:10px 14px}
+.week-title{font-size:13px;font-weight:500;color:var(--color-text-primary);margin-bottom:4px}
+.week-tasks{font-size:12px;color:var(--color-text-secondary);line-height:1.7}
+.week-tasks li{list-style:none;padding:1px 0;display:flex;gap:6px}
+.week-tasks li::before{content:"→";color:var(--color-text-info);flex-shrink:0}
+.week-milestone{font-size:11px;font-weight:500;color:var(--color-text-success);margin-top:6px;padding:3px 8px;background:var(--color-background-success);border-radius:10px;display:inline-block}
+
+/* free stack */
+.stack-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stack-item{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:10px 12px}
+.stack-cat{font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--color-text-secondary);margin-bottom:4px}
+.stack-name{font-size:13px;font-weight:500;color:var(--color-text-primary);margin-bottom:2px}
+.stack-why{font-size:11px;color:var(--color-text-secondary);line-height:1.4}
+.free-tag{font-size:10px;padding:1px 7px;background:var(--color-background-success);color:var(--color-text-success);border-radius:8px;display:inline-block;margin-left:4px;vertical-align:middle}
+
+/* risks */
+.risk-row{display:flex;gap:10px;padding:10px 0;border-bottom:0.5px solid var(--color-border-tertiary);align-items:flex-start}
+.risk-row:last-child{border-bottom:none}
+.risk-icon{font-size:18px;flex-shrink:0;margin-top:1px}
+.risk-title{font-size:13px;font-weight:500;color:var(--color-text-primary);margin-bottom:2px}
+.risk-body{font-size:12px;color:var(--color-text-secondary);line-height:1.5}
+.risk-fix{font-size:11px;color:var(--color-text-success);margin-top:4px;font-weight:500}
+</style>
+
+<h2 class="sr-only">AI x RWA Project Difficulty Assessment — Mantle Turing Test Hackathon</h2>
+
+<div class="page">
+<div class="tabs" role="tablist">
+  <button class="tab active" onclick="switchTab('overview')" role="tab">Overview</button>
+  <button class="tab" onclick="switchTab('methods')" role="tab">Build methods</button>
+  <button class="tab" onclick="switchTab('stack')" role="tab">Free stack</button>
+  <button class="tab" onclick="switchTab('timeline')" role="tab">4-week plan</button>
+  <button class="tab" onclick="switchTab('risks')" role="tab">Risks & fixes</button>
+</div>
+
+<!-- OVERVIEW -->
+<div class="panel active" id="panel-overview">
+  <div class="score-hero">
+    <div class="score-circle"><span class="score-num">6.8</span><span class="score-denom">/ 10</span></div>
+    <div>
+      <div class="score-info-title">Challenging — but very buildable in 4 weeks</div>
+      <div class="score-info-sub">For an intermediate team, this is a stretch project — not an impossible one. The hardest parts (DeFi protocol integration, AI reasoning loop) have well-documented free tooling. With scoped ambitions and the right approach, a polished MVP is realistic.</div>
+    </div>
+  </div>
+
+  <div class="sec-title">Difficulty by component</div>
+  <div class="card" style="margin-bottom:1.5rem">
+    <div class="meter-wrap">
+      <span class="meter-label">Smart contracts (Solidity)</span>
+      <div class="meter-bg"><div class="meter-fill fill-warn" style="width:55%"></div></div>
+      <span class="meter-val">5.5</span>
+    </div>
+    <div class="meter-wrap">
+      <span class="meter-label">Mantle L2 deployment</span>
+      <div class="meter-bg"><div class="meter-fill fill-green" style="width:40%"></div></div>
+      <span class="meter-val">4.0</span>
+    </div>
+    <div class="meter-wrap">
+      <span class="meter-label">USDY / mETH integration</span>
+      <div class="meter-bg"><div class="meter-fill fill-danger" style="width:75%"></div></div>
+      <span class="meter-val">7.5</span>
+    </div>
+    <div class="meter-wrap">
+      <span class="meter-label">DEX swap integration</span>
+      <div class="meter-bg"><div class="meter-fill fill-warn" style="width:65%"></div></div>
+      <span class="meter-val">6.5</span>
+    </div>
+    <div class="meter-wrap">
+      <span class="meter-label">AI / LLM agent logic</span>
+      <div class="meter-bg"><div class="meter-fill fill-danger" style="width:72%"></div></div>
+      <span class="meter-val">7.2</span>
+    </div>
+    <div class="meter-wrap">
+      <span class="meter-label">Risk management engine</span>
+      <div class="meter-bg"><div class="meter-fill fill-danger" style="width:78%"></div></div>
+      <span class="meter-val">7.8</span>
+    </div>
+    <div class="meter-wrap">
+      <span class="meter-label">Oracle / price feed setup</span>
+      <div class="meter-bg"><div class="meter-fill fill-warn" style="width:60%"></div></div>
+      <span class="meter-val">6.0</span>
+    </div>
+    <div class="meter-wrap">
+      <span class="meter-label">Frontend dashboard</span>
+      <div class="meter-bg"><div class="meter-fill fill-green" style="width:35%"></div></div>
+      <span class="meter-val">3.5</span>
+    </div>
+    <div class="meter-wrap">
+      <span class="meter-label">ERC-8004 agent NFT identity</span>
+      <div class="meter-bg"><div class="meter-fill fill-warn" style="width:55%"></div></div>
+      <span class="meter-val">5.5</span>
+    </div>
+  </div>
+
+  <div class="sec-title">Critical pre-construction truths</div>
+  <div class="card accent-danger">
+    <div class="label label-danger">Know before you start</div>
+    <div class="card-title">USDY and mETH are real deployed assets — read-only for you</div>
+    <div class="card-body">You cannot modify USDY or mETH contracts. Your agent interacts with them via their public ABIs. Your job is to build the decision layer (when to hold, when to swap) and the execution layer (calling DEX contracts). Study both token contract ABIs in week 1 before writing a single line of your own code.</div>
+  </div>
+  <div class="card accent-warn">
+    <div class="label label-warn">Critical</div>
+    <div class="card-title">Mantle testnet is your best friend — use it from day one</div>
+    <div class="card-body">Mantle has a public testnet with a free faucet. All development and testing must happen here. Never spend real tokens. The Byreal RealClaw platform also has a sandbox environment. Set this up on day 1 — late environment setup kills hackathons.</div>
+  </div>
+  <div class="card accent-info">
+    <div class="label label-info">Important</div>
+    <div class="card-title">The "AI" layer does not need to be GPT-4 — simpler wins here</div>
+    <div class="card-body">Judges want to see intelligent decision-making, not expensive API calls. A well-designed rule engine with LLM-readable justifications, or a local Ollama model, can be more impressive than a GPT-4 wrapper. This also solves the zero-budget constraint entirely.</div>
+  </div>
+  <div class="card accent-green">
+    <div class="label label-green">Advantage</div>
+    <div class="card-title">4 weeks with 3 developers is genuinely sufficient scope</div>
+    <div class="card-body">Most hackathon teams have 48–72 hours. You have 4 weeks and 3 people. This means you can actually build something polished. The risk is scope creep — define your MVP on day 1 and protect it religiously.</div>
+  </div>
+</div>
+
+<!-- BUILD METHODS -->
+<div class="panel" id="panel-methods">
+  <p class="card-body" style="margin-bottom:1.2rem">Three realistic approaches for your team and timeline — each represents a different risk/reward tradeoff.</p>
+
+  <div class="method-card" style="border:2px solid var(--color-border-success)">
+    <div class="method-header">
+      <div>
+        <span class="label label-green">Recommended</span>
+        <div class="method-title">Method 1 — Hybrid Agent (LLM brain + rule-based execution)</div>
+      </div>
+      <span class="label label-warn">Difficulty 6.5/10</span>
+    </div>
+    <div class="method-body">Build a Python off-chain agent that polls on-chain data (yield rates, TVL, oracle prices), feeds a structured prompt to a local LLM (Ollama + Mistral/LLaMA3 — totally free), and receives a decision. The decision triggers a pre-audited Solidity executor contract on Mantle that performs the actual swap or hold. Risk management lives in the Python layer as a guardrail that can veto any AI decision if risk thresholds are breached.</div>
+    <div class="chip-row">
+      <span class="chip">Python agent</span><span class="chip">Ollama (local LLM)</span><span class="chip">Solidity executor</span><span class="chip">Hardhat</span><span class="chip">Mantle testnet</span><span class="chip">React dashboard</span>
+    </div>
+    <div class="pro-con">
+      <div class="pc-box">
+        <div class="pc-title pc-green"><i class="ti ti-thumb-up" aria-hidden="true"></i> Strengths</div>
+        <div class="pc-item"><span>→</span>Zero API cost — LLM runs locally</div>
+        <div class="pc-item"><span>→</span>AI decisions are explainable + loggable</div>
+        <div class="pc-item"><span>→</span>Cleanly separates AI logic from on-chain code</div>
+        <div class="pc-item"><span>→</span>Risk layer is a natural safety net</div>
+      </div>
+      <div class="pc-box">
+        <div class="pc-title pc-red"><i class="ti ti-thumb-down" aria-hidden="true"></i> Weaknesses</div>
+        <div class="pc-item"><span>→</span>Local LLM needs decent hardware (8GB+ RAM)</div>
+        <div class="pc-item"><span>→</span>Latency between agent decisions and on-chain execution</div>
+        <div class="pc-item"><span>→</span>Off-chain = not fully trustless</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="method-card">
+    <div class="method-header">
+      <div>
+        <span class="label label-gray">Alternative</span>
+        <div class="method-title">Method 2 — Fully On-chain Rule Agent (no LLM)</div>
+      </div>
+      <span class="label label-warn">Difficulty 7.5/10</span>
+    </div>
+    <div class="method-body">Build all decision logic directly in Solidity as a smart contract on Mantle. The contract reads oracle data, computes a yield differential, checks risk parameters, and triggers swaps automatically — no off-chain component at all. "AI" is represented by the deterministic, transparent on-chain logic. More truly decentralized and trustless, but much harder to build correctly and audit under time pressure.</div>
+    <div class="chip-row">
+      <span class="chip">Pure Solidity</span><span class="chip">Chainlink / Pyth oracles</span><span class="chip">Foundry</span><span class="chip">Mantle testnet</span><span class="chip">Keeper bots (Gelato free tier)</span>
+    </div>
+    <div class="pro-con">
+      <div class="pc-box">
+        <div class="pc-title pc-green"><i class="ti ti-thumb-up" aria-hidden="true"></i> Strengths</div>
+        <div class="pc-item"><span>→</span>Fully trustless and verifiable</div>
+        <div class="pc-item"><span>→</span>Strongest alignment with hackathon's on-chain ethos</div>
+        <div class="pc-item"><span>→</span>No infrastructure to maintain</div>
+      </div>
+      <div class="pc-box">
+        <div class="pc-title pc-red"><i class="ti ti-thumb-down" aria-hidden="true"></i> Weaknesses</div>
+        <div class="pc-item"><span>→</span>Hardest to build correctly for intermediate team</div>
+        <div class="pc-item"><span>→</span>Bugs = real money loss (even on testnet, bad habits form)</div>
+        <div class="pc-item"><span>→</span>"AI" label is a stretch — judges may push back</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="method-card">
+    <div class="method-header">
+      <div>
+        <span class="label label-gray">Fallback</span>
+        <div class="method-title">Method 3 — Byreal SDK-first (use existing agent scaffolding)</div>
+      </div>
+      <span class="label label-green">Difficulty 5.0/10</span>
+    </div>
+    <div class="method-body">Mantle provides the Byreal Skills CLI and RealClaw agent framework as hackathon scaffolding. Start from their provided Python and Solidity templates, extend them with your yield strategy logic and risk management layer, and focus most of your energy on the dashboard and the AI decision quality. This is the lowest-risk approach and still competitive if your strategy logic is genuinely interesting.</div>
+    <div class="chip-row">
+      <span class="chip">Byreal Skills CLI</span><span class="chip">RealClaw templates</span><span class="chip">Python extensions</span><span class="chip">Vercel dashboard</span>
+    </div>
+    <div class="pro-con">
+      <div class="pc-box">
+        <div class="pc-title pc-green"><i class="ti ti-thumb-up" aria-hidden="true"></i> Strengths</div>
+        <div class="pc-item"><span>→</span>Fastest time to working prototype</div>
+        <div class="pc-item"><span>→</span>Officially supported by organizers</div>
+        <div class="pc-item"><span>→</span>Lower risk of fundamental bugs</div>
+      </div>
+      <div class="pc-box">
+        <div class="pc-title pc-red"><i class="ti ti-thumb-down" aria-hidden="true"></i> Weaknesses</div>
+        <div class="pc-item"><span>→</span>Less original — many teams will use same templates</div>
+        <div class="pc-item"><span>→</span>Differentiation must come entirely from strategy logic</div>
+        <div class="pc-item"><span>→</span>CLI docs quality is unknown until you use it</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- FREE STACK -->
+<div class="panel" id="panel-stack">
+  <p class="card-body" style="margin-bottom:1.2rem">Every tool listed here is 100% free. No credit card, no trial expiry that blocks you during the hackathon.</p>
+
+  <div class="stack-grid" style="margin-bottom:1rem">
+    <div class="stack-item">
+      <div class="stack-cat">Blockchain dev</div>
+      <div class="stack-name">Hardhat / Foundry <span class="free-tag">free</span></div>
+      <div class="stack-why">Write, test, and deploy Solidity contracts. Foundry is faster for testing. Hardhat has better plugin ecosystem.</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-cat">Network</div>
+      <div class="stack-name">Mantle Testnet <span class="free-tag">free</span></div>
+      <div class="stack-why">Full EVM-compatible testnet. Faucet at faucet.testnet.mantle.xyz gives test MNT. No real money ever needed.</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-cat">RPC / Node access</div>
+      <div class="stack-name">Alchemy free tier <span class="free-tag">free</span></div>
+      <div class="stack-why">300M compute units/month free. More than enough for a hackathon. Mantle RPC also has public endpoints.</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-cat">AI / LLM (local)</div>
+      <div class="stack-name">Ollama + LLaMA 3.2 <span class="free-tag">free</span></div>
+      <div class="stack-why">Run LLaMA 3.2 (3B or 8B) locally. Zero API cost, zero rate limits, works offline. Needs 8GB+ RAM. Best zero-budget AI option.</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-cat">AI / LLM (cloud)</div>
+      <div class="stack-name">Google Gemini API <span class="free-tag">free</span></div>
+      <div class="stack-why">Gemini 1.5 Flash free tier: 15 req/min, 1M tokens/day. Sufficient for a low-frequency yield agent. No billing required.</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-cat">On-chain data</div>
+      <div class="stack-name">The Graph (free tier) <span class="free-tag">free</span></div>
+      <div class="stack-why">Query indexed on-chain data via GraphQL. Subgraphs exist for Merchant Moe and Agni Finance already.</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-cat">Price oracles</div>
+      <div class="stack-name">Pyth Network <span class="free-tag">free</span></div>
+      <div class="stack-why">Real-time price feeds deployed on Mantle. Free to read on-chain. Essential for depeg detection and risk management.</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-cat">Automation</div>
+      <div class="stack-name">Gelato Automate (free) <span class="free-tag">free</span></div>
+      <div class="stack-why">Schedule contract calls and keeper tasks. Free tier for testnets. Automates agent execution without a server running 24/7.</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-cat">Frontend</div>
+      <div class="stack-name">Next.js + Vercel <span class="free-tag">free</span></div>
+      <div class="stack-why">Zero-cost hosting on Vercel. Hobby tier is free forever. Deploy your dashboard in minutes with GitHub integration.</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-cat">Wallet connect</div>
+      <div class="stack-name">RainbowKit + wagmi <span class="free-tag">free</span></div>
+      <div class="stack-why">Open source wallet connection UI for React. Handles MetaMask, WalletConnect, and Coinbase Wallet in 10 lines of code.</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-cat">Version control</div>
+      <div class="stack-name">GitHub (free) <span class="free-tag">free</span></div>
+      <div class="stack-why">Private repos free for teams. Use GitHub Actions (2000 free minutes/month) for CI — auto-run Hardhat tests on every push.</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-cat">Agent scaffolding</div>
+      <div class="stack-name">Byreal Skills CLI <span class="free-tag">free</span></div>
+      <div class="stack-why">Official hackathon tooling from organizers. Python + Solidity templates for Mantle agent economy. Start here to save setup time.</div>
+    </div>
+  </div>
+
+  <div class="card accent-warn">
+    <div class="label label-warn">Zero-budget AI strategy</div>
+    <div class="card-title">Use Ollama locally for development, Gemini free tier for production demos</div>
+    <div class="card-body">During the 4 weeks of building: run LLaMA 3.2 8B locally via Ollama — zero cost, fast iteration, no rate limits. For the final demo and live judging: switch to Gemini 1.5 Flash (free tier, 1M tokens/day) for better output quality in front of judges. This hybrid approach costs nothing and gives you the best of both worlds.</div>
+  </div>
+</div>
+
+<!-- TIMELINE -->
+<div class="panel" id="panel-timeline">
+  <p class="card-body" style="margin-bottom:1.2rem">A realistic 4-week sprint for 3 intermediate developers. Each week has a shippable milestone so you always have something to show.</p>
+
+  <div class="week-row">
+    <div class="week-badge">Week 1</div>
+    <div class="week-content">
+      <div class="week-title">Foundation & research sprint</div>
+      <ul class="week-tasks">
+        <li>Set up Mantle testnet, get faucet MNT for all 3 devs</li>
+        <li>Read USDY and mETH token ABIs — understand transfer, balanceOf, yield functions</li>
+        <li>Study Merchant Moe and Agni Finance swap interfaces</li>
+        <li>Install Ollama locally, run first LLaMA 3.2 prompt</li>
+        <li>Install Hardhat, deploy a Hello World contract to Mantle testnet</li>
+        <li>Read Byreal Skills CLI docs and RealClaw template code</li>
+        <li>Define your MVP scope document — pin it, don't change it</li>
+      </ul>
+      <span class="week-milestone">Milestone: deployed contract + LLM running locally + scope locked</span>
+    </div>
+  </div>
+
+  <div class="week-row">
+    <div class="week-badge">Week 2</div>
+    <div class="week-content">
+      <div class="week-title">Core agent + contract build</div>
+      <ul class="week-tasks">
+        <li>Dev 1: Build Python agent loop — poll yields, format prompt, parse LLM decision</li>
+        <li>Dev 2: Write Solidity executor contract — accept instruction, call DEX swap</li>
+        <li>Dev 3: Build risk management module — Pyth oracle feed reader + threshold checks</li>
+        <li>Wire them together: agent → risk check → executor → testnet transaction</li>
+        <li>Write unit tests for the executor contract (Hardhat or Foundry)</li>
+        <li>Log every agent decision to a local file (preparation for on-chain logging later)</li>
+      </ul>
+      <span class="week-milestone">Milestone: end-to-end flow working on testnet (even if rough)</span>
+    </div>
+  </div>
+
+  <div class="week-row">
+    <div class="week-badge">Week 3</div>
+    <div class="week-content">
+      <div class="week-title">Polish, risk layer & dashboard</div>
+      <ul class="week-tasks">
+        <li>Dev 1: Improve LLM prompt quality — add market context, tune decision logic</li>
+        <li>Dev 2: Implement ERC-8004 agent NFT identity — mint on first deployment</li>
+        <li>Dev 3: Build Next.js dashboard — live yield display, agent decision log, PnL chart</li>
+        <li>Add Human vs. AI comparison mode — manual allocation vs agent allocation</li>
+        <li>Stress test risk management — simulate a depeg scenario on testnet</li>
+        <li>Connect dashboard to Mantle testnet via wagmi/viem</li>
+      </ul>
+      <span class="week-milestone">Milestone: polished demo-ready build with live dashboard</span>
+    </div>
+  </div>
+
+  <div class="week-row">
+    <div class="week-badge">Week 4</div>
+    <div class="week-content">
+      <div class="week-title">Demo prep, hardening & submission</div>
+      <ul class="week-tasks">
+        <li>Bug fix sprint — no new features, only stability</li>
+        <li>Record a 3-minute demo video showing agent making a real decision on testnet</li>
+        <li>Write the README and project description for DoraHacks submission</li>
+        <li>Prepare a 5-slide pitch deck: problem → solution → demo → differentiator → team</li>
+        <li>Run the Human vs. AI comparison live — capture results for judges</li>
+        <li>Deploy dashboard to Vercel, make it publicly accessible</li>
+        <li>Submit on DoraHacks before deadline with all links</li>
+      </ul>
+      <span class="week-milestone">Milestone: submitted, demo recorded, dashboard live</span>
+    </div>
+  </div>
+
+  <div class="card accent-green" style="margin-top:4px">
+    <div class="card-title">Dev role split recommendation</div>
+    <div class="card-body"><b>Dev 1 (AI lead):</b> Python agent, LLM integration, prompt engineering, decision logic.<br><b>Dev 2 (Smart contract lead):</b> Solidity executor, ERC-8004 NFT, DEX integrations, Hardhat tests.<br><b>Dev 3 (Full-stack lead):</b> Risk management module, dashboard frontend, oracle feeds, Vercel deploy.</div>
+  </div>
+</div>
+
+<!-- RISKS -->
+<div class="panel" id="panel-risks">
+  <p class="card-body" style="margin-bottom:1.2rem">Six real threats to your project — and how to neutralize each one before it becomes a problem.</p>
+  <div class="card">
+    <div class="risk-row">
+      <span class="risk-icon" style="color:var(--color-text-danger)"><i class="ti ti-alert-octagon" aria-hidden="true"></i></span>
+      <div>
+        <div class="risk-title">DEX integration is harder than it looks</div>
+        <div class="risk-body">Merchant Moe and Agni Finance are Uniswap V2/V3 forks but with Mantle-specific quirks. Slippage, pool liquidity on testnet, and token approval flows trip up most intermediate devs.</div>
+        <div class="risk-fix">→ Fix: In week 1, manually execute a swap on Mantle testnet via Etherscan to understand the exact calldata before you write a single line of Solidity.</div>
+      </div>
+    </div>
+    <div class="risk-row">
+      <span class="risk-icon" style="color:var(--color-text-danger)"><i class="ti ti-alert-octagon" aria-hidden="true"></i></span>
+      <div>
+        <div class="risk-title">LLM decisions may be too slow for a live demo</div>
+        <div class="risk-body">Local LLaMA 3.2 on consumer hardware can take 10–30 seconds to respond. In a live demo, 30 seconds of silence looks broken.</div>
+        <div class="risk-fix">→ Fix: Pre-compute a set of "replay" decisions from a real run to show in the demo. Keep the live call available, but have the replay as a fallback. Always have a fallback.</div>
+      </div>
+    </div>
+    <div class="risk-row">
+      <span class="risk-icon" style="color:var(--color-text-warning)"><i class="ti ti-alert-triangle" aria-hidden="true"></i></span>
+      <div>
+        <div class="risk-title">Scope creep will kill you</div>
+        <div class="risk-body">4 weeks feels long. It's not. Adding "just one more feature" in week 3 is how teams end up with a half-finished dashboard and no working agent on demo day.</div>
+        <div class="risk-fix">→ Fix: Write your MVP features on a physical list on day 1. Any feature not on the list requires a team vote to add. Protect the core ruthlessly.</div>
+      </div>
+    </div>
+    <div class="risk-row">
+      <span class="risk-icon" style="color:var(--color-text-warning)"><i class="ti ti-alert-triangle" aria-hidden="true"></i></span>
+      <div>
+        <div class="risk-title">Pyth oracle data not available for testnet</div>
+        <div class="risk-body">Some price feeds exist on Mantle mainnet but not the testnet, forcing you to mock risk data. Judges may question whether risk management is real.</div>
+        <div class="risk-fix">→ Fix: Use Pyth's Hermes REST API (free) to pull off-chain prices into your Python agent as a proxy. Clearly document that mainnet would use the on-chain feed.</div>
+      </div>
+    </div>
+    <div class="risk-row">
+      <span class="risk-icon" style="color:var(--color-text-warning)"><i class="ti ti-alert-triangle" aria-hidden="true"></i></span>
+      <div>
+        <div class="risk-title">Gemini free tier rate limits during the live demo</div>
+        <div class="risk-body">15 requests/minute sounds fine until you demo to judges and the API returns a 429 at the worst possible moment.</div>
+        <div class="risk-fix">→ Fix: Implement a local Ollama fallback. If the Gemini call fails, the agent silently switches to the local model. Judges won't notice the difference in a demo.</div>
+      </div>
+    </div>
+    <div class="risk-row">
+      <span class="risk-icon" style="color:var(--color-text-info)"><i class="ti ti-info-circle" aria-hidden="true"></i></span>
+      <div>
+        <div class="risk-title">ERC-8004 is a very new standard with thin documentation</div>
+        <div class="risk-body">The agent identity NFT standard (ERC-8004) is new and may have sparse examples or incomplete tooling. Time-boxing this badly can eat your week 3.</div>
+        <div class="risk-fix">→ Fix: Treat ERC-8004 as a "nice to have" in week 1 scoping. Build a simple ERC-721 fallback for agent identity that works reliably. Upgrade to ERC-8004 only if time allows in week 3.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<script>
+function switchTab(id){
+  document.querySelectorAll('.tab').forEach((t,i)=>{
+    const ids=['overview','methods','stack','timeline','risks'];
+    t.classList.toggle('active', ids[i]===id);
+  });
+  document.querySelectorAll('.panel').forEach(p=>{
+    p.classList.toggle('active', p.id==='panel-'+id);
+  });
+}
+</script>
