@@ -1,0 +1,5 @@
+.git
+.Agent
+docs
+contracts/out
+contracts/cache

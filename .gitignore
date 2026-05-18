@@ -1,0 +1,10 @@
+# Foundry build artifacts
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# Environment files
+.env
+.env.*
+!.env.example
+!contracts/.env.example

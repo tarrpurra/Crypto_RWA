@@ -1,0 +1,5 @@
+version: 1
+interface:
+  display_name: Smart Contract
+  short_description: Implement safe Solidity and Python contract flows
+  default_prompt: Implement or modify smart-contract features with proposal-bound execution, strict safety guards, and required smart-contract changelog updates.

@@ -245,11 +245,13 @@ This is the canonical structure to follow when scaffolding the actual codebase.
 |   |   |   |-- IAgniQuoterV2.sol
 |   |   |   |-- IMerchantMoeRouter.sol
 |   |   |   |-- IMerchantMoeLBRouter.sol
+|   |   |   |-- IMerchantMoeAggregatorRouter.sol
 |   |   |   `-- IPyth.sol
 |   |   |-- libraries/
 |   |   |   |-- Errors.sol
 |   |   |   |-- Events.sol
 |   |   |   |-- Roles.sol
+|   |   |   |-- ExecutionTypes.sol
 |   |   |   `-- ProposalHashLib.sol
 |   |   `-- mocks/
 |   |       |-- MockERC20.sol
@@ -418,3 +420,5 @@ Recommended scaffold order:
 - The repo can be scaffolded incrementally, but new files should follow this layout.
 - Avoid mixing frontend-only code into backend or contract directories.
 - Keep shared schema and config in `packages/` instead of duplicating them across services.
+
+

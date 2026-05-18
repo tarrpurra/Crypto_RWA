@@ -1,0 +1,22 @@
+services:
+  foundry:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rwa-foundry
+    working_dir: /workspace/contracts
+    volumes:
+      - ./:/workspace
+    tty: true
+    stdin_open: true
+    command:
+      - bash
+      - -lc
+      - >
+        if [ ! -d lib/forge-std ]; then
+          forge install foundry-rs/forge-std;
+        fi;
+        if [ ! -d lib/openzeppelin-contracts ]; then
+          forge install OpenZeppelin/openzeppelin-contracts;
+        fi;
+        tail -f /dev/null
