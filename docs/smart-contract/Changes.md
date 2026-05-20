@@ -544,3 +544,47 @@ Commands user still needs to run:
 - `forge script script/DeploySepolia.s.sol:DeploySepolia --rpc-url $env:RPC_URL --broadcast`
 - `forge script script/ConfigureRouters.s.sol:ConfigureRouters --rpc-url $env:RPC_URL --broadcast`
 - `forge script script/PhaseGateMinimalCheck.s.sol:PhaseGateMinimalCheck --rpc-url $env:RPC_URL`
+### 2026-05-20
+
+Type:
+Feature | Security | Test
+
+Summary:
+
+- expanded `ExecutorVault` supported router surfaces to include AGNI `exactInput` multi-hop swaps and Merchant Moe classic `swapExactTokensForTokens`
+- kept the executor fail-closed by validating selector-specific calldata semantics for both new swap surfaces before execution
+- added V3 path endpoint validation for AGNI multi-hop calldata and explicit path endpoint validation for Merchant Moe classic routing
+- extended mocks and executor unit tests to cover AGNI multi-hop success, Merchant Moe classic success, invalid AGNI path rejection, and Merchant Moe path mismatch rejection
+- updated remaining-work tracking so the unresolved router-surface gap is narrowed to Merchant Moe LB and aggregator support rather than all Merchant Moe execution
+
+Affected scope:
+
+- `contracts/src/core/ExecutorVault.sol`
+- `contracts/src/interfaces/IAgniSwapRouter.sol`
+- `contracts/src/interfaces/IMerchantMoeRouter.sol`
+- `contracts/src/interfaces/IMerchantMoeLBRouter.sol`
+- `contracts/src/interfaces/IMerchantMoeAggregatorRouter.sol`
+- `contracts/src/libraries/Errors.sol`
+- `contracts/src/mocks/MockRouter.sol`
+- `contracts/test/mocks/MockSetup.sol`
+- `contracts/test/unit/ExecutorVault.t.sol`
+- `docs/smart-contract/Left.md`
+
+Impact:
+
+- frontend: no direct impact yet, but future ABI exports will now include the broader supported swap surface
+- AI/data analytics: backend can now construct approved payloads for AGNI multi-hop and Merchant Moe classic swap routes that match explicit executor validation
+- deployment: allowlist configuration can now safely include AGNI `exactInputSingle`, AGNI `exactInput`, and Merchant Moe classic `swapExactTokensForTokens` once selectors are configured on deployed contracts
+
+Assumptions / unresolved verification items:
+
+- Merchant Moe LB router and aggregator router calldata are still intentionally unsupported until their exact semantics are verified
+- this update was validated by static review in this workspace; rerun `forge build` and `forge test` in Docker to confirm there are no compiler or runtime regressions
+- the Merchant Moe classic interface added here assumes the UniswapV2-style `swapExactTokensForTokens` surface, which matches the intended MVP classic-router usage but should still be confirmed against the exact deployed router ABI before production allowlisting
+
+Commands user still needs to run:
+
+- `cd contracts`
+- `forge build`
+- `forge test`
+- `forge script script/ConfigureRouters.s.sol:ConfigureRouters --rpc-url $env:RPC_URL --broadcast`

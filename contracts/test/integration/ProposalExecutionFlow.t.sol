@@ -22,7 +22,7 @@ contract ProposalExecutionFlowTest is MockSetup {
 
         bytes memory routerCalldata = _encodeAgniExactInputSingle(amountIn, minAmountOut);
         ExecutionTypes.ExecutionPayload memory payload = _payload(
-            bytes32("FLOW-1"),
+            keccak256("FLOW-1"),
             IAgniSwapRouter.exactInputSingle.selector,
             keccak256(routerCalldata),
             amountIn,
@@ -39,3 +39,4 @@ contract ProposalExecutionFlowTest is MockSetup {
         assertEq(tokenOut.balanceOf(address(vault)), realizedAmountOut);
     }
 }
+

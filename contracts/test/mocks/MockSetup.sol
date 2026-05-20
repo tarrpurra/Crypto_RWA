@@ -6,6 +6,7 @@ import {PauseGuardian} from "src/core/PauseGuardian.sol";
 import {TradeApprovalManager} from "src/core/TradeApprovalManager.sol";
 import {ExecutorVault} from "src/core/ExecutorVault.sol";
 import {IAgniSwapRouter} from "src/interfaces/IAgniSwapRouter.sol";
+import {IMerchantMoeRouter} from "src/interfaces/IMerchantMoeRouter.sol";
 import {ExecutionTypes} from "src/libraries/ExecutionTypes.sol";
 import {Roles} from "src/libraries/Roles.sol";
 import {MockERC20} from "src/mocks/MockERC20.sol";
@@ -13,6 +14,8 @@ import {MockRouter} from "src/mocks/MockRouter.sol";
 
 abstract contract MockSetup is Test {
     bytes4 internal constant MOCK_SWAP_SELECTOR = bytes4(keccak256("swap(address,address,address,address,uint256,uint256)"));
+    bytes4 internal constant MERCHANT_MOE_LB_UNSUPPORTED_SELECTOR = 0x1badd00d;
+    bytes4 internal constant MERCHANT_MOE_AGGREGATOR_UNSUPPORTED_SELECTOR = 0xa66e0001;
 
     address internal admin = address(0xA11CE);
     address internal guardian = address(0xB0B);
@@ -26,6 +29,7 @@ abstract contract MockSetup is Test {
     ExecutorVault internal vault;
     MockERC20 internal tokenIn;
     MockERC20 internal tokenOut;
+    MockERC20 internal midToken;
     MockRouter internal router;
 
     function _deploySystem() internal {
@@ -40,6 +44,7 @@ abstract contract MockSetup is Test {
 
         tokenIn = new MockERC20();
         tokenOut = new MockERC20();
+        midToken = new MockERC20();
         router = new MockRouter();
 
         vm.prank(admin);
@@ -102,6 +107,34 @@ abstract contract MockSetup is Test {
         return abi.encodeWithSelector(IAgniSwapRouter.exactInputSingle.selector, params);
     }
 
+    function _encodeAgniExactInput(uint256 amountIn, uint256 minAmountOut) internal view returns (bytes memory) {
+        IAgniSwapRouter.ExactInputParams memory params = IAgniSwapRouter.ExactInputParams({
+            path: abi.encodePacked(address(tokenIn), uint24(3000), address(midToken), uint24(500), address(tokenOut)),
+            recipient: address(vault),
+            deadline: block.timestamp + 1 days,
+            amountIn: amountIn,
+            amountOutMinimum: minAmountOut
+        });
+
+        return abi.encodeWithSelector(IAgniSwapRouter.exactInput.selector, params);
+    }
+
+    function _encodeMerchantMoeClassicSwap(uint256 amountIn, uint256 minAmountOut) internal view returns (bytes memory) {
+        address[] memory path = new address[](3);
+        path[0] = address(tokenIn);
+        path[1] = address(midToken);
+        path[2] = address(tokenOut);
+
+        return abi.encodeWithSelector(
+            IMerchantMoeRouter.swapExactTokensForTokens.selector,
+            amountIn,
+            minAmountOut,
+            path,
+            address(vault),
+            block.timestamp + 1 days
+        );
+    }
+
     function _encodeMockSwap(uint256 amountIn, uint256 amountOut) internal view returns (bytes memory) {
         return abi.encodeWithSelector(
             MOCK_SWAP_SELECTOR,
@@ -112,5 +145,9 @@ abstract contract MockSetup is Test {
             amountIn,
             amountOut
         );
+    }
+
+    function _encodeUnsupportedSelector(bytes4 selector) internal pure returns (bytes memory) {
+        return abi.encodePacked(selector, abi.encode(uint256(1)));
     }
 }

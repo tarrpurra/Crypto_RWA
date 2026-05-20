@@ -6,12 +6,17 @@ import {Events} from "../libraries/Events.sol";
 import {ExecutionTypes} from "../libraries/ExecutionTypes.sol";
 import {IERC20} from "../interfaces/IERC20.sol";
 import {IAgniSwapRouter} from "../interfaces/IAgniSwapRouter.sol";
+import {IMerchantMoeRouter} from "../interfaces/IMerchantMoeRouter.sol";
 import {PauseGuardian} from "./PauseGuardian.sol";
 import {TradeApprovalManager} from "./TradeApprovalManager.sol";
 import {Roles} from "../libraries/Roles.sol";
 
 contract ExecutorVault {
     bytes4 internal constant MOCK_SWAP_SELECTOR = bytes4(keccak256("swap(address,address,address,address,uint256,uint256)"));
+    uint256 internal constant V3_PATH_TOKEN_SIZE = 20;
+    uint256 internal constant V3_PATH_FEE_SIZE = 3;
+    uint256 internal constant V3_PATH_HOP_SIZE = V3_PATH_TOKEN_SIZE + V3_PATH_FEE_SIZE;
+    uint256 internal constant V3_MIN_PATH_LENGTH = V3_PATH_TOKEN_SIZE + V3_PATH_FEE_SIZE + V3_PATH_TOKEN_SIZE;
 
     PauseGuardian public immutable pauseGuardian;
     TradeApprovalManager public immutable tradeApprovalManager;
@@ -90,6 +95,7 @@ contract ExecutorVault {
         pauseGuardian.enforceRoute(payload.router, payload.selector);
 
         if (payload.tokenOut == address(0)) revert Errors.ZeroAddress();
+        // forge-lint: disable-next-line(block-timestamp)
         if (payload.deadline < block.timestamp) revert Errors.InvalidDeadline(payload.deadline);
         if (payload.recipient != address(this)) revert Errors.Unauthorized();
         if (msg.value != payload.nativeValue) revert Errors.NativeValueMismatch(payload.nativeValue, msg.value);
@@ -158,6 +164,16 @@ contract ExecutorVault {
             return;
         }
 
+        if (selector == IAgniSwapRouter.exactInput.selector) {
+            _validateAgniExactInput(payload, routerCalldata[4:], amountIn);
+            return;
+        }
+
+        if (selector == IMerchantMoeRouter.swapExactTokensForTokens.selector) {
+            _validateMerchantMoeClassicSwap(payload, routerCalldata[4:], amountIn);
+            return;
+        }
+
         if (selector == MOCK_SWAP_SELECTOR) {
             _validateMockSwap(payload, routerCalldata[4:], amountIn);
             return;
@@ -181,6 +197,50 @@ contract ExecutorVault {
         if (params.amountIn != amountIn) revert Errors.AmountInMismatch(amountIn, params.amountIn);
         if (params.amountOutMinimum != payload.minAmountOut) {
             revert Errors.MinAmountOutMismatch(payload.minAmountOut, params.amountOutMinimum);
+        }
+    }
+
+    function _validateAgniExactInput(
+        ExecutionTypes.ExecutionPayload calldata payload,
+        bytes calldata encodedParams,
+        uint256 amountIn
+    ) internal pure {
+        IAgniSwapRouter.ExactInputParams memory params = abi.decode(encodedParams, (IAgniSwapRouter.ExactInputParams));
+        if (params.recipient != payload.recipient) revert Errors.RecipientMismatch(payload.recipient, params.recipient);
+        if (params.deadline != payload.deadline) revert Errors.DeadlineMismatch(payload.deadline, params.deadline);
+        if (params.amountIn != amountIn) revert Errors.AmountInMismatch(amountIn, params.amountIn);
+        if (params.amountOutMinimum != payload.minAmountOut) {
+            revert Errors.MinAmountOutMismatch(payload.minAmountOut, params.amountOutMinimum);
+        }
+
+        (address tokenIn, address tokenOut) = _decodeV3PathEndpoints(params.path);
+        if (tokenIn != payload.tokenIn) revert Errors.TokenInMismatch(payload.tokenIn, tokenIn);
+        if (tokenOut != payload.tokenOut) revert Errors.TokenOutMismatch(payload.tokenOut, tokenOut);
+    }
+
+    function _validateMerchantMoeClassicSwap(
+        ExecutionTypes.ExecutionPayload calldata payload,
+        bytes calldata encodedParams,
+        uint256 amountIn
+    ) internal pure {
+        (
+            uint256 encodedAmountIn,
+            uint256 encodedAmountOutMin,
+            address[] memory path,
+            address recipient,
+            uint256 deadline
+        ) = abi.decode(encodedParams, (uint256, uint256, address[], address, uint256));
+
+        if (path.length < 2) revert Errors.InvalidPath();
+        if (path[0] != payload.tokenIn) revert Errors.TokenInMismatch(payload.tokenIn, path[0]);
+        if (path[path.length - 1] != payload.tokenOut) {
+            revert Errors.TokenOutMismatch(payload.tokenOut, path[path.length - 1]);
+        }
+        if (recipient != payload.recipient) revert Errors.RecipientMismatch(payload.recipient, recipient);
+        if (deadline != payload.deadline) revert Errors.DeadlineMismatch(payload.deadline, deadline);
+        if (encodedAmountIn != amountIn) revert Errors.AmountInMismatch(amountIn, encodedAmountIn);
+        if (encodedAmountOutMin != payload.minAmountOut) {
+            revert Errors.MinAmountOutMismatch(payload.minAmountOut, encodedAmountOutMin);
         }
     }
 
@@ -208,6 +268,22 @@ contract ExecutorVault {
         }
     }
 
+    function _decodeV3PathEndpoints(bytes memory path) internal pure returns (address tokenIn, address tokenOut) {
+        uint256 length = path.length;
+        if (length < V3_MIN_PATH_LENGTH) revert Errors.InvalidPath();
+        if ((length - V3_PATH_TOKEN_SIZE) % V3_PATH_HOP_SIZE != 0) revert Errors.InvalidPath();
+
+        tokenIn = _addressFromBytes(path, 0);
+        tokenOut = _addressFromBytes(path, length - V3_PATH_TOKEN_SIZE);
+    }
+
+    function _addressFromBytes(bytes memory data, uint256 start) internal pure returns (address token) {
+        if (data.length < start + V3_PATH_TOKEN_SIZE) revert Errors.InvalidPath();
+        assembly {
+            token := shr(96, mload(add(add(data, 0x20), start)))
+        }
+    }
+
     function _selectorFromCalldata(bytes calldata data) internal pure returns (bytes4 selector) {
         if (data.length < 4) revert Errors.InvalidCalldata();
 
@@ -216,3 +292,5 @@ contract ExecutorVault {
         }
     }
 }
+
+
