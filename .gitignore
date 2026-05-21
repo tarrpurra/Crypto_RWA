@@ -8,3 +8,5 @@ contracts/broadcast/
 .env.*
 !.env.example
 !contracts/.env.example
+.kilo
+.agents

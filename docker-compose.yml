@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: foundry
     container_name: rwa-foundry
     working_dir: /workspace/contracts
     volumes:
@@ -20,3 +21,25 @@ services:
           forge install OpenZeppelin/openzeppelin-contracts;
         fi;
         tail -f /dev/null
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend
+    container_name: rwa-backend
+    working_dir: /workspace
+    env_file:
+      - ./services/agent/.env.example
+    environment:
+      PYTHONPATH: /workspace
+    volumes:
+      - ./:/workspace
+    ports:
+      - "8000:8000"
+    command:
+      - uvicorn
+      - services.agent.app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

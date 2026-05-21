@@ -1,0 +1,44 @@
+[project]
+name = "aixrwa-agent"
+version = "0.1.0"
+description = "AIxRWA Python service scaffold for Mantle Sepolia and Foundry artifacts."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115,<1.0",
+    "httpx>=0.28,<1.0",
+    "pydantic-settings>=2.6,<3.0",
+    "uvicorn>=0.34,<1.0",
+    "web3>=7.0,<8.0",
+    "websockets>=14.0,<15.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = [
+    "services",
+    "services.agent",
+    "services.agent.app",
+    "services.agent.app.api",
+    "services.agent.app.core",
+    "services.agent.app.schemas",
+    "services.agent.jobs",
+    "services.agent.modules",
+    "services.agent.modules.chain",
+    "services.agent.modules.contracts",
+    "services.agent.modules.market_data",
+    "services.agent.modules.oracle",
+    "services.agent.modules.quotes",
+    "services.agent.repositories",
+    "services.agent.repositories.cache",
+    "services.agent.repositories.db",
+    "services.agent.risk",
+    "services.agent.simulations",
+    "services.agent.strategies",
+    "services.agent.tests",
+    "services.agent.tests.integration",
+    "services.agent.tests.scenarios",
+    "services.agent.tests.unit",
+]
