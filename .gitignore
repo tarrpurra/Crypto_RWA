@@ -10,3 +10,11 @@ contracts/broadcast/
 !contracts/.env.example
 .kilo
 .agents
+
+# Python service artifacts
+.venv/
+services/agent/.venv/
+__pycache__/
+.pytest_cache/
+.agents
+skills-lock.json

@@ -24,6 +24,16 @@ contract PauseGuardianTest is Test {
         guardianContract.setRouterWhitelist(router, true);
     }
 
+    function testKnownUnsupportedRoutersStartFailClosed() public view {
+        address lbRouter = guardianContract.MERCHANT_MOE_LB_ROUTER();
+        address aggregatorRouter = guardianContract.MERCHANT_MOE_AGGREGATOR_ROUTER();
+
+        assertFalse(guardianContract.routerWhitelist(lbRouter));
+        assertFalse(guardianContract.routerWhitelist(aggregatorRouter));
+        assertFalse(guardianContract.selectorAllowlist(lbRouter, selector));
+        assertFalse(guardianContract.selectorAllowlist(aggregatorRouter, selector));
+    }
+
     function testPauseBlocksRouteEnforcement() public {
         vm.startPrank(admin);
         guardianContract.setRouterWhitelist(router, true);

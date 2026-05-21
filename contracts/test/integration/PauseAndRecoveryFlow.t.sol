@@ -22,7 +22,7 @@ contract PauseAndRecoveryFlowTest is MockSetup {
 
         bytes memory routerCalldata = _encodeAgniExactInputSingle(amountIn, minAmountOut);
         ExecutionTypes.ExecutionPayload memory payload = _payload(
-            bytes32("PAUSE-1"),
+            keccak256("PAUSE-1"),
             IAgniSwapRouter.exactInputSingle.selector,
             keccak256(routerCalldata),
             amountIn,
@@ -48,3 +48,4 @@ contract PauseAndRecoveryFlowTest is MockSetup {
         assertEq(outsider.balance, 1 ether);
     }
 }
+

@@ -20,6 +20,7 @@ library Errors {
     error InvalidCalldata();
     error InvalidCalldataSelector(bytes4 expected, bytes4 actual);
     error UnsupportedSelector(bytes4 selector);
+    error InvalidPath();
     error RecipientMismatch(address expected, address actual);
     error TokenInMismatch(address expected, address actual);
     error TokenOutMismatch(address expected, address actual);

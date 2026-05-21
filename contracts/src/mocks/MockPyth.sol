@@ -21,6 +21,9 @@ contract MockPyth {
     function getPriceNoOlderThan(bytes32 priceId, uint256 maxAge) external view returns (Price memory price) {
         price = _prices[priceId];
         require(price.exists, "price-not-found");
+        // forge-lint: disable-next-line(block-timestamp)
         require(block.timestamp <= uint256(price.publishTime) + maxAge, "stale-price");
     }
 }
+
+
