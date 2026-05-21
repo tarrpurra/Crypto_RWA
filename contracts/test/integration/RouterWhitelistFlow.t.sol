@@ -20,7 +20,7 @@ contract RouterWhitelistFlowTest is MockSetup {
         bytes memory routerCalldata = _encodeAgniExactInputSingle(amountIn, minAmountOut);
 
         ExecutionTypes.ExecutionPayload memory payload = _payload(
-            bytes32("ROUTER-1"),
+            keccak256("ROUTER-1"),
             IAgniSwapRouter.exactInputSingle.selector,
             keccak256(routerCalldata),
             amountIn,
@@ -45,7 +45,7 @@ contract RouterWhitelistFlowTest is MockSetup {
 
         bytes memory routerCalldata = _encodeAgniExactInputSingle(amountIn, minAmountOut);
         ExecutionTypes.ExecutionPayload memory payload = _payload(
-            bytes32("ROUTER-2"),
+            keccak256("ROUTER-2"),
             IAgniSwapRouter.exactInputSingle.selector,
             keccak256(routerCalldata),
             amountIn,
@@ -66,3 +66,4 @@ contract RouterWhitelistFlowTest is MockSetup {
         vault.executeApprovedTrade(payload, routerCalldata, amountIn);
     }
 }
+

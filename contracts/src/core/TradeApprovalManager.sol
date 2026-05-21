@@ -48,6 +48,7 @@ contract TradeApprovalManager {
     function createProposal(ExecutionTypes.ExecutionPayload calldata payload) external onlyRole(Roles.APPROVER_ROLE) {
         ProposalRecord storage existing = _proposals[payload.proposalId];
         if (existing.status != ExecutionTypes.ProposalStatus.NONE) revert Errors.ProposalAlreadyExists(payload.proposalId);
+        // forge-lint: disable-next-line(block-timestamp)
         if (payload.proposalExpiry <= block.timestamp) revert Errors.ProposalExpired(payload.proposalId);
 
         bytes32 proposalHash = payload.proposalHash();
@@ -78,6 +79,7 @@ contract TradeApprovalManager {
         ProposalRecord storage record = _proposals[payload.proposalId];
         if (record.status == ExecutionTypes.ProposalStatus.EXECUTED) revert Errors.ProposalAlreadyExecuted(payload.proposalId);
         if (record.status != ExecutionTypes.ProposalStatus.APPROVED) revert Errors.ProposalNotApproved(payload.proposalId);
+        // forge-lint: disable-next-line(block-timestamp)
         if (record.expiry < block.timestamp) revert Errors.ProposalExpired(payload.proposalId);
         if (record.proposalHash != payload.proposalHash()) revert Errors.ProposalHashMismatch(payload.proposalId);
 
@@ -92,6 +94,7 @@ contract TradeApprovalManager {
         if (status != ExecutionTypes.ProposalStatus.PENDING && status != ExecutionTypes.ProposalStatus.APPROVED) {
             revert Errors.ProposalNotLive(proposalId, uint8(status));
         }
+        // forge-lint: disable-next-line(block-timestamp)
         if (record.expiry >= block.timestamp) revert Errors.ProposalNotExpired(proposalId, record.expiry);
 
         record.status = ExecutionTypes.ProposalStatus.EXPIRED;
@@ -105,12 +108,16 @@ contract TradeApprovalManager {
     function isApprovedAndLive(ExecutionTypes.ExecutionPayload calldata payload) external view returns (bool) {
         ProposalRecord storage record = _proposals[payload.proposalId];
         if (record.status != ExecutionTypes.ProposalStatus.APPROVED) return false;
+        // forge-lint: disable-next-line(block-timestamp)
         if (record.expiry < block.timestamp) return false;
         return record.proposalHash == payload.proposalHash();
     }
 
     function _requirePendingAndLive(bytes32 proposalId, ProposalRecord storage record) internal view {
         if (record.status != ExecutionTypes.ProposalStatus.PENDING) revert Errors.ProposalNotPending(proposalId);
+        // forge-lint: disable-next-line(block-timestamp)
         if (record.expiry < block.timestamp) revert Errors.ProposalExpired(proposalId);
     }
 }
+
+

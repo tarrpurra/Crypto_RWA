@@ -8,3 +8,11 @@ contracts/broadcast/
 .env.*
 !.env.example
 !contracts/.env.example
+
+# Python service artifacts
+.venv/
+services/agent/.venv/
+__pycache__/
+.pytest_cache/
+.agents
+skills-lock.json

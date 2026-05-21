@@ -6,6 +6,10 @@ import {Events} from "../libraries/Events.sol";
 import {Roles} from "../libraries/Roles.sol";
 
 contract PauseGuardian {
+    // Known Merchant Moe router addresses that remain intentionally out of the on-chain MVP surface.
+    address public constant MERCHANT_MOE_LB_ROUTER = 0x013e138EF6008ae5FDFDE29700e3f2Bc61d21E3a;
+    address public constant MERCHANT_MOE_AGGREGATOR_ROUTER = 0x45A62B090DF48243F12A21897e7ed91863E2c86b;
+
     bool public paused;
     mapping(bytes32 role => mapping(address account => bool allowed)) private _roles;
     mapping(address router => bool allowed) public routerWhitelist;

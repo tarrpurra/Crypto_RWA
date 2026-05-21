@@ -23,7 +23,7 @@ contract TradeApprovalManagerTest is Test {
     }
 
     function testCreateApproveAndExecute() public {
-        ExecutionTypes.ExecutionPayload memory payload = _payload(bytes32("P1"));
+        ExecutionTypes.ExecutionPayload memory payload = _payload(keccak256("P1"));
 
         vm.prank(approver);
         manager.createProposal(payload);
@@ -39,7 +39,7 @@ contract TradeApprovalManagerTest is Test {
     }
 
     function testRejectFlow() public {
-        ExecutionTypes.ExecutionPayload memory payload = _payload(bytes32("P2"));
+        ExecutionTypes.ExecutionPayload memory payload = _payload(keccak256("P2"));
 
         vm.prank(approver);
         manager.createProposal(payload);
@@ -52,7 +52,7 @@ contract TradeApprovalManagerTest is Test {
     }
 
     function testExpiredProposalCannotBeApproved() public {
-        ExecutionTypes.ExecutionPayload memory payload = _payload(bytes32("P3"));
+        ExecutionTypes.ExecutionPayload memory payload = _payload(keccak256("P3"));
 
         vm.prank(approver);
         manager.createProposal(payload);
@@ -65,7 +65,7 @@ contract TradeApprovalManagerTest is Test {
     }
 
     function testModifiedPayloadCannotExecute() public {
-        ExecutionTypes.ExecutionPayload memory payload = _payload(bytes32("P4"));
+        ExecutionTypes.ExecutionPayload memory payload = _payload(keccak256("P4"));
 
         vm.startPrank(approver);
         manager.createProposal(payload);
@@ -80,7 +80,7 @@ contract TradeApprovalManagerTest is Test {
     }
 
     function testReplayExecutionReverts() public {
-        ExecutionTypes.ExecutionPayload memory payload = _payload(bytes32("P5"));
+        ExecutionTypes.ExecutionPayload memory payload = _payload(keccak256("P5"));
 
         vm.startPrank(approver);
         manager.createProposal(payload);
@@ -96,7 +96,7 @@ contract TradeApprovalManagerTest is Test {
     }
 
     function testApprovedProposalCanBeMarkedExpired() public {
-        ExecutionTypes.ExecutionPayload memory payload = _payload(bytes32("P6"));
+        ExecutionTypes.ExecutionPayload memory payload = _payload(keccak256("P6"));
 
         vm.startPrank(approver);
         manager.createProposal(payload);
@@ -111,7 +111,7 @@ contract TradeApprovalManagerTest is Test {
     }
 
     function testRejectedProposalCannotBeMarkedExpired() public {
-        ExecutionTypes.ExecutionPayload memory payload = _payload(bytes32("P7"));
+        ExecutionTypes.ExecutionPayload memory payload = _payload(keccak256("P7"));
 
         vm.startPrank(approver);
         manager.createProposal(payload);
@@ -147,3 +147,4 @@ contract TradeApprovalManagerTest is Test {
         payload.nonce = 1;
     }
 }
+
