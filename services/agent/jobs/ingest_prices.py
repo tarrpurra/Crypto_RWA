@@ -5,6 +5,7 @@ import json
 import logging
 
 from services.agent.modules.market_data import PRICE_SNAPSHOT_STORE, get_price_service
+from services.agent.repositories.db.market_repository import MarketDataRepository
 
 
 logger = logging.getLogger("services.agent.market_data.ingest_prices")
@@ -12,8 +13,10 @@ logger = logging.getLogger("services.agent.market_data.ingest_prices")
 
 async def run_once() -> None:
     service = get_price_service()
+    repository = MarketDataRepository()
     bundle = await service.fetch_latest_prices()
     PRICE_SNAPSHOT_STORE.write(bundle)
+    repository.save_price_bundle(bundle)
     logger.info(
         "Fetched %s normalized price snapshots and %s raw price snapshots.",
         len(bundle.normalized_snapshots),

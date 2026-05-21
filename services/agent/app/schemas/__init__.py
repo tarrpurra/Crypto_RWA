@@ -11,7 +11,7 @@ from services.agent.app.schemas.market_data import (
     RawPriceSnapshot,
 )
 from services.agent.app.schemas.oracle import HermesFetchResponse, PythPricePoint
-from services.agent.app.schemas.quotes import NormalizedQuoteSnapshot, RawQuoteSnapshot, RouteDescriptor
+from services.agent.app.schemas.quotes import LatestQuotesResponse, NormalizedQuoteSnapshot, RawQuoteSnapshot, RouteDescriptor, RoutesResponse
 from services.agent.app.schemas.recommendations import RecommendationResponse
 
 __all__ = [
@@ -25,6 +25,7 @@ __all__ = [
     "HealthResponse",
     "HermesFetchResponse",
     "LatestPricesResponse",
+    "LatestQuotesResponse",
     "MarketIngestionStatusResponse",
     "NormalizedPriceSnapshot",
     "NormalizedQuoteSnapshot",
@@ -33,5 +34,6 @@ __all__ = [
     "RawQuoteSnapshot",
     "RecommendationResponse",
     "RouteDescriptor",
+    "RoutesResponse",
     "ServiceStatusResponse",
 ]

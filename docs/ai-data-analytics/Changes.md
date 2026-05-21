@@ -24,6 +24,54 @@ Feature
 
 Summary:
 
+- added PostgreSQL-backed market-data persistence using SQLAlchemy models, session wiring, and a repository for price and quote snapshots
+- introduced a config-driven Ondo USDY oracle client plus quote route discovery, ranking, and `/market/quotes/latest` and `/market/routes` APIs
+- made market API persistence best-effort while keeping ingestion jobs persistence-aware, so the service can still expose degraded read surfaces before PostgreSQL or live quote methods are fully verified
+
+Affected scope:
+
+- services/agent/repositories/db/models.py
+- services/agent/repositories/db/session.py
+- services/agent/repositories/db/market_repository.py
+- services/agent/modules/oracle/ondo_client.py
+- services/agent/modules/market_data/*
+- services/agent/modules/quotes/*
+- services/agent/app/api/market.py
+- services/agent/app/core/settings.py
+- services/agent/app/schemas/quotes.py
+- services/agent/jobs/ingest_prices.py
+- services/agent/jobs/sample_quotes.py
+- services/agent/.env.example
+- services/agent/requirements.txt
+- services/agent/pyproject.toml
+- services/agent/tests/integration/test_market.py
+- services/agent/tests/unit/test_quote_ranking.py
+
+Impact:
+
+- smart contracts: backend now tracks the configured router surfaces and route identifiers that later proposal-generation logic can bind to contract-approved execution paths
+- frontend: market APIs now expose quote and route surfaces in addition to prices, with explicit `DATA_MISSING` and `LIQUIDITY_UNKNOWN` degraded states
+- data quality: USDY can use a config-driven Ondo oracle path without inventing a Pyth feed, while quote sampling remains fail-closed until exact AGNI and Merchant Moe read methods are verified
+
+Assumptions / unresolved verification items:
+
+- Ondo oracle method selector and final feed IDs still need verification before live USDY pricing is trusted end-to-end
+- AGNI and Merchant Moe quote methods are still represented as discovery and persistence scaffolding; live calldata and amount-out reads are not implemented yet
+- tests were added and updated but not executed in this turn
+
+Commands the user still needs to run:
+
+- install the new Python dependencies for SQLAlchemy and psycopg
+- provision PostgreSQL and set `DATABASE_URL`
+- verify the Ondo oracle selector and live feed IDs before relying on mainnet market outputs
+
+### 2026-05-21
+
+Type:
+Feature
+
+Summary:
+
 - started Phase 1 with market-data settings, asset registry wiring, Hermes/Pyth parsing, freshness evaluation, and initial `/market` API surfaces
 - added a price-ingestion service that derives mETH from ETH/USD plus ratio feeds when needed and keeps USDY explicitly unimplemented until Ondo oracle integration lands
 - added Phase 1 job and test scaffolding while keeping quote discovery and PostgreSQL persistence deferred to the next implementation slice
@@ -60,7 +108,9 @@ Assumptions / unresolved verification items:
 Commands the user still needs to run:
 
 - run the new unit and integration tests for freshness and market endpoints
-- verify the configured Hermes feed IDs and observe `/market/prices/latest` against your environment`r`n`r`n### 2026-05-21
+- verify the configured Hermes feed IDs and observe `/market/prices/latest` against your environment
+
+### 2026-05-21
 
 Type:
 Feature
@@ -311,5 +361,9 @@ Impact:
 - frontend:
 - data quality:
 ```
+
+
+
+
 
 

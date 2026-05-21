@@ -13,6 +13,9 @@ class RouteDescriptor(BaseModel):
     token_out: str
     route_path: list[str] = Field(default_factory=list)
     verification_state: str
+    route_id: str | None = None
+    fee_tier_or_bin_step: str | None = None
+    router_address: str | None = None
 
 
 class RawQuoteSnapshot(BaseModel):
@@ -55,3 +58,21 @@ class NormalizedQuoteSnapshot(BaseModel):
     status_code: str
     status_reason: str
     data_sources_used: list[str] = Field(default_factory=list)
+
+
+class LatestQuotesResponse(BaseModel):
+    status: str
+    status_code: str
+    status_label: str
+    status_reason: str
+    generated_at: datetime
+    quotes: list[NormalizedQuoteSnapshot] = Field(default_factory=list)
+
+
+class RoutesResponse(BaseModel):
+    status: str
+    status_code: str
+    status_label: str
+    status_reason: str
+    generated_at: datetime
+    routes: list[RouteDescriptor] = Field(default_factory=list)

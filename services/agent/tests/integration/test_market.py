@@ -25,6 +25,22 @@ class MarketEndpointTests(unittest.TestCase):
         self.assertIn("prices", body)
         self.assertIn("status_code", body)
 
+    def test_latest_quotes_endpoint_returns_structured_response(self) -> None:
+        response = self.client.get("/market/quotes/latest")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIn("quotes", body)
+        self.assertIn("status_code", body)
+
+    def test_routes_endpoint_returns_structured_response(self) -> None:
+        response = self.client.get("/market/routes")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIn("routes", body)
+        self.assertIn("status_code", body)
+
 
 if __name__ == "__main__":
     unittest.main()

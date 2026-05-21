@@ -70,20 +70,27 @@ class Settings(BaseSettings):
     trade_approval_manager_address: str | None = None
     executor_vault_address: str | None = None
     ondo_usdy_oracle_address: str | None = None
-    pyth_mainnet_contract: str | None = None
+    ondo_usdy_oracle_method_selector: str | None = None
+    ondo_usdy_oracle_decimals: int = 18
+    pyth_mainnet_contract: str | None = "0xA2aa501b19aff244D90cc15a4Cf739D2725B5729"
     pyth_sepolia_contract: str | None = None
-    agni_factory_address: str | None = None
-    agni_quoter_address: str | None = None
-    agni_quoter_v2_address: str | None = None
-    agni_swap_router_address: str | None = None
-    merchant_moe_router_address: str | None = None
-    merchant_moe_lb_router_address: str | None = None
-    merchant_moe_aggregator_router_address: str | None = None
-    merchant_moe_factory_address: str | None = None
-    merchant_moe_lb_factory_address: str | None = None
+    agni_mainnet_factory_address: str | None = "0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035"
+    agni_mainnet_quoter_address: str | None = "0x9488C05a7b75a6FefdcAE4f11a33467bcBA60177"
+    agni_mainnet_quoter_v2_address: str | None = "0xc4aaDc921E1cdb66c5300Bc158a313292923C0cb"
+    agni_mainnet_swap_router_address: str | None = "0x319B69888b0d11cEC22caA5034e25FfFBDc88421"
+    agni_sepolia_factory_address: str | None = "0xA9AcD50B042A72c33d05fDcC8ad209d3aD361762"
+    agni_sepolia_quoter_address: str | None = "0xA82F8dC4704d3512b120de70480219761F24B6Eb"
+    agni_sepolia_quoter_v2_address: str | None = "0x9Da17239a4170f50A5A2c11813BD0C601b5c9693"
+    agni_sepolia_swap_router_address: str | None = "0xe38cfa32cCd918d94E2e20230dFaD1A4Fd8aEF16"
+    merchant_moe_router_address: str | None = "0xeaEE7EE68874218c3558b40063c42B82D3E7232a"
+    merchant_moe_lb_router_address: str | None = "0x013e138EF6008ae5FDFDE29700e3f2Bc61d21E3a"
+    merchant_moe_aggregator_router_address: str | None = "0x45A62B090DF48243F12A21897e7ed91863E2c86b"
+    merchant_moe_factory_address: str | None = "0x5bef015ca9424a7c07b68490616a4c1f094bedec"
+    merchant_moe_lb_factory_address: str | None = "0xa6630671775c4EA2743840F9A5016dCf2A104054"
+    agni_fee_tiers: str = "500,3000,10000"
 
-    usdy_mainnet_address: str | None = None
-    meth_mainnet_address: str | None = None
+    usdy_mainnet_address: str | None = "0x5be26527e817998a7206475496fde1e68957c5a6"
+    meth_mainnet_address: str | None = "0xcDA86A272531e8640cD7F1a92c01839911B90bb0"
     meth_sepolia_address: str | None = None
     wmnt_mainnet_address: str | None = None
     usdc_mainnet_address: str | None = None
@@ -138,6 +145,30 @@ class Settings(BaseSettings):
         return self.mantle_sepolia_chain_id
 
     @property
+    def effective_agni_factory_address(self) -> str | None:
+        if self.target_chain == TargetChain.MANTLE_MAINNET:
+            return self.agni_mainnet_factory_address
+        return self.agni_sepolia_factory_address
+
+    @property
+    def effective_agni_quoter_address(self) -> str | None:
+        if self.target_chain == TargetChain.MANTLE_MAINNET:
+            return self.agni_mainnet_quoter_address
+        return self.agni_sepolia_quoter_address
+
+    @property
+    def effective_agni_quoter_v2_address(self) -> str | None:
+        if self.target_chain == TargetChain.MANTLE_MAINNET:
+            return self.agni_mainnet_quoter_v2_address
+        return self.agni_sepolia_quoter_v2_address
+
+    @property
+    def effective_agni_swap_router_address(self) -> str | None:
+        if self.target_chain == TargetChain.MANTLE_MAINNET:
+            return self.agni_mainnet_swap_router_address
+        return self.agni_sepolia_swap_router_address
+
+    @property
     def subsystem_log_levels(self) -> dict[str, str]:
         return {
             "market_data": self.log_market_data or self.log_level,
@@ -151,6 +182,10 @@ class Settings(BaseSettings):
             "alerts": self.log_alerts or self.log_level,
             "db": self.log_db or self.log_level,
         }
+
+    @property
+    def parsed_agni_fee_tiers(self) -> list[int]:
+        return [int(value.strip()) for value in self.agni_fee_tiers.split(",") if value.strip()]
 
     @property
     def asset_registry(self) -> dict[str, dict[str, object]]:
@@ -167,6 +202,7 @@ class Settings(BaseSettings):
                 "pyth_feed_id": self.usdy_pyth_feed_id,
                 "ratio_feed_id": None,
                 "ondo_oracle_address": self.ondo_usdy_oracle_address,
+                "decimals": 18,
             },
             "METH_MAINNET": {
                 "asset_key": "METH_MAINNET",
@@ -180,6 +216,7 @@ class Settings(BaseSettings):
                 "pyth_feed_id": self.meth_usd_pyth_feed_id,
                 "ratio_feed_id": self.meth_eth_ratio_feed_id,
                 "ondo_oracle_address": None,
+                "decimals": 18,
             },
             "METH_SEPOLIA": {
                 "asset_key": "METH_SEPOLIA",
@@ -193,6 +230,7 @@ class Settings(BaseSettings):
                 "pyth_feed_id": self.meth_usd_pyth_feed_id,
                 "ratio_feed_id": self.meth_eth_ratio_feed_id,
                 "ondo_oracle_address": None,
+                "decimals": 18,
             },
         }
 

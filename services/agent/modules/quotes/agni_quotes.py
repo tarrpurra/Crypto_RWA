@@ -1,3 +1,3 @@
 from __future__ import annotations
 
-# Phase 1 quote discovery is not implemented yet.
+# AGNI-specific live quote calldata is still verification-gated. Route discovery is handled in QuoteService.

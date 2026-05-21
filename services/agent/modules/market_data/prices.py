@@ -5,10 +5,10 @@ from decimal import Decimal
 from uuid import uuid4
 
 from services.agent.app.core.settings import Settings, get_settings
-from services.agent.app.core.status_codes import DataStatusCode, TargetChain
+from services.agent.app.core.status_codes import DataStatusCode
 from services.agent.app.schemas.market_data import AssetIngestionStatus, AssetMetadata, NormalizedPriceSnapshot, RawPriceSnapshot
 from services.agent.modules.market_data.snapshots import PriceIngestionBundle
-from services.agent.modules.oracle import HermesClient, age_seconds, evaluate_freshness, parse_hermes_price_update, utc_now
+from services.agent.modules.oracle import HermesClient, OndoOracleClient, age_seconds, evaluate_freshness, parse_hermes_price_update, utc_now
 
 
 @dataclass(frozen=True)
@@ -25,6 +25,7 @@ class PriceService:
             base_url=self.settings.pyth_hermes_url,
             latest_price_path=self.settings.pyth_hermes_latest_price_path,
         )
+        self.ondo_client = OndoOracleClient(self.settings.effective_http_rpc_url)
 
     def asset_metadata_for_target_chain(self) -> list[AssetMetadata]:
         target_chain_id = self.settings.effective_chain_id
@@ -38,9 +39,9 @@ class PriceService:
         statuses: list[AssetIngestionStatus] = []
         for asset in self.asset_metadata_for_target_chain():
             if asset.symbol == "USDY":
-                configured = bool(asset.address and asset.ondo_oracle_address)
+                configured = bool(asset.address and asset.ondo_oracle_address and self.settings.ondo_usdy_oracle_method_selector)
                 status = "ok" if configured else "missing"
-                reason = "USDY oracle and address are configured." if configured else "USDY still needs verified Ondo oracle and asset address configuration."
+                reason = "USDY oracle, selector, and address are configured." if configured else "USDY still needs verified Ondo oracle address and method selector configuration."
                 statuses.append(
                     AssetIngestionStatus(
                         asset_key=asset.asset_key,
@@ -49,7 +50,7 @@ class PriceService:
                         status=status,
                         status_code=DataStatusCode.DATA_FRESH.value if configured else DataStatusCode.DATA_MISSING.value,
                         status_reason=reason,
-                        required_sources=["ondo_redemption_oracle", "dex_quote"],
+                        required_sources=["ondo_redemption_oracle", "dex_quote", "liquidity_check"],
                     )
                 )
                 continue
@@ -113,7 +114,7 @@ class PriceService:
     def _is_verified_feed_id(feed_id: str | None) -> bool:
         return bool(feed_id and not str(feed_id).upper().startswith("TODO_"))
 
-    def _missing_snapshot(self, asset: AssetMetadata, reason: str, status: str = "missing") -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
+    def _missing_snapshot(self, asset: AssetMetadata, reason: str, status: str = "missing", status_code: str | None = None) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
         now = utc_now()
         return [], NormalizedPriceSnapshot(
             snapshot_id=str(uuid4()),
@@ -123,7 +124,7 @@ class PriceService:
             chain_id=asset.chain_id,
             observed_timestamp=now,
             freshness_status=status,
-            status_code=DataStatusCode.DATA_MISSING.value,
+            status_code=status_code or DataStatusCode.DATA_MISSING.value,
             status_reason=reason,
             derivation_method=None,
             data_sources_used=[],
@@ -132,11 +133,7 @@ class PriceService:
 
     def _build_asset_price(self, asset: AssetMetadata, hermes_response, parsed_by_feed_id: dict[str, object]) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
         if asset.symbol == "USDY":
-            return self._missing_snapshot(
-                asset,
-                "USDY reference pricing is locked to the Ondo redemption oracle, which is not implemented in this service yet.",
-                status="unverified",
-            )
+            return self._build_usdy_price(asset)
 
         inputs = self._price_inputs(asset)
         if not inputs.eth_usd_feed_id:
@@ -155,6 +152,71 @@ class PriceService:
             return self._build_ratio_snapshot(asset, hermes_response, eth_obs, ratio_obs)
 
         return self._missing_snapshot(asset, "mETH direct or ratio feed data is not available yet.", status="unverified")
+
+    def _build_usdy_price(self, asset: AssetMetadata) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
+        if not asset.ondo_oracle_address or not self.settings.ondo_usdy_oracle_method_selector:
+            return self._missing_snapshot(
+                asset,
+                "USDY requires a verified Ondo oracle address and method selector before live price reads can be trusted.",
+                status="unverified",
+            )
+        try:
+            observation = self.ondo_client.fetch_redemption_price(
+                oracle_address=asset.ondo_oracle_address,
+                method_selector=self.settings.ondo_usdy_oracle_method_selector,
+                decimals=self.settings.ondo_usdy_oracle_decimals,
+            )
+        except Exception as exc:
+            return self._missing_snapshot(asset, f"Ondo oracle read failed: {exc}", status="missing")
+
+        now = utc_now()
+        raw_snapshot = RawPriceSnapshot(
+            snapshot_id=str(uuid4()),
+            asset_key=asset.asset_key,
+            asset_symbol=asset.symbol,
+            asset_address=asset.address,
+            chain_id=asset.chain_id,
+            feed_id=None,
+            source="ondo_redemption_oracle",
+            source_url=None,
+            raw_payload_json={"oracle_address": asset.ondo_oracle_address, "method_selector": self.settings.ondo_usdy_oracle_method_selector},
+            fetch_timestamp=now,
+            publish_timestamp=observation.publish_time,
+            price_raw=str(observation.price),
+            confidence_raw=None,
+            exponent=None,
+            status="ok",
+            status_code=DataStatusCode.ORACLE_FRESH.value,
+            status_reason="USDY redemption price fetched from the configured Ondo oracle.",
+        )
+        freshness = evaluate_freshness(
+            age_in_seconds=age_seconds(observation.publish_time, now),
+            fresh_limit_seconds=self.settings.ondo_usdy_oracle_fresh_limit_seconds,
+            warn_after_seconds=self.settings.ondo_usdy_oracle_warn_seconds,
+            hard_block_after_seconds=self.settings.ondo_usdy_oracle_hard_block_seconds,
+            fresh_code=DataStatusCode.ORACLE_FRESH.value,
+            stale_code=DataStatusCode.ORACLE_STALE.value,
+            source_label="USDY redemption oracle",
+        )
+        normalized = NormalizedPriceSnapshot(
+            snapshot_id=str(uuid4()),
+            asset_key=asset.asset_key,
+            asset_symbol=asset.symbol,
+            asset_address=asset.address,
+            chain_id=asset.chain_id,
+            price_usd=str(observation.price),
+            confidence_interval_usd=None,
+            publish_timestamp=observation.publish_time,
+            observed_timestamp=now,
+            age_seconds=freshness.age_seconds,
+            freshness_status=freshness.status,
+            status_code=DataStatusCode.LIQUIDITY_UNKNOWN.value if not freshness.hard_blocked else freshness.status_code,
+            status_reason="USDY oracle price is available, but DEX quote and liquidity validation are still required for execution readiness.",
+            derivation_method="ondo_redemption_oracle",
+            data_sources_used=["ondo_redemption_oracle"],
+            raw_snapshot_ids=[raw_snapshot.snapshot_id],
+        )
+        return [raw_snapshot], normalized
 
     def _build_direct_snapshot(self, asset: AssetMetadata, hermes_response, observation, derivation_method: str) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
         now = utc_now()
