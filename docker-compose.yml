@@ -1,4 +1,23 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: rwa-postgres
+    environment:
+      POSTGRES_DB: aixrwa
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U postgres -d aixrwa
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   foundry:
     build:
       context: .
@@ -21,17 +40,7 @@ services:
           forge install OpenZeppelin/openzeppelin-contracts;
         fi;
         tail -f /dev/null
-  db:
-    image: postgres:15-alpine
-    container_name: rwa-db
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: aixrwa
-    ports:
-      - "5432:5432"
-    volumes:
-      - rwa-db-data:/var/lib/postgresql/data
+
   ollama:
     image: ollama/ollama:latest
     container_name: rwa-ollama
@@ -39,6 +48,7 @@ services:
       - "11434:11434"
     volumes:
       - rwa-ollama-data:/root/.ollama
+
   backend:
     build:
       context: .
@@ -47,12 +57,13 @@ services:
     container_name: rwa-backend
     working_dir: /workspace
     depends_on:
-      - db
+      postgres:
+        condition: service_healthy
     env_file:
       - ./services/agent/.env.example
     environment:
       PYTHONPATH: /workspace
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/aixrwa
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/aixrwa
       OLLAMA_URL: http://ollama:11434
     volumes:
       - ./:/workspace
@@ -67,5 +78,5 @@ services:
       - "8000"
 
 volumes:
-  rwa-db-data:
+  postgres-data:
   rwa-ollama-data:

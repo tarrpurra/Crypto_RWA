@@ -62,6 +62,143 @@ Commands to run after this change:
 - `python -m unittest services.agent.tests.unit.test_allocation services.agent.tests.unit.test_ai_fallback services.agent.tests.integration.test_portfolio_endpoints -v`
 - `python -m unittest discover services.agent.tests -v`
 
+### 2026-05-23
+
+Type:
+Feature
+
+Summary:
+
+- started Phase 2 with a dedicated portfolio analytics plan and the first safe implementation slice
+- added typed portfolio balance, position, and current snapshot schemas
+- added a deterministic portfolio snapshot engine that values supplied balances from fresh price snapshots and marks missing or unpriced inputs as degraded
+- exposed `GET /portfolio/current` as a stable Phase 2 API surface that returns `DATA_MISSING` instead of inventing balances when no portfolio address or balance source is configured
+
+Affected scope:
+
+- docs/ai-data-analytics/Phase2.md
+- docs/ai-data-analytics/README.md
+- docs/ai-data-analytics/Changes.md
+- services/agent/.env.example
+- services/agent/app/core/settings.py
+- services/agent/app/api/__init__.py
+- services/agent/app/api/portfolio.py
+- services/agent/app/main.py
+- services/agent/app/schemas/__init__.py
+- services/agent/app/schemas/portfolio.py
+- services/agent/modules/market_data/balances.py
+- services/agent/tests/integration/test_portfolio.py
+- services/agent/tests/unit/test_portfolio_snapshot.py
+
+Impact:
+
+- smart contracts: no execution-facing behavior added; configured executor vault can be used as portfolio metadata later, but no on-chain balance reads are claimed yet
+- frontend: can begin integrating a stable `/portfolio/current` response shape, including empty/degraded state handling
+- data quality: portfolio analytics now fail safely when balances or prices are unavailable, preserving Phase 1 degraded-data semantics
+
+Assumptions / unresolved verification items:
+
+- live wallet or vault balance reads are not implemented in this slice
+- historical portfolio snapshot persistence is still pending
+- allocation drift, route-depth impact, and target-delta analytics remain later Phase 2 work
+- strict Phase 1B mainnet or mainnet-fork validation is still required before live market-derived portfolio decisions can be trusted
+
+Commands executed:
+
+- `python -m unittest services.agent.tests.unit.test_portfolio_snapshot services.agent.tests.integration.test_portfolio -v`
+
+### 2026-05-23
+
+Type:
+Validation / Documentation
+
+Summary:
+
+- recorded Phase 1 as Sepolia scaffold complete while keeping strict mainnet or mainnet-fork market validation pending
+- added PostgreSQL to Docker Compose for local persistence validation and confirmed safe read endpoints can execute against the running backend
+- hardened `/chain/status` so unavailable or invalid RPC configuration returns structured degraded data instead of an HTTP 500
+- changed blank QuickNode defaults so local Sepolia runs fall back to the public Mantle Sepolia RPC unless real QuickNode URLs are explicitly configured
+
+Affected scope:
+
+- docker-compose.yml
+- services/agent/.env.example
+- services/agent/app/api/chain.py
+- services/agent/app/schemas/chain.py
+- services/agent/tests/integration/test_chain.py
+- docs/ai-data-analytics/Phase1.md
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: contract metadata endpoints remain usable without deployed Sepolia addresses, while deployed-state reads stay null until addresses are configured
+- frontend: `/chain/status` and market endpoints now expose stable degraded responses that can be rendered without treating expected Sepolia gaps as crashes
+- data quality: Sepolia missing-market-data behavior is explicitly documented and does not substitute WETH, mocks, or candidate addresses for mETH, USDY, AGNI, or Merchant Moe validation
+
+Assumptions / unresolved verification items:
+
+- strict Phase 1 remains pending until Mantle mainnet or a mainnet fork validates Ondo USDY oracle reads, Pyth ETH/USD fetches, AGNI quotes, Merchant Moe quotes, and PostgreSQL write/read round trips
+- real QuickNode endpoints are optional for local Sepolia RPC status and should be configured only when available
+- AGNI Sepolia addresses remain candidate-only and Merchant Moe/Ondo remain mainnet-only unless independently verified
+
+Commands executed:
+
+- `docker compose config`
+- local-safe HTTP GET checks against `/health`, `/status`, `/chain/status`, `/contracts`, `/market/ingestion/status`, `/market/prices/latest`, `/market/oracles/usdy`, `/market/routes`, and quote endpoints
+- `python -m unittest services.agent.tests.integration.test_chain -v`
+
+### 2026-05-22
+
+Type:
+Feature
+
+Summary:
+
+- aligned the Phase 1 config baseline with the locked Mantle mainnet integration spec for Ondo, Merchant Moe, AGNI, and Pyth ETH/USD
+- added an explicit Ondo USDY oracle adapter and status surface plus split AGNI and Merchant Moe route discovery into dedicated modules instead of leaving everything inside one quote service placeholder
+- added a shared versioned Mantle config file under `packages/config/src/mantle.ts` and extended market APIs with `/market/oracles/usdy` while keeping live quote decoding verification-gated instead of fabricating outputs
+
+Affected scope:
+
+- packages/config/src/mantle.ts
+- services/agent/app/core/settings.py
+- services/agent/app/api/market.py
+- services/agent/app/schemas/oracle.py
+- services/agent/app/schemas/quotes.py
+- services/agent/modules/oracle/ondo_usdy_oracle.py
+- services/agent/modules/oracle/__init__.py
+- services/agent/modules/market_data/prices.py
+- services/agent/modules/quotes/agni_discovery.py
+- services/agent/modules/quotes/agni_quotes.py
+- services/agent/modules/quotes/merchant_moe_discovery.py
+- services/agent/modules/quotes/merchant_moe_quotes.py
+- services/agent/modules/quotes/service.py
+- services/agent/modules/quotes/__init__.py
+- services/agent/.env.example
+- services/agent/tests/integration/test_market.py
+- services/agent/tests/unit/test_ondo_usdy_oracle.py
+- docs/ai-data-analytics/Phase1.md
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: backend route metadata now maps more cleanly to the off-chain discovery versus on-chain enforcement split, with routers and route families surfaced without pretending execution calldata is ready
+- frontend: market surfaces now include an explicit USDY oracle status endpoint and route descriptors can carry discovered pool addresses and verification state
+- data quality: verified Mantle mainnet addresses and the ETH/USD feed are now first-class defaults, while selector and quote-decoding gaps remain explicit degraded states instead of hidden assumptions
+
+Assumptions / unresolved verification items:
+
+- Ondo oracle selector and ABI method still require primary-source verification before live USDY oracle reads can be marked trusted
+- AGNI QuoterV2 decoding and Merchant Moe live quote decoding are still verification-gated, so discovered routes do not yet imply executable quote amounts
+- tests were updated but not executed in this turn
+
+Commands the user still needs to run:
+
+- install the Python dependencies if they are not already present
+- provision PostgreSQL and set `DATABASE_URL`
+- run the updated agent unit and integration tests
+- verify the Ondo selector plus AGNI and Merchant Moe quote call shapes before claiming live-quote completeness
+
 ### 2026-05-21
 
 Type:
@@ -70,7 +207,7 @@ Feature
 Summary:
 
 - added PostgreSQL-backed market-data persistence using SQLAlchemy models, session wiring, and a repository for price and quote snapshots
-- introduced a config-driven Ondo USDY oracle client plus quote route discovery, ranking, and `/market/quotes/latest` and `/market/routes` APIs
+- introduced a config-driven Ondo USDY oracle client plus quote route discovery, ranking, route caching, and `/market/quotes/latest`, `/market/quotes/{token_in}/{token_out}`, `/market/quotes/{token_in}/{token_out}/best`, and `/market/routes` APIs
 - made market API persistence best-effort while keeping ingestion jobs persistence-aware, so the service can still expose degraded read surfaces before PostgreSQL or live quote methods are fully verified
 
 Affected scope:
@@ -406,9 +543,3 @@ Impact:
 - frontend:
 - data quality:
 ```
-
-
-
-
-
-

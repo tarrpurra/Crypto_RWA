@@ -25,6 +25,14 @@ class MarketEndpointTests(unittest.TestCase):
         self.assertIn("prices", body)
         self.assertIn("status_code", body)
 
+    def test_usdy_oracle_status_endpoint_returns_structured_response(self) -> None:
+        response = self.client.get("/market/oracles/usdy")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["asset"], "USDY")
+        self.assertIn("status", body)
+
     def test_latest_quotes_endpoint_returns_structured_response(self) -> None:
         response = self.client.get("/market/quotes/latest")
 
@@ -32,6 +40,19 @@ class MarketEndpointTests(unittest.TestCase):
         body = response.json()
         self.assertIn("quotes", body)
         self.assertIn("status_code", body)
+
+    def test_pair_quotes_endpoint_returns_structured_response(self) -> None:
+        response = self.client.get("/market/quotes/USDY/mETH")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIn("quotes", body)
+        self.assertIn("status_code", body)
+
+    def test_best_quote_endpoint_returns_not_found_when_no_pair_exists(self) -> None:
+        response = self.client.get("/market/quotes/FOO/BAR/best")
+
+        self.assertEqual(response.status_code, 404)
 
     def test_routes_endpoint_returns_structured_response(self) -> None:
         response = self.client.get("/market/routes")

@@ -3,14 +3,14 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from services.agent.app.api import (
+    allocation_router,
     chain_router,
     contracts_router,
+    decisions_router,
     health_router,
     market_router,
     portfolio_router,
     risk_router,
-    allocation_router,
-    decisions_router,
 )
 from services.agent.app.core.logging import configure_logging
 from services.agent.app.core.settings import get_settings
