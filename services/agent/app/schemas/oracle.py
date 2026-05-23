@@ -18,3 +18,15 @@ class PythPricePoint(BaseModel):
     price: str
     confidence: str
     exponent: int
+
+
+class OndoUsdyOracleStatus(BaseModel):
+    asset: str
+    source: str
+    chain_id: int = Field(serialization_alias="chainId")
+    address: str
+    price: str | None = None
+    scale: str | None = None
+    updated_at: datetime | None = Field(default=None, serialization_alias="updatedAt")
+    ingested_at: datetime = Field(serialization_alias="ingestedAt")
+    status: str

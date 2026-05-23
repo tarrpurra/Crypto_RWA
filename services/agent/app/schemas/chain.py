@@ -10,10 +10,11 @@ class ChainStatusResponse(BaseModel):
     status_code: str
     status_label: str
     status_reason: str
-    chain_id: int
-    latest_block: int
+    chain_id: int | None = None
+    latest_block: int | None = None
     rpc_url: str
     websocket_enabled: bool
+    rpc_error: str | None = None
     pause_guardian: dict[str, Any] | None = None
     trade_approval_manager: dict[str, Any] | None = None
     executor_vault: dict[str, Any] | None = None

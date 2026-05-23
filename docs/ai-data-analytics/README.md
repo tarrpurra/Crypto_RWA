@@ -20,6 +20,7 @@ This folder contains the working documentation for the AI + Data Analytics servi
 - [ImplementationPlan.md](./ImplementationPlan.md)
 - [Phase0.md](./Phase0.md)
 - [Phase1.md](./Phase1.md)
+- [Phase2.md](./Phase2.md)
 - [recommendation_model.md](./recommendation_model.md)
 - [Changes.md](./Changes.md)
 
@@ -29,5 +30,6 @@ This folder contains the working documentation for the AI + Data Analytics servi
 - use `ImplementationPlan.md` as the build and delivery guide
 - use `Phase0.md` as the bootstrap execution guide
 - use `Phase1.md` as the market and oracle ingestion execution guide
+- use `Phase2.md` as the portfolio analytics execution guide
 - use `recommendation_model.md` as the canonical runtime, status, error, and recommendation-output decision contract
 - update `Changes.md` whenever scope, APIs, risk logic, or analytics behavior changes

@@ -53,6 +53,8 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql://postgres:postgres@localhost:5432/aixrwa"
     redis_url: str | None = None
+    portfolio_wallet_address: str | None = None
+    portfolio_base_currency: str = "USD"
 
     pyth_hermes_url: str = "https://hermes.pyth.network"
     pyth_hermes_latest_price_path: str = "/v2/updates/price/latest"
@@ -69,11 +71,15 @@ class Settings(BaseSettings):
     pause_guardian_address: str | None = None
     trade_approval_manager_address: str | None = None
     executor_vault_address: str | None = None
-    ondo_usdy_oracle_address: str | None = None
+
+    ondo_usdy_oracle_address: str | None = "0xA96abbe61AfEdEB0D14a20440Ae7100D9aB4882f"
     ondo_usdy_oracle_method_selector: str | None = None
     ondo_usdy_oracle_decimals: int = 18
+    ondo_usdy_blocklist_address: str | None = "0xdBd7a7d8807f0C98c9A58f7732f2799c8587e5c6"
+
     pyth_mainnet_contract: str | None = "0xA2aa501b19aff244D90cc15a4Cf739D2725B5729"
     pyth_sepolia_contract: str | None = None
+
     agni_mainnet_factory_address: str | None = "0x25780dc8Fc3cfBD75F33bFDAB65e969b603b2035"
     agni_mainnet_quoter_address: str | None = "0x9488C05a7b75a6FefdcAE4f11a33467bcBA60177"
     agni_mainnet_quoter_v2_address: str | None = "0xc4aaDc921E1cdb66c5300Bc158a313292923C0cb"
@@ -82,21 +88,24 @@ class Settings(BaseSettings):
     agni_sepolia_quoter_address: str | None = "0xA82F8dC4704d3512b120de70480219761F24B6Eb"
     agni_sepolia_quoter_v2_address: str | None = "0x9Da17239a4170f50A5A2c11813BD0C601b5c9693"
     agni_sepolia_swap_router_address: str | None = "0xe38cfa32cCd918d94E2e20230dFaD1A4Fd8aEF16"
+
     merchant_moe_router_address: str | None = "0xeaEE7EE68874218c3558b40063c42B82D3E7232a"
     merchant_moe_lb_router_address: str | None = "0x013e138EF6008ae5FDFDE29700e3f2Bc61d21E3a"
     merchant_moe_aggregator_router_address: str | None = "0x45A62B090DF48243F12A21897e7ed91863E2c86b"
     merchant_moe_factory_address: str | None = "0x5bef015ca9424a7c07b68490616a4c1f094bedec"
     merchant_moe_lb_factory_address: str | None = "0xa6630671775c4EA2743840F9A5016dCf2A104054"
-    agni_fee_tiers: str = "500,3000,10000"
 
-    usdy_mainnet_address: str | None = "0x5be26527e817998a7206475496fde1e68957c5a6"
+    agni_fee_tiers: str = "100,500,3000,10000"
+
+    usdy_mainnet_address: str | None = "0x5bE26527e817998A7206475496fDE1E68957c5A6"
+    musd_mainnet_address: str | None = "0xab575258d37EaA5C8956EfABe71F4eE8F6397cF3"
     meth_mainnet_address: str | None = "0xcDA86A272531e8640cD7F1a92c01839911B90bb0"
     meth_sepolia_address: str | None = None
-    wmnt_mainnet_address: str | None = None
-    usdc_mainnet_address: str | None = None
-    weth_mainnet_address: str | None = None
+    wmnt_mainnet_address: str | None = "0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"
+    usdc_mainnet_address: str | None = "0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9"
+    weth_mainnet_address: str | None = "0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111"
 
-    eth_usd_pyth_feed_id: str | None = None
+    eth_usd_pyth_feed_id: str | None = "0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace"
     usdy_pyth_feed_id: str | None = None
     meth_usd_pyth_feed_id: str | None = None
     meth_eth_ratio_feed_id: str | None = None
@@ -229,6 +238,34 @@ class Settings(BaseSettings):
                 "verified": bool(self.meth_sepolia_address),
                 "pyth_feed_id": self.meth_usd_pyth_feed_id,
                 "ratio_feed_id": self.meth_eth_ratio_feed_id,
+                "ondo_oracle_address": None,
+                "decimals": 18,
+            },
+            "USDC_MAINNET": {
+                "asset_key": "USDC_MAINNET",
+                "symbol": "USDC",
+                "chain_id": self.mantle_mainnet_chain_id,
+                "address": self.usdc_mainnet_address,
+                "price_strategy": "route_helper",
+                "primary_reference_source": "dex_quote_only",
+                "dex_quote_required": True,
+                "verified": bool(self.usdc_mainnet_address),
+                "pyth_feed_id": None,
+                "ratio_feed_id": None,
+                "ondo_oracle_address": None,
+                "decimals": 6,
+            },
+            "WMNT_MAINNET": {
+                "asset_key": "WMNT_MAINNET",
+                "symbol": "WMNT",
+                "chain_id": self.mantle_mainnet_chain_id,
+                "address": self.wmnt_mainnet_address,
+                "price_strategy": "route_helper",
+                "primary_reference_source": "dex_quote_only",
+                "dex_quote_required": True,
+                "verified": bool(self.wmnt_mainnet_address),
+                "pyth_feed_id": None,
+                "ratio_feed_id": None,
                 "ondo_oracle_address": None,
                 "decimals": 18,
             },
