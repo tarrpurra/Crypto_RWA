@@ -5,8 +5,10 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from services.agent.app.schemas.market_data import LatestPricesResponse, MarketIngestionStatusResponse, NormalizedPriceSnapshot
-from services.agent.app.schemas.quotes import LatestQuotesResponse, RoutesResponse
+from services.agent.app.schemas.oracle import OndoUsdyOracleStatus
+from services.agent.app.schemas.quotes import LatestQuotesResponse, NormalizedQuoteSnapshot, RoutesResponse
 from services.agent.modules.market_data import PRICE_SNAPSHOT_STORE, QUOTE_SNAPSHOT_STORE, get_price_service
+from services.agent.modules.oracle import get_ondo_usdy_oracle_adapter
 from services.agent.modules.oracle.freshness import utc_now
 from services.agent.modules.quotes import get_quote_service
 from services.agent.repositories.db.market_repository import MarketDataRepository
@@ -28,6 +30,29 @@ def _save_quotes_best_effort(bundle) -> None:
         MarketDataRepository().save_quote_bundle(bundle)
     except Exception as exc:
         logger.warning("Quote snapshot persistence failed: %s", exc)
+
+
+def _quote_response_from_snapshots(quotes: list[NormalizedQuoteSnapshot], *, reason_if_empty: str) -> LatestQuotesResponse:
+    status_code = "QUOTE_FRESH"
+    status = "ok"
+    status_reason = "Latest quote snapshots sampled successfully."
+    if not quotes:
+        status_code = "DATA_MISSING"
+        status = "degraded"
+        status_reason = reason_if_empty
+    elif any(snapshot.amount_out is None for snapshot in quotes):
+        status_code = "LIQUIDITY_UNKNOWN"
+        status = "degraded"
+        status_reason = "Quote surfaces are configured, but live sampling is still verification-gated."
+
+    return LatestQuotesResponse(
+        status=status,
+        status_code=status_code,
+        status_label=status_code,
+        status_reason=status_reason,
+        generated_at=utc_now(),
+        quotes=quotes,
+    )
 
 
 @router.get("/prices/latest", response_model=LatestPricesResponse)
@@ -76,33 +101,48 @@ async def latest_price_for_asset(asset_symbol: str) -> NormalizedPriceSnapshot:
     raise HTTPException(status_code=404, detail=f"Unknown asset symbol: {asset_symbol}")
 
 
+@router.get("/oracles/usdy", response_model=OndoUsdyOracleStatus)
+def latest_usdy_oracle_status() -> OndoUsdyOracleStatus:
+    return get_ondo_usdy_oracle_adapter().read().status
+
+
 @router.get("/quotes/latest", response_model=LatestQuotesResponse)
 async def latest_quotes() -> LatestQuotesResponse:
     service = get_quote_service()
     bundle = service.sample_latest_quotes()
     QUOTE_SNAPSHOT_STORE.write(bundle)
     _save_quotes_best_effort(bundle)
-
-    status_code = "QUOTE_FRESH"
-    status = "ok"
-    status_reason = "Latest quote snapshots sampled successfully."
-    if not bundle.normalized_snapshots:
-        status_code = "DATA_MISSING"
-        status = "degraded"
-        status_reason = "No quote routes are currently discoverable for the configured target chain."
-    elif any(snapshot.amount_out is None for snapshot in bundle.normalized_snapshots):
-        status_code = "LIQUIDITY_UNKNOWN"
-        status = "degraded"
-        status_reason = "Quote surfaces are configured, but live sampling is still verification-gated."
-
-    return LatestQuotesResponse(
-        status=status,
-        status_code=status_code,
-        status_label=status_code,
-        status_reason=status_reason,
-        generated_at=utc_now(),
-        quotes=bundle.normalized_snapshots,
+    return _quote_response_from_snapshots(
+        bundle.normalized_snapshots,
+        reason_if_empty="No quote routes are currently discoverable for the configured target chain.",
     )
+
+
+@router.get("/quotes/{token_in}/{token_out}", response_model=LatestQuotesResponse)
+def latest_quotes_for_pair(token_in: str, token_out: str) -> LatestQuotesResponse:
+    service = get_quote_service()
+    quotes = service.latest_quotes_for_pair(token_in, token_out)
+    return _quote_response_from_snapshots(
+        quotes,
+        reason_if_empty=f"No quote routes are currently discoverable for {token_in}/{token_out} on the configured target chain.",
+    )
+
+
+@router.get("/quotes/{token_in}/{token_out}/best", response_model=NormalizedQuoteSnapshot)
+def best_quote_for_pair(token_in: str, token_out: str) -> NormalizedQuoteSnapshot:
+    service = get_quote_service()
+    best_quote = service.best_quote_for_pair(token_in, token_out)
+    if best_quote is not None:
+        return best_quote
+
+    try:
+        persisted = MarketDataRepository().latest_best_quote_for_pair(token_in, token_out)
+        if persisted is not None:
+            return persisted
+    except Exception as exc:
+        logger.warning("Best quote lookup failed: %s", exc)
+
+    raise HTTPException(status_code=404, detail=f"No quote route available for {token_in}/{token_out}")
 
 
 @router.get("/routes", response_model=RoutesResponse)
@@ -130,7 +170,7 @@ async def ingestion_status() -> MarketIngestionStatusResponse:
     overall_status_code = "DATA_FRESH"
     overall_status = "ok"
     overall_reason = "All configured market-data inputs are ready."
-    if any(not status.configured for status in asset_statuses):
+    if any(not status.configured or status.status != "ok" for status in asset_statuses):
         overall_status_code = "DATA_PARTIAL"
         overall_status = "degraded"
         overall_reason = "Some market-data inputs are still missing or unverified."
@@ -143,4 +183,3 @@ async def ingestion_status() -> MarketIngestionStatusResponse:
         generated_at=utc_now(),
         assets=asset_statuses,
     )
-

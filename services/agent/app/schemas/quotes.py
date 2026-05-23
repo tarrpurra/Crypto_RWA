@@ -16,6 +16,7 @@ class RouteDescriptor(BaseModel):
     route_id: str | None = None
     fee_tier_or_bin_step: str | None = None
     router_address: str | None = None
+    pool_address: str | None = None
 
 
 class RawQuoteSnapshot(BaseModel):
@@ -45,6 +46,7 @@ class NormalizedQuoteSnapshot(BaseModel):
     protocol: str
     route_id: str
     route_label: str
+    chain_id: int
     token_in_symbol: str
     token_out_symbol: str
     amount_in: str

@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
 from uuid import uuid4
 
 from services.agent.app.core.settings import Settings, get_settings
 from services.agent.app.core.status_codes import DataStatusCode
 from services.agent.app.schemas.market_data import AssetIngestionStatus, AssetMetadata, NormalizedPriceSnapshot, RawPriceSnapshot
 from services.agent.modules.market_data.snapshots import PriceIngestionBundle
-from services.agent.modules.oracle import HermesClient, OndoOracleClient, age_seconds, evaluate_freshness, parse_hermes_price_update, utc_now
+from services.agent.modules.oracle import (
+    HermesClient,
+    OndoUsdyOracleAdapter,
+    age_seconds,
+    evaluate_freshness,
+    parse_hermes_price_update,
+    utc_now,
+)
 
 
 @dataclass(frozen=True)
@@ -25,13 +31,13 @@ class PriceService:
             base_url=self.settings.pyth_hermes_url,
             latest_price_path=self.settings.pyth_hermes_latest_price_path,
         )
-        self.ondo_client = OndoOracleClient(self.settings.effective_http_rpc_url)
+        self.ondo_usdy_adapter = OndoUsdyOracleAdapter(self.settings)
 
     def asset_metadata_for_target_chain(self) -> list[AssetMetadata]:
         target_chain_id = self.settings.effective_chain_id
         assets: list[AssetMetadata] = []
         for raw_asset in self.settings.asset_registry.values():
-            if raw_asset["chain_id"] == target_chain_id:
+            if raw_asset["chain_id"] == target_chain_id and raw_asset["price_strategy"] != "route_helper":
                 assets.append(AssetMetadata(**raw_asset))
         return assets
 
@@ -39,9 +45,15 @@ class PriceService:
         statuses: list[AssetIngestionStatus] = []
         for asset in self.asset_metadata_for_target_chain():
             if asset.symbol == "USDY":
-                configured = bool(asset.address and asset.ondo_oracle_address and self.settings.ondo_usdy_oracle_method_selector)
-                status = "ok" if configured else "missing"
-                reason = "USDY oracle, selector, and address are configured." if configured else "USDY still needs verified Ondo oracle address and method selector configuration."
+                selector = self.settings.ondo_usdy_oracle_method_selector or ""
+                configured = bool(asset.address and asset.ondo_oracle_address)
+                selector_verified = bool(selector and not selector.upper().startswith("TODO_"))
+                status = "ok" if configured and selector_verified else "unverified"
+                reason = (
+                    "USDY mainnet oracle address is configured and selector is verified."
+                    if configured and selector_verified
+                    else "USDY uses the confirmed Ondo mainnet oracle address, but selector verification is still required before live price reads are trusted."
+                )
                 statuses.append(
                     AssetIngestionStatus(
                         asset_key=asset.asset_key,
@@ -56,7 +68,7 @@ class PriceService:
                 continue
 
             inputs = self._price_inputs(asset)
-            configured = bool(inputs.eth_usd_feed_id and (inputs.direct_feed_id or inputs.ratio_feed_id))
+            configured = bool(inputs.eth_usd_feed_id and (inputs.direct_feed_id or inputs.ratio_feed_id or asset.symbol == "mETH"))
             status = "ok" if configured else "unverified"
             reason = "mETH price inputs are configured." if configured else "mETH still needs verified ETH/USD plus direct or ratio feed inputs."
             statuses.append(
@@ -154,21 +166,15 @@ class PriceService:
         return self._missing_snapshot(asset, "mETH direct or ratio feed data is not available yet.", status="unverified")
 
     def _build_usdy_price(self, asset: AssetMetadata) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
-        if not asset.ondo_oracle_address or not self.settings.ondo_usdy_oracle_method_selector:
-            return self._missing_snapshot(
-                asset,
-                "USDY requires a verified Ondo oracle address and method selector before live price reads can be trusted.",
-                status="unverified",
-            )
-        try:
-            observation = self.ondo_client.fetch_redemption_price(
-                oracle_address=asset.ondo_oracle_address,
-                method_selector=self.settings.ondo_usdy_oracle_method_selector,
-                decimals=self.settings.ondo_usdy_oracle_decimals,
-            )
-        except Exception as exc:
-            return self._missing_snapshot(asset, f"Ondo oracle read failed: {exc}", status="missing")
+        oracle_read = self.ondo_usdy_adapter.read()
+        if oracle_read.observation is None:
+            status_code = DataStatusCode.DATA_MISSING.value
+            freshness_status = "unverified" if oracle_read.status.status == "selector_verification_required" else "missing"
+            if oracle_read.status.status == "mainnet_only":
+                freshness_status = "unverified"
+            return self._missing_snapshot(asset, f"Ondo USDY oracle status: {oracle_read.status.status}.", status=freshness_status, status_code=status_code)
 
+        observation = oracle_read.observation
         now = utc_now()
         raw_snapshot = RawPriceSnapshot(
             snapshot_id=str(uuid4()),
@@ -179,7 +185,11 @@ class PriceService:
             feed_id=None,
             source="ondo_redemption_oracle",
             source_url=None,
-            raw_payload_json={"oracle_address": asset.ondo_oracle_address, "method_selector": self.settings.ondo_usdy_oracle_method_selector},
+            raw_payload_json={
+                "oracle_address": asset.ondo_oracle_address,
+                "oracle_status": oracle_read.status.status,
+                "scale": oracle_read.status.scale,
+            },
             fetch_timestamp=now,
             publish_timestamp=observation.publish_time,
             price_raw=str(observation.price),

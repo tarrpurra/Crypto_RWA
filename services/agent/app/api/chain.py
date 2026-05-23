@@ -41,7 +41,21 @@ async def chain_status() -> ChainStatusResponse:
         http_url=settings.effective_http_rpc_url,
         ws_url=settings.effective_wss_rpc_url,
     )
-    status = await rpc_client.status()
+    try:
+        status = await rpc_client.status()
+    except Exception as exc:
+        response: dict[str, object] = {
+            "status": "degraded",
+            "status_code": "DATA_MISSING",
+            "status_label": "DATA_MISSING",
+            "status_reason": "Chain RPC status sample could not be collected.",
+            "chain_id": None,
+            "latest_block": None,
+            "rpc_url": settings.effective_http_rpc_url,
+            "websocket_enabled": bool(settings.effective_wss_rpc_url),
+            "rpc_error": str(exc),
+        }
+        return ChainStatusResponse(**response)
 
     response: dict[str, object] = status_to_dict(status)
     response.update(
@@ -55,11 +69,23 @@ async def chain_status() -> ChainStatusResponse:
     for contract_key, address in _configured_contracts().items():
         if not address:
             continue
-        response[contract_key] = _contract_state(
-            contract_key=contract_key,
-            rpc_url=settings.effective_http_rpc_url,
-            foundry_out_dir=settings.foundry_out_dir,
-            address=address,
-        )
+        try:
+            response[contract_key] = _contract_state(
+                contract_key=contract_key,
+                rpc_url=settings.effective_http_rpc_url,
+                foundry_out_dir=settings.foundry_out_dir,
+                address=address,
+            )
+        except Exception as exc:
+            response["status"] = "degraded"
+            response["status_code"] = "DATA_PARTIAL"
+            response["status_label"] = "DATA_PARTIAL"
+            response["status_reason"] = "Chain RPC responded, but at least one contract read failed."
+            response[contract_key] = {
+                "status": "degraded",
+                "status_code": "DATA_MISSING",
+                "status_reason": str(exc),
+                "address": address,
+            }
 
     return ChainStatusResponse(**response)

@@ -69,6 +69,18 @@ class MarketDataRepository:
             results.append(self._normalized_quote_from_record(record))
         return results
 
+    def latest_normalized_quotes_for_pair(self, token_in: str, token_out: str) -> list[NormalizedQuoteSnapshot]:
+        return [
+            snapshot
+            for snapshot in self.latest_normalized_quotes()
+            if snapshot.token_in_symbol.lower() == token_in.lower() and snapshot.token_out_symbol.lower() == token_out.lower()
+        ]
+
+    def latest_best_quote_for_pair(self, token_in: str, token_out: str) -> NormalizedQuoteSnapshot | None:
+        quotes = self.latest_normalized_quotes_for_pair(token_in, token_out)
+        quotes.sort(key=lambda snapshot: (snapshot.candidate_rank is None, snapshot.candidate_rank or 10**9))
+        return quotes[0] if quotes else None
+
     @staticmethod
     def _price_record_from_raw(snapshot: RawPriceSnapshot) -> PriceSnapshotRecord:
         return PriceSnapshotRecord(
@@ -185,7 +197,7 @@ class MarketDataRepository:
             route_type=snapshot.route_label,
             token_in=snapshot.token_in_symbol,
             token_out=snapshot.token_out_symbol,
-            chain_id=0,
+            chain_id=snapshot.chain_id,
             record_kind="normalized",
             amount_in=snapshot.amount_in,
             quoted_amount_out=snapshot.amount_out,
@@ -208,6 +220,7 @@ class MarketDataRepository:
             protocol=record.protocol,
             route_id=record.route_id or record.snapshot_id,
             route_label=record.route_type,
+            chain_id=record.chain_id,
             token_in_symbol=record.token_in,
             token_out_symbol=record.token_out,
             amount_in=record.amount_in,

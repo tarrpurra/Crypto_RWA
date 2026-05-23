@@ -1,4 +1,23 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: rwa-postgres
+    environment:
+      POSTGRES_DB: aixrwa
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U postgres -d aixrwa
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   foundry:
     build:
       context: .
@@ -32,6 +51,10 @@ services:
       - ./services/agent/.env.example
     environment:
       PYTHONPATH: /workspace
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/aixrwa
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - ./:/workspace
     ports:
@@ -43,3 +66,6 @@ services:
       - 0.0.0.0
       - --port
       - "8000"
+
+volumes:
+  postgres-data:
