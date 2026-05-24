@@ -7,6 +7,7 @@ from services.agent.modules.market_data.snapshots import (
     TransientPriceSnapshotStore,
     TransientQuoteSnapshotStore,
 )
+from services.agent.modules.market_data.balances import fetch_portfolio_snapshot, get_default_mock_snapshot
 
 __all__ = [
     "PRICE_SNAPSHOT_STORE",
@@ -17,4 +18,6 @@ __all__ = [
     "TransientPriceSnapshotStore",
     "TransientQuoteSnapshotStore",
     "get_price_service",
+    "fetch_portfolio_snapshot",
+    "get_default_mock_snapshot",
 ]

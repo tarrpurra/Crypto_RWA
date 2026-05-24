@@ -13,6 +13,10 @@ from services.agent.app.schemas.market_data import (
 from services.agent.app.schemas.oracle import HermesFetchResponse, PythPricePoint
 from services.agent.app.schemas.quotes import LatestQuotesResponse, NormalizedQuoteSnapshot, RawQuoteSnapshot, RouteDescriptor, RoutesResponse
 from services.agent.app.schemas.recommendations import RecommendationResponse
+from services.agent.app.schemas.portfolio import AssetBalance, PortfolioSnapshot, PortfolioSnapshotResponse
+from services.agent.app.schemas.risk import RiskSnapshot, RiskSnapshotResponse
+from services.agent.app.schemas.allocation import RebalanceAction, AllocationDecision, AllocationDecisionResponse, UpdateProfileRequest
+from services.agent.app.schemas.proposals import ExecutionPayloadSchema, TradeProposal, TradeProposalResponse, TradeExecution, TradeExecutionResponse
 
 __all__ = [
     "AssetIngestionStatus",
@@ -36,4 +40,18 @@ __all__ = [
     "RouteDescriptor",
     "RoutesResponse",
     "ServiceStatusResponse",
+    "AssetBalance",
+    "PortfolioSnapshot",
+    "PortfolioSnapshotResponse",
+    "RiskSnapshot",
+    "RiskSnapshotResponse",
+    "RebalanceAction",
+    "AllocationDecision",
+    "AllocationDecisionResponse",
+    "UpdateProfileRequest",
+    "ExecutionPayloadSchema",
+    "TradeProposal",
+    "TradeProposalResponse",
+    "TradeExecution",
+    "TradeExecutionResponse",
 ]
