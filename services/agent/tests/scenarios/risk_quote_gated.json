@@ -1,0 +1,7 @@
+{
+  "name": "risk_quote_gated",
+  "description": "Portfolio is valued, but live quote validation is missing; risk allows analysis only.",
+  "expected_status_code": "RISK_REBALANCE_ONLY",
+  "expected_recommended_action": "rebalance_only",
+  "expected_hard_veto_status": "inactive"
+}

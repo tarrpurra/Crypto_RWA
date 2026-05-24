@@ -1,3 +1,4 @@
+from services.agent.modules.market_data.balances import Erc20BalanceReader, PortfolioSnapshotEngine
 from services.agent.modules.market_data.prices import PriceService, get_price_service
 from services.agent.modules.market_data.snapshots import (
     PRICE_SNAPSHOT_STORE,
@@ -10,7 +11,9 @@ from services.agent.modules.market_data.snapshots import (
 
 __all__ = [
     "PRICE_SNAPSHOT_STORE",
+    "Erc20BalanceReader",
     "QUOTE_SNAPSHOT_STORE",
+    "PortfolioSnapshotEngine",
     "PriceIngestionBundle",
     "PriceService",
     "QuoteIngestionBundle",

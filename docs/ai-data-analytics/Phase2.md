@@ -17,6 +17,10 @@ Build a portfolio analytics base for `services/agent` with:
 - stable `/portfolio` API surfaces
 - no fabricated balances, prices, or route liquidity
 
+## Phase 2 Status
+
+`Phase 2 local-safe portfolio analytics complete; live route-depth/slippage enrichment remains gated by Phase 1B quote validation.`
+
 ## Dependency On Phase 1
 
 Phase 2 may start from the Phase 1A Sepolia scaffold, but it must not assume strict Phase 1 completion.
@@ -61,6 +65,8 @@ Phase 2 must treat `DATA_MISSING`, `DATA_PARTIAL`, `LIQUIDITY_UNKNOWN`, `mainnet
 Initial endpoint:
 
 - `GET /portfolio/current`
+- `GET /portfolio/snapshots`
+- `GET /portfolio/snapshots/latest`
 
 Initial behavior:
 
@@ -68,6 +74,8 @@ Initial behavior:
 - returns `DATA_MISSING` when no portfolio balance source is configured
 - returns `DATA_PARTIAL` when balances exist but one or more positions cannot be valued
 - returns `DATA_FRESH` only when balances and required prices are usable
+- persists current snapshots on a best-effort basis
+- exposes recent and latest persisted snapshots when PostgreSQL is available
 
 ## Snapshot Fields
 
@@ -96,6 +104,11 @@ Each position should include:
 - `price_usd`
 - `value_usd`
 - `weight`
+- `target_weight`
+- `weight_drift`
+- `drift_status`
+- `route_depth_usd`
+- `slippage_impact_bps`
 - `valuation_status`
 - `status_code`
 - `status_reason`
@@ -113,11 +126,28 @@ Phase 2 is complete when:
 
 ## First Implementation Slice
 
-The first slice will add:
+Implemented:
 
 - portfolio schemas
 - deterministic snapshot engine
 - `/portfolio/current`
+- ERC-20 balance-read boundary for verified configured assets
+- target weight and drift fields
+- best-effort PostgreSQL snapshot persistence
+- recent and latest portfolio snapshot APIs
+- complete, partial, and missing portfolio scenario fixtures
 - tests for missing-balance degradation and valuation math
 
-Live balance reads and historical persistence remain later Phase 2 work.
+Current implementation behavior:
+
+- if no portfolio wallet or executor vault address is configured, `/portfolio/current` returns `DATA_MISSING`
+- if an address is configured, the service attempts ERC-20 `balanceOf` reads only for verified assets on the active chain
+- failed token reads remain visible as unvalued positions instead of crashing or fabricating balances
+- valuations are computed only when both balance and fresh price snapshots are available
+- configured `PORTFOLIO_TARGET_WEIGHTS` values are compared against computed weights when valuation is possible
+- route depth and slippage fields remain null until Phase 1B quote validation is complete
+
+Deferred beyond local-safe Phase 2:
+
+- add route-depth and slippage-impact annotations once Phase 1B quote validation is complete
+- add richer historical pagination or time-window filters if the frontend needs them
