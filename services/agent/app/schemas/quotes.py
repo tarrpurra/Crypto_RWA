@@ -46,7 +46,7 @@ class NormalizedQuoteSnapshot(BaseModel):
     protocol: str
     route_id: str
     route_label: str
-    chain_id: int
+    chain_id: int = 5000
     token_in_symbol: str
     token_out_symbol: str
     amount_in: str
