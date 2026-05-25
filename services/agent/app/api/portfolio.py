@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from services.agent.app.schemas.portfolio import PortfolioSnapshotResponse, PortfolioSnapshot, AssetBalance
 from services.agent.modules.market_data.balances import fetch_portfolio_snapshot
 from services.agent.repositories.db.models import PortfolioSnapshotRecord
-from services.agent.repositories.db.session import create_session
+from services.agent.repositories.db.session import create_session, init_db
 from services.agent.modules.oracle.freshness import utc_now
 
 logger = logging.getLogger("services.agent.portfolio.api")
@@ -14,6 +14,7 @@ router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
 def _save_portfolio_snapshot(snapshot: PortfolioSnapshot) -> None:
     try:
+        init_db()
         record = PortfolioSnapshotRecord(
             snapshot_id=snapshot.snapshot_id,
             wallet_or_vault=snapshot.wallet_or_vault,

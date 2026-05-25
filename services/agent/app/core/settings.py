@@ -125,6 +125,10 @@ class Settings(BaseSettings):
     rpc_health_sample_warn_seconds: int = 60
 
     simulation_fallback_enabled: bool = True
+    ai_reasoning_enabled: bool = False
+    ai_reasoning_provider: str = "ollama"
+    ai_reasoning_model: str = "qwen2.5:3b"
+    ollama_url: str = "http://host.docker.internal:11434"
 
     @property
     def effective_http_rpc_url(self) -> str:

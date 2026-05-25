@@ -57,14 +57,27 @@ def get_default_mock_snapshot(wallet_or_vault: str) -> PortfolioSnapshot:
     )
 
 
+def get_missing_portfolio_snapshot(wallet_or_vault: str, reason: str) -> PortfolioSnapshot:
+    now = utc_now()
+    return PortfolioSnapshot(
+        snapshot_id=f"port_missing_{int(now.timestamp())}",
+        wallet_or_vault=wallet_or_vault,
+        total_value_usd=0.0,
+        balances=[],
+        weights={},
+        status_code="DATA_MISSING",
+        status_reason=reason,
+        created_at=now,
+    )
+
+
 def fetch_portfolio_snapshot(wallet_or_vault: str | None = None) -> PortfolioSnapshot:
     settings = get_settings()
     vault = wallet_or_vault or settings.executor_vault_address or "0x0000000000000000000000000000000000000000"
 
-    # Check if we should fall back to mock data
     if not settings.executor_vault_address or settings.executor_vault_address == "TODO_VERIFY":
-        logger.info("Executor vault address is not configured. Falling back to mock snapshot.")
-        return get_default_mock_snapshot(vault)
+        logger.info("Executor vault address is not configured. Returning missing portfolio snapshot.")
+        return get_missing_portfolio_snapshot(vault, "Executor vault address is not configured.")
 
     try:
         w3 = Web3(Web3.HTTPProvider(settings.effective_http_rpc_url))
@@ -75,10 +88,17 @@ def fetch_portfolio_snapshot(wallet_or_vault: str | None = None) -> PortfolioSna
         repo = MarketDataRepository()
         prices = {p.asset_symbol: float(p.price_usd) for p in repo.latest_normalized_prices() if p.price_usd}
 
-        # Safe defaults if price snapshots are missing
-        usdy_price = prices.get("USDY", 1.05)
-        meth_price = prices.get("mETH", 3500.0)
-        usdc_price = prices.get("USDC", 1.0)
+        required_prices = {"USDY", "mETH", "USDC"}
+        missing_prices = sorted(asset for asset in required_prices if asset not in prices)
+        if missing_prices:
+            return get_missing_portfolio_snapshot(
+                vault,
+                f"Required price snapshots are missing for portfolio valuation: {', '.join(missing_prices)}.",
+            )
+
+        usdy_price = prices["USDY"]
+        meth_price = prices["mETH"]
+        usdc_price = prices["USDC"]
 
         # Asset address mappings from settings
         # Note: on Sepolia we might use testnet addresses
@@ -110,8 +130,8 @@ def fetch_portfolio_snapshot(wallet_or_vault: str | None = None) -> PortfolioSna
                     decimals = default_decimals
                 balance = raw_balance / (10 ** decimals)
             except Exception as exc:
-                logger.warning("Failed to fetch balance for %s at %s: %s. Defaulting to 0.0", symbol, address, exc)
-                balance = 0.0
+                logger.warning("Failed to fetch balance for %s at %s: %s", symbol, address, exc)
+                return get_missing_portfolio_snapshot(vault, f"Failed to fetch {symbol} balance from chain.")
 
             val_usd = balance * price
             total_value += val_usd
@@ -137,10 +157,8 @@ def fetch_portfolio_snapshot(wallet_or_vault: str | None = None) -> PortfolioSna
         status_code = "DATA_FRESH"
         status_reason = "Portfolio snapshot refreshed from chain."
         
-        # If total value is 0, something is probably wrong or vault is empty, check if we need to fall back
         if total_value == 0.0:
-            logger.warning("Total vault value is 0. Returning mock snapshot to allow operations.")
-            return get_default_mock_snapshot(vault)
+            return get_missing_portfolio_snapshot(vault, "Vault portfolio value is zero or no supported balances were found.")
 
         return PortfolioSnapshot(
             snapshot_id=f"port_{int(now.timestamp())}",
@@ -154,5 +172,5 @@ def fetch_portfolio_snapshot(wallet_or_vault: str | None = None) -> PortfolioSna
         )
 
     except Exception as exc:
-        logger.error("Error reading portfolio from chain: %s. Falling back to mock snapshot.", exc)
-        return get_default_mock_snapshot(vault)
+        logger.error("Error reading portfolio from chain: %s", exc)
+        return get_missing_portfolio_snapshot(vault, f"Error reading portfolio from chain: {exc}")

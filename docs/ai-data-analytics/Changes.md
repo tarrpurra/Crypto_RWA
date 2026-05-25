@@ -17,6 +17,51 @@ For each entry, record:
 
 ## Change Log
 
+### 2026-05-25
+
+Type:
+Feature / Safety hardening
+
+Summary:
+
+- completed the local-safe Phase 4 and Phase 5 coding path
+- removed mock portfolio fallback from allocation and decisioning surfaces; missing vault, price, or chain data now returns a missing portfolio snapshot and pauses allocation
+- hardened rebalance generation so missing portfolio data, zero portfolio value, and missing position prices do not produce trade actions
+- fixed proposal creation by importing `MarketDataRepository`, requiring the requested proposal action to match the current deterministic rebalance plan, requiring real configured token/router/vault addresses, rejecting missing price snapshots, removing fallback calldata hashes, and enforcing `PolicyGuard`
+- made AI reasoning settings-driven and disabled by default, with deterministic fallback explanations as the safe baseline
+- added Phase 4 and Phase 5 execution docs
+
+Affected scope:
+
+- docs/ai-data-analytics/Phase4.md
+- docs/ai-data-analytics/Phase5.md
+- docs/ai-data-analytics/README.md
+- docs/ai-data-analytics/Changes.md
+- services/agent/.env.example
+- services/agent/app/api/allocation.py
+- services/agent/app/api/decisions.py
+- services/agent/app/core/settings.py
+- services/agent/modules/market_data/balances.py
+- services/agent/strategies/allocation/rebalance.py
+- services/agent/strategies/decision_templates/parser.py
+
+Impact:
+
+- smart contracts: proposal payload creation is now policy-gated and no longer uses fallback calldata hashes or fallback addresses
+- frontend: allocation and decision endpoints remain stable but now surface conservative pause/hold behavior when data is missing
+- data quality: allocation and AI reasoning no longer depend on fabricated portfolio values or hardcoded market prices
+
+Assumptions / unresolved verification items:
+
+- successful proposal creation still requires configured vault/router/token addresses plus fresh persisted USDC and mETH price snapshots
+- live quote-depth and slippage validation remain Phase 1B dependent
+- production-grade AI request/response persistence can be expanded later, but deterministic fallback is complete and safe for local operation
+
+Commands to run after this change:
+
+- `python -m unittest services.agent.tests.unit.test_allocation services.agent.tests.unit.test_ai_fallback services.agent.tests.integration.test_portfolio_endpoints -v`
+- `python -m unittest discover services.agent.tests -v`
+
 ### 2026-05-21
 
 Type:

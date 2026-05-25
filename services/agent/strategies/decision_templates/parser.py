@@ -26,19 +26,15 @@ async def generate_recommendation_reasoning(
     explanation = None
     ai_disabled = True
     
-    import os
-    # We will look for an environment variable OLLAMA_URL or similar to see if we can call it.
-    # Note: PYTH_HERMES_URL is configured, but no LLM URL is in settings by default.
-    # We can allow settings to be extended or read OLLAMA_URL from environment.
-    ollama_url = os.environ.get("OLLAMA_URL", getattr(settings, "ollama_url", "http://host.docker.internal:11434"))
+    ollama_url = settings.ollama_url
     
     try:
         # Check if Ollama service is reachable
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            # We check if Ollama is running by hitting its tags endpoint or base
-            response = await client.get(f"{ollama_url}/api/tags")
-            if response.status_code == 200:
-                ai_disabled = False
+        if settings.ai_reasoning_enabled and settings.ai_reasoning_provider == "ollama":
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                response = await client.get(f"{ollama_url}/api/tags")
+                if response.status_code == 200:
+                    ai_disabled = False
     except Exception:
         # Ollama not reachable, which is expected since it's not installed on the host yet
         logger.debug("Ollama is not reachable at %s. Falling back to deterministic reasoning.", ollama_url)
@@ -46,7 +42,7 @@ async def generate_recommendation_reasoning(
     if not ai_disabled:
         try:
             payload = {
-                "model": "qwen2.5:3b",  # or gemma:2b
+                "model": settings.ai_reasoning_model,
                 "prompt": prompt,
                 "stream": False,
                 "format": "json",
@@ -74,7 +70,7 @@ async def generate_recommendation_reasoning(
         explanation = generate_deterministic_explanation(portfolio, risk, decision, rebalance_actions)
         metadata = {"ai_reasoning_enabled": False, "mode": "fallback_deterministic"}
     else:
-        metadata = {"ai_reasoning_enabled": True, "mode": "ollama_qwen_3b"}
+        metadata = {"ai_reasoning_enabled": True, "mode": f"ollama:{settings.ai_reasoning_model}"}
 
     # Map to RecommendationResponse DTO
     # Required fields in RecommendationResponse:
@@ -116,7 +112,7 @@ async def generate_recommendation_reasoning(
         risk_score=risk.total_score,
         confidence=float(explanation["confidence"]),
         reasoning_summary=str(explanation["reasoning_summary"]),
-        data_sources_used=["ondo_oracle", "pyth_oracle", "agni_quotes", "merchant_moe_quotes"],
+        data_sources_used=["portfolio_snapshot", "risk_snapshot", "allocation_decision"],
         hard_veto_status=risk.risk_band if risk.risk_band in ("RISK_VETO", "RISK_PAUSE_REQUIRED") else "NONE",
         required_human_approval_status=required_human_approval,
         status="ok" if risk.risk_band != "RISK_VETO" else "degraded",

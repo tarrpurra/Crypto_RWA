@@ -22,6 +22,23 @@ def compute_rebalance(
     if not target_profile:
         raise ValueError(f"Unknown allocation profile: {profile_name}")
 
+    if portfolio.status_code != "DATA_FRESH" or portfolio.total_value_usd <= 0 or not portfolio.balances:
+        target_weights = {asset: weight for asset, weight in target_profile.items()}
+        decision = AllocationDecision(
+            decision_id=f"dec_{int(now.timestamp())}",
+            wallet_or_vault=portfolio.wallet_or_vault,
+            profile_name=profile_name,
+            current_weights=portfolio.weights,
+            target_weights=target_weights,
+            recommended_action="PAUSE",
+            confidence=0.99,
+            reasoning=f"Allocation is paused because portfolio data is not usable: {portfolio.status_reason}",
+            risk_snapshot_id=risk.snapshot_id,
+            status_code="RISK_VETO",
+            created_at=now,
+        )
+        return decision, []
+
     current_weights = {b.asset_symbol: b.weight for b in portfolio.balances}
     
     # Fill in weights for missing assets in portfolio
@@ -91,8 +108,8 @@ def compute_rebalance(
             price = current_val / current_bal if current_bal > 0 else 0.0
             
             if price == 0.0:
-                # Get safe default
-                price = 1.05 if asset == "USDY" else (3500.0 if asset == "mETH" else 1.0)
+                logger.warning("Skipping %s rebalance action because the position price is unavailable.", asset)
+                continue
                 
             delta_val_usd = -drift * portfolio.total_value_usd  # Positive means we need to buy, negative means sell
             

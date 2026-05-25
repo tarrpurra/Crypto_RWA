@@ -8,7 +8,7 @@ from services.agent.risk.scoring.score_engine import RiskScoreEngine
 from services.agent.strategies.allocation.rebalance import compute_rebalance
 from services.agent.strategies.allocation import profiles
 from services.agent.repositories.db.models import AllocationDecisionRecord
-from services.agent.repositories.db.session import create_session
+from services.agent.repositories.db.session import create_session, init_db
 from services.agent.modules.oracle.freshness import utc_now
 
 logger = logging.getLogger("services.agent.allocation.api")
@@ -17,6 +17,7 @@ router = APIRouter(prefix="/allocation", tags=["allocation"])
 
 def _save_allocation_decision(decision: AllocationDecision) -> None:
     try:
+        init_db()
         record = AllocationDecisionRecord(
             decision_id=decision.decision_id,
             wallet_or_vault=decision.wallet_or_vault,

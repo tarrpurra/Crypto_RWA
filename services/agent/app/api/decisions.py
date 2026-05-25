@@ -11,12 +11,14 @@ from services.agent.app.schemas.recommendations import RecommendationResponse
 from services.agent.app.schemas.proposals import TradeProposalResponse, TradeProposal, ExecutionPayloadSchema
 from services.agent.app.schemas.allocation import RebalanceAction
 from services.agent.modules.market_data.balances import fetch_portfolio_snapshot
+from services.agent.repositories.db.market_repository import MarketDataRepository
 from services.agent.risk.scoring.score_engine import RiskScoreEngine
+from services.agent.risk.guards.trade_guard import PolicyGuard
 from services.agent.strategies.allocation.rebalance import compute_rebalance
 from services.agent.strategies.allocation import profiles
 from services.agent.strategies.decision_templates.parser import generate_recommendation_reasoning
 from services.agent.repositories.db.models import TradeProposalRecord, TradeExecutionRecord
-from services.agent.repositories.db.session import create_session
+from services.agent.repositories.db.session import create_session, init_db
 from services.agent.app.core.settings import get_settings
 from services.agent.modules.oracle.freshness import utc_now
 
@@ -26,6 +28,7 @@ router = APIRouter(tags=["decisions"])
 
 def _save_proposal_record(proposal: TradeProposal) -> None:
     try:
+        init_db()
         record = TradeProposalRecord(
             proposal_id=proposal.proposal_id,
             plan_hash=proposal.plan_hash,
@@ -78,12 +81,28 @@ async def create_trade_proposal(action: RebalanceAction) -> TradeProposalRespons
     if risk.risk_band in ("RISK_VETO", "RISK_PAUSE_REQUIRED"):
         raise HTTPException(status_code=400, detail=f"Cannot create proposal: risk band is {risk.risk_band}")
 
+    decision, allowed_actions = compute_rebalance(portfolio, risk, profiles.ACTIVE_PROFILE_NAME)
+    matching_action = next(
+        (
+            candidate
+            for candidate in allowed_actions
+            if candidate.asset_symbol == action.asset_symbol
+            and candidate.action == action.action
+            and abs(candidate.amount - action.amount) < 1e-9
+        ),
+        None,
+    )
+    if decision.recommended_action != "REBALANCE" or matching_action is None:
+        raise HTTPException(status_code=400, detail="Requested action is not part of the current deterministic rebalance plan.")
+
     # Determine token addresses
     # Default to USDC and mETH mainnet/sepolia addresses from settings
-    usdc_addr = settings.usdc_mainnet_address or "0x0A712B2524242424242424242424242424242424"
-    meth_addr = settings.meth_sepolia_address if settings.target_chain.value == "Mantle Sepolia" else settings.meth_mainnet_address
+    usdc_addr = settings.usdc_mainnet_address
+    meth_addr = settings.meth_sepolia_address if settings.target_chain.value == "mantle_sepolia" else settings.meth_mainnet_address
     if not meth_addr:
-        meth_addr = settings.meth_mainnet_address or "0xcDA86A272531e8640cD7F1a92c01839911B90bb0"
+        raise HTTPException(status_code=400, detail="mETH address is not configured for proposal creation.")
+    if not usdc_addr:
+        raise HTTPException(status_code=400, detail="USDC address is not configured for proposal creation.")
 
     token_in = usdc_addr if action.action == "BUY" else meth_addr
     token_out = meth_addr if action.action == "BUY" else usdc_addr
@@ -98,8 +117,10 @@ async def create_trade_proposal(action: RebalanceAction) -> TradeProposalRespons
     # Compute minAmountOut based on current price with 1% slippage buffer
     repo = MarketDataRepository()
     prices = {p.asset_symbol: float(p.price_usd) for p in repo.latest_normalized_prices() if p.price_usd}
-    usdc_price = prices.get("USDC", 1.0)
-    meth_price = prices.get("mETH", 3500.0)
+    usdc_price = prices.get("USDC")
+    meth_price = prices.get("mETH")
+    if usdc_price is None or meth_price is None:
+        raise HTTPException(status_code=400, detail="Required USDC and mETH price snapshots are missing.")
 
     # Implied swap rate
     if action.action == "BUY":
@@ -115,19 +136,23 @@ async def create_trade_proposal(action: RebalanceAction) -> TradeProposalRespons
     min_amount_out = int(expected_out * 0.99 * (10 ** decimals_out))
 
     # Router addresses
-    router_address = settings.effective_agni_swap_router_address or "0xe38cfa32cCd918d94E2e20230dFaD1A4Fd8aEF16"
+    router_address = settings.effective_agni_swap_router_address
+    if not router_address:
+        raise HTTPException(status_code=400, detail="AGNI swap router address is not configured.")
 
     # AGNI exactInputSingle function selector = 0x414bf389
     # Selector bytes4: 0x414bf389
     selector = "0x414bf389"
-    recipient = settings.executor_vault_address or "0x0000000000000000000000000000000000000000"
+    recipient = settings.executor_vault_address
+    if not recipient:
+        raise HTTPException(status_code=400, detail="Executor vault address is not configured.")
 
     now = int(time.time())
     deadline = now + 900  # 15 mins
     proposal_expiry = now + 7200  # 2 hours
     nonce = int(uuid.uuid4().int & 0xFFFFFFFF)
 
-    # Encode mock calldata that mirrors AGNI ExactInputSingleParams struct:
+    # Encode calldata that mirrors AGNI ExactInputSingleParams struct:
     # struct ExactInputSingleParams {
     #     address tokenIn;
     #     address tokenOut;
@@ -161,8 +186,7 @@ async def create_trade_proposal(action: RebalanceAction) -> TradeProposalRespons
         calldata_hash_bytes = keccak(calldata)
         calldata_hash = Web3.to_hex(calldata_hash_bytes)
     except Exception as exc:
-        logger.warning("Failed to encode router calldata using eth_abi: %s. Using fallback hash.", exc)
-        calldata_hash = Web3.to_hex(keccak(b"fallback_calldata"))
+        raise HTTPException(status_code=500, detail=f"Failed to encode router calldata: {exc}") from exc
 
     # Generate proposalId and planHash
     proposal_id_bytes = keccak(f"proposal_{uuid.uuid4()}_{now}".encode("utf-8"))
@@ -188,6 +212,10 @@ async def create_trade_proposal(action: RebalanceAction) -> TradeProposalRespons
         nonce=nonce,
     )
 
+    policy_ok, policy_reason = PolicyGuard().validate_proposal(payload, risk)
+    if not policy_ok:
+        raise HTTPException(status_code=400, detail=policy_reason)
+
     t_now = utc_now()
     proposal = TradeProposal(
         proposal_id=proposal_id,
@@ -212,6 +240,7 @@ async def create_trade_proposal(action: RebalanceAction) -> TradeProposalRespons
 @router.post("/proposals/{proposal_id}/approve", response_model=dict[str, str])
 async def approve_proposal(proposal_id: str) -> dict[str, str]:
     # Update status to PROPOSAL_APPROVED
+    init_db()
     with create_session() as session:
         from sqlalchemy import select
         record = session.scalar(
@@ -230,6 +259,7 @@ async def approve_proposal(proposal_id: str) -> dict[str, str]:
 @router.post("/proposals/{proposal_id}/reject", response_model=dict[str, str])
 async def reject_proposal(proposal_id: str) -> dict[str, str]:
     # Update status to PROPOSAL_REJECTED
+    init_db()
     with create_session() as session:
         from sqlalchemy import select
         record = session.scalar(
