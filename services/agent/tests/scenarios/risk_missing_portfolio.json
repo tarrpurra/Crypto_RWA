@@ -1,0 +1,7 @@
+{
+  "name": "risk_missing_portfolio",
+  "description": "No portfolio positions are available; risk must hard-veto.",
+  "expected_status_code": "RISK_VETO",
+  "expected_recommended_action": "pause",
+  "expected_hard_veto_status": "active"
+}

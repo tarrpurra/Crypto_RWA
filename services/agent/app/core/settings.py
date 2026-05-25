@@ -51,10 +51,11 @@ class Settings(BaseSettings):
     mantle_sepolia_quicknode_http_url: str | None = None
     mantle_sepolia_quicknode_wss_url: str | None = None
 
-    database_url: str = "postgresql://postgres:postgres@localhost:5432/aixrwa"
+    database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/aixrwa"
     redis_url: str | None = None
     portfolio_wallet_address: str | None = None
     portfolio_base_currency: str = "USD"
+    portfolio_target_weights: str = ""
 
     pyth_hermes_url: str = "https://hermes.pyth.network"
     pyth_hermes_latest_price_path: str = "/v2/updates/price/latest"
@@ -195,6 +196,19 @@ class Settings(BaseSettings):
     @property
     def parsed_agni_fee_tiers(self) -> list[int]:
         return [int(value.strip()) for value in self.agni_fee_tiers.split(",") if value.strip()]
+
+    @property
+    def parsed_portfolio_target_weights(self) -> dict[str, str]:
+        weights: dict[str, str] = {}
+        for item in self.portfolio_target_weights.split(","):
+            if "=" not in item:
+                continue
+            asset_key, weight = item.split("=", 1)
+            asset_key = asset_key.strip()
+            weight = weight.strip()
+            if asset_key and weight:
+                weights[asset_key] = weight
+        return weights
 
     @property
     def asset_registry(self) -> dict[str, dict[str, object]]:

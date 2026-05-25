@@ -1,0 +1,7 @@
+{
+  "name": "risk_normal_fixture",
+  "description": "Portfolio and quote validation are both fresh; deterministic risk can score normal.",
+  "expected_status_code": "RISK_NORMAL",
+  "expected_recommended_action": "monitor",
+  "expected_hard_veto_status": "inactive"
+}

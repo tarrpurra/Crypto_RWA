@@ -11,7 +11,7 @@ class BalanceObservation(BaseModel):
     asset_symbol: str
     asset_address: str | None = None
     chain_id: int
-    balance: str
+    balance: str | None = None
     decimals: int
     observed_timestamp: datetime
     balance_source: str
@@ -26,11 +26,16 @@ class PortfolioPosition(BaseModel):
     asset_symbol: str
     asset_address: str | None = None
     chain_id: int
-    balance: str
+    balance: str | None = None
     balance_source: str
     price_usd: str | None = None
     value_usd: str | None = None
     weight: str | None = None
+    target_weight: str | None = None
+    weight_drift: str | None = None
+    drift_status: str = "not_evaluated"
+    route_depth_usd: str | None = None
+    slippage_impact_bps: str | None = None
     valuation_status: str
     status_code: str
     status_reason: str
@@ -52,3 +57,11 @@ class PortfolioSnapshotResponse(BaseModel):
     status_label: str
     status_reason: str
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class PortfolioSnapshotHistoryResponse(BaseModel):
+    status: str
+    status_code: str
+    status_label: str
+    status_reason: str
+    snapshots: list[PortfolioSnapshotResponse] = Field(default_factory=list)
