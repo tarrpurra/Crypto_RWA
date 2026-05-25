@@ -16,7 +16,6 @@ from services.agent.modules.oracle import (
     parse_hermes_price_update,
     utc_now,
 )
-
 logger = logging.getLogger("services.agent.market_data.prices")
 
 
