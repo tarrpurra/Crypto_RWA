@@ -1,0 +1,7 @@
+{
+  "name": "portfolio_missing",
+  "description": "No balance source is configured or available.",
+  "balances": [],
+  "prices": [],
+  "target_weights": {}
+}

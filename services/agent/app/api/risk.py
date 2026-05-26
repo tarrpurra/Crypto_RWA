@@ -1,54 +1,70 @@
 from __future__ import annotations
 
 import logging
-from fastapi import APIRouter
-from services.agent.app.schemas.risk import RiskSnapshotResponse, RiskSnapshot
-from services.agent.modules.market_data.balances import fetch_portfolio_snapshot
-from services.agent.risk.scoring.score_engine import RiskScoreEngine
-from services.agent.repositories.db.models import RiskSnapshotRecord
-from services.agent.repositories.db.session import create_session
-from services.agent.modules.oracle.freshness import utc_now
+
+from fastapi import APIRouter, HTTPException
+
+from services.agent.app.api.portfolio import current_portfolio
+from services.agent.app.core.settings import get_settings
+from services.agent.app.core.status_codes import DataStatusCode
+from services.agent.app.schemas.risk import RiskAssessmentHistoryResponse, RiskAssessmentResponse
+from services.agent.repositories.db.risk_repository import RiskAssessmentRepository
+from services.agent.risk.engine import RiskEngine
+
 
 logger = logging.getLogger("services.agent.risk.api")
 router = APIRouter(prefix="/risk", tags=["risk"])
 
 
-def _save_risk_snapshot(snapshot: RiskSnapshot) -> None:
+def _save_assessment_best_effort(assessment: RiskAssessmentResponse) -> None:
     try:
-        record = RiskSnapshotRecord(
-            snapshot_id=snapshot.snapshot_id,
-            total_score=snapshot.total_score,
-            risk_band=snapshot.risk_band,
-            status_code=snapshot.status_code,
-            status_reason=snapshot.status_reason,
-            bucket_scores_json=snapshot.bucket_scores,
-            prechecks_json=snapshot.prechecks,
-            notes_json=snapshot.notes,
-            created_at=snapshot.created_at,
-        )
-        with create_session() as session:
-            session.merge(record)
-            session.commit()
+        RiskAssessmentRepository().save_assessment(assessment)
     except Exception as exc:
-        logger.warning("Failed to persist risk snapshot: %s", exc)
+        logger.warning("Risk assessment persistence failed: %s", exc)
 
 
-@router.get("/snapshot", response_model=RiskSnapshotResponse)
-async def get_risk_snapshot() -> RiskSnapshotResponse:
-    portfolio = fetch_portfolio_snapshot()
-    engine = RiskScoreEngine()
-    risk = engine.compute_risk_snapshot(portfolio)
-    _save_risk_snapshot(risk)
+@router.get("/current", response_model=RiskAssessmentResponse)
+async def current_risk() -> RiskAssessmentResponse:
+    settings = get_settings()
+    portfolio = await current_portfolio()
+    assessment = RiskEngine().evaluate(
+        portfolio=portfolio,
+        runtime_mode=settings.runtime_mode,
+        target_chain=settings.target_chain.value,
+    )
+    _save_assessment_best_effort(assessment)
+    return assessment
 
-    status = "ok"
-    if risk.status_code == "RISK_VETO":
-        status = "degraded"
 
-    return RiskSnapshotResponse(
-        status=status,
-        status_code=risk.status_code,
-        status_label=risk.status_code,
-        status_reason=risk.status_reason,
-        generated_at=utc_now(),
-        risk=risk,
+@router.get("/assessments/latest", response_model=RiskAssessmentResponse)
+def latest_risk_assessment() -> RiskAssessmentResponse:
+    try:
+        assessment = RiskAssessmentRepository().latest_assessment()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Risk assessment repository unavailable: {exc}") from exc
+    if assessment is None:
+        raise HTTPException(status_code=404, detail="No persisted risk assessments are available.")
+    return assessment
+
+
+@router.get("/assessments", response_model=RiskAssessmentHistoryResponse)
+def risk_assessment_history(limit: int = 20) -> RiskAssessmentHistoryResponse:
+    safe_limit = max(1, min(limit, 100))
+    try:
+        assessments = RiskAssessmentRepository().recent_assessments(limit=safe_limit)
+    except Exception as exc:
+        return RiskAssessmentHistoryResponse(
+            status="degraded",
+            status_code=DataStatusCode.DATA_MISSING.value,
+            status_label=DataStatusCode.DATA_MISSING.value,
+            status_reason=f"Risk assessment repository unavailable: {exc}",
+            assessments=[],
+        )
+    status_code = DataStatusCode.DATA_FRESH.value if assessments else DataStatusCode.DATA_MISSING.value
+    return RiskAssessmentHistoryResponse(
+        status="ok" if assessments else "degraded",
+        status_code=status_code,
+        status_label=status_code,
+        status_reason="Recent risk assessments loaded." if assessments else "No persisted risk assessments are available.",
+        assessments=assessments,
     )

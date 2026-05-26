@@ -1,5 +1,6 @@
 import unittest
 from datetime import UTC, datetime
+from pathlib import Path
 
 from services.agent.app.schemas.market_data import NormalizedPriceSnapshot
 from services.agent.app.schemas.portfolio import BalanceObservation
@@ -7,6 +8,13 @@ from services.agent.modules.market_data.balances import PortfolioSnapshotEngine
 
 
 class PortfolioSnapshotEngineTests(unittest.TestCase):
+    def test_phase_2_scenario_fixtures_exist(self) -> None:
+        scenario_dir = Path(__file__).resolve().parents[1] / "scenarios"
+
+        self.assertTrue((scenario_dir / "portfolio_complete.json").exists())
+        self.assertTrue((scenario_dir / "portfolio_partial.json").exists())
+        self.assertTrue((scenario_dir / "portfolio_missing.json").exists())
+
     def test_missing_balances_return_degraded_snapshot(self) -> None:
         snapshot = PortfolioSnapshotEngine().build_snapshot(
             balances=[],
@@ -92,6 +100,7 @@ class PortfolioSnapshotEngineTests(unittest.TestCase):
             ],
             portfolio_address="0xportfolio",
             chain_id=5000,
+            target_weights={"USDY": "0.02", "METH_MAINNET": "0.98"},
         )
 
         self.assertEqual(snapshot.status, "ok")
@@ -101,6 +110,9 @@ class PortfolioSnapshotEngineTests(unittest.TestCase):
         self.assertEqual(snapshot.positions[1].value_usd, "6000")
         self.assertEqual(snapshot.positions[0].weight, "0.01639344262295081967213114754")
         self.assertEqual(snapshot.positions[1].weight, "0.9836065573770491803278688525")
+        self.assertEqual(snapshot.positions[0].target_weight, "0.02")
+        self.assertEqual(snapshot.positions[0].drift_status, "within_target")
+        self.assertEqual(snapshot.positions[1].drift_status, "within_target")
 
     def test_unpriced_position_keeps_snapshot_partial(self) -> None:
         now = datetime(2026, 1, 1, tzinfo=UTC)
@@ -128,6 +140,53 @@ class PortfolioSnapshotEngineTests(unittest.TestCase):
         self.assertEqual(snapshot.status_code, "DATA_PARTIAL")
         self.assertEqual(snapshot.positions[0].valuation_status, "unvalued")
         self.assertEqual(snapshot.positions[0].status_reason, "No price snapshot is available for this position.")
+        self.assertEqual(snapshot.positions[0].drift_status, "not_configured")
+
+    def test_failed_balance_observation_remains_visible_and_unvalued(self) -> None:
+        now = datetime(2026, 1, 1, tzinfo=UTC)
+        snapshot = PortfolioSnapshotEngine().build_snapshot(
+            balances=[
+                BalanceObservation(
+                    asset_key="USDY",
+                    asset_symbol="USDY",
+                    chain_id=5000,
+                    balance=None,
+                    decimals=18,
+                    observed_timestamp=now,
+                    balance_source="erc20_balanceOf",
+                    status="degraded",
+                    status_code="DATA_MISSING",
+                    status_reason="ERC-20 balance read failed.",
+                )
+            ],
+            prices=[
+                NormalizedPriceSnapshot(
+                    snapshot_id="price-1",
+                    asset_key="USDY",
+                    asset_symbol="USDY",
+                    asset_address="0x1",
+                    chain_id=5000,
+                    price_usd="1",
+                    confidence_interval_usd="0",
+                    publish_timestamp=now,
+                    observed_timestamp=now,
+                    age_seconds=1,
+                    freshness_status="fresh",
+                    status_code="DATA_FRESH",
+                    status_reason="fresh",
+                    derivation_method="test",
+                    data_sources_used=["test_price"],
+                    raw_snapshot_ids=["raw-1"],
+                )
+            ],
+            portfolio_address="0xportfolio",
+            chain_id=5000,
+        )
+
+        self.assertEqual(snapshot.status_code, "DATA_PARTIAL")
+        self.assertEqual(snapshot.positions[0].balance, None)
+        self.assertEqual(snapshot.positions[0].value_usd, None)
+        self.assertEqual(snapshot.positions[0].status_reason, "ERC-20 balance read failed.")
 
 
 if __name__ == "__main__":

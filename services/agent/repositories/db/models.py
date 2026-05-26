@@ -75,28 +75,45 @@ class PortfolioSnapshotRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     snapshot_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    wallet_or_vault: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    total_value_usd: Mapped[str] = mapped_column(String(78), nullable=False)
-    balances_json: Mapped[dict] = mapped_column(JSON_TYPE, nullable=False, default=dict)
-    weights_json: Mapped[dict] = mapped_column(JSON_TYPE, nullable=False, default=dict)
+    portfolio_address: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    chain_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    base_currency: Mapped[str] = mapped_column(String(16), nullable=False)
+    total_value_usd: Mapped[str | None] = mapped_column(String(78), nullable=True)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
     status_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     status_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    positions_json: Mapped[list] = mapped_column(JSON_TYPE, nullable=False, default=list)
+    data_sources_json: Mapped[list] = mapped_column(JSON_TYPE, nullable=False, default=list)
+    metadata_json: Mapped[dict] = mapped_column(JSON_TYPE, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
-class RiskSnapshotRecord(Base):
-    __tablename__ = "risk_snapshots"
-    __table_args__ = (UniqueConstraint("snapshot_id", name="uq_risk_snapshots_snapshot_id"),)
+class RiskAssessmentRecord(Base):
+    __tablename__ = "risk_assessments"
+    __table_args__ = (UniqueConstraint("assessment_id", name="uq_risk_assessments_assessment_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    snapshot_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    total_score: Mapped[float] = mapped_column(nullable=False)
-    risk_band: Mapped[str] = mapped_column(String(32), nullable=False)
+    assessment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    asset: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    recommended_action: Mapped[str] = mapped_column(String(64), nullable=False)
+    risk_score: Mapped[str] = mapped_column(String(32), nullable=False)
+    risk_band: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    confidence: Mapped[str] = mapped_column(String(32), nullable=False)
+    hard_veto_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    required_human_approval_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
     status_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     status_reason: Mapped[str] = mapped_column(Text, nullable=False)
-    bucket_scores_json: Mapped[dict] = mapped_column(JSON_TYPE, nullable=False, default=dict)
-    prechecks_json: Mapped[dict] = mapped_column(JSON_TYPE, nullable=False, default=dict)
-    notes_json: Mapped[dict] = mapped_column(JSON_TYPE, nullable=False, default=dict)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    runtime_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_chain: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    freshness_status: Mapped[str] = mapped_column(String(64), nullable=False)
+    reasoning_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    buckets_json: Mapped[list] = mapped_column(JSON_TYPE, nullable=False, default=list)
+    data_sources_json: Mapped[list] = mapped_column(JSON_TYPE, nullable=False, default=list)
+    notes_json: Mapped[list] = mapped_column(JSON_TYPE, nullable=False, default=list)
+    metadata_json: Mapped[dict] = mapped_column(JSON_TYPE, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 

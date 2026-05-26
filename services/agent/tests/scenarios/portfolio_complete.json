@@ -1,0 +1,32 @@
+{
+  "name": "portfolio_complete",
+  "description": "All balances and prices are available, producing a fully valued portfolio.",
+  "balances": [
+    {
+      "asset_key": "USDY",
+      "asset_symbol": "USDY",
+      "asset_address": "0x0000000000000000000000000000000000000001",
+      "chain_id": 5000,
+      "balance": "100",
+      "decimals": 18,
+      "balance_source": "scenario_fixture",
+      "status": "ok",
+      "status_code": "DATA_FRESH",
+      "status_reason": "Fixture balance."
+    }
+  ],
+  "prices": [
+    {
+      "asset_key": "USDY",
+      "asset_symbol": "USDY",
+      "asset_address": "0x0000000000000000000000000000000000000001",
+      "chain_id": 5000,
+      "price_usd": "1",
+      "status_code": "DATA_FRESH",
+      "status_reason": "Fixture price."
+    }
+  ],
+  "target_weights": {
+    "USDY": "1"
+  }
+}

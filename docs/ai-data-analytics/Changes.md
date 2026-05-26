@@ -62,6 +62,186 @@ Commands to run after this change:
 - `python -m unittest services.agent.tests.unit.test_allocation services.agent.tests.unit.test_ai_fallback services.agent.tests.integration.test_portfolio_endpoints -v`
 - `python -m unittest discover services.agent.tests -v`
 
+### 2026-05-24
+
+Type:
+Feature
+
+Summary:
+
+- completed the local-safe Phase 3 deterministic risk engine target with weighted bucket scoring and restrictive status escalation
+- added best-effort PostgreSQL persistence for risk assessments
+- added `GET /risk/assessments` and `GET /risk/assessments/latest`
+- expanded risk tests to cover weighted scores and persisted assessment read surfaces
+
+Affected scope:
+
+- docs/ai-data-analytics/Phase3.md
+- docs/ai-data-analytics/Changes.md
+- services/agent/app/api/risk.py
+- services/agent/app/schemas/__init__.py
+- services/agent/app/schemas/risk.py
+- services/agent/repositories/db/models.py
+- services/agent/repositories/db/risk_repository.py
+- services/agent/risk/engine.py
+- services/agent/tests/integration/test_risk.py
+- services/agent/tests/unit/test_risk_engine.py
+
+Impact:
+
+- smart contracts: no execution approval behavior added; risk remains advisory and conservative
+- frontend: risk center can consume current, latest, and recent assessment surfaces with stable bucket metadata
+- data quality: hard vetoes and restrictive statuses remain explicit, with no optimistic approval when quote/oracle validation is missing
+
+Assumptions / unresolved verification items:
+
+- quote-depth liquidity scoring still requires Phase 1B live AGNI and Merchant Moe quote validation
+- mainnet oracle trust scoring still requires verified Ondo and Pyth live reads
+- Phase 4 allocation should consume `recommended_action`, `risk_score`, `hard_veto_status`, and bucket reasons as deterministic gates
+
+Commands to run after this change:
+
+- `python -m unittest services.agent.tests.unit.test_risk_engine services.agent.tests.integration.test_risk -v`
+- `docker compose restart backend`
+- `curl http://localhost:8000/risk/current`
+- `curl http://localhost:8000/risk/assessments`
+
+### 2026-05-24
+
+Type:
+Feature
+
+Summary:
+
+- started Phase 3 with a deterministic risk-engine plan and first local-safe implementation slice
+- added risk response schemas with required action, score, confidence, hard-veto status, human-approval status, and bucket breakdowns
+- added a deterministic risk engine that hard-vetoes missing or unvalued portfolio data and blocks execution-facing recommendations while quote validation is missing
+- exposed `GET /risk/current`
+- added Phase 3 risk scenario fixtures and focused risk tests
+
+Affected scope:
+
+- docs/ai-data-analytics/Phase3.md
+- docs/ai-data-analytics/README.md
+- docs/ai-data-analytics/Changes.md
+- services/agent/app/api/__init__.py
+- services/agent/app/api/risk.py
+- services/agent/app/main.py
+- services/agent/app/schemas/__init__.py
+- services/agent/app/schemas/risk.py
+- services/agent/risk/__init__.py
+- services/agent/risk/engine.py
+- services/agent/tests/integration/test_risk.py
+- services/agent/tests/scenarios/risk_missing_portfolio.json
+- services/agent/tests/scenarios/risk_normal_fixture.json
+- services/agent/tests/scenarios/risk_quote_gated.json
+- services/agent/tests/unit/test_risk_engine.py
+
+Impact:
+
+- smart contracts: no execution approvals or proposals are emitted; risk output is advisory and explicitly blocks execution-facing recommendations when hard vetoes or missing quote validation exist
+- frontend: can consume `/risk/current` for risk center and dashboard status, including bucket-level reasons and hard-veto state
+- data quality: missing portfolio data, unvalued positions, and Phase 1B quote gaps become visible risk states instead of optimistic recommendations
+
+Assumptions / unresolved verification items:
+
+- quote-depth liquidity scoring remains deferred until Phase 1B validates live AGNI and Merchant Moe quote decoding
+- mainnet/fork oracle trust scoring remains deferred until Ondo and Pyth live paths are verified
+- AI-authored explanations and allocation policy integration remain later phases
+
+Commands to run after this change:
+
+- `python -m unittest services.agent.tests.unit.test_risk_engine services.agent.tests.integration.test_risk -v`
+- `docker compose restart backend`
+- `curl http://localhost:8000/risk/current`
+
+### 2026-05-24
+
+Type:
+Feature
+
+Summary:
+
+- completed the local-safe Phase 2 portfolio analytics target with target-weight drift fields, best-effort portfolio snapshot persistence, and historical read APIs
+- added `GET /portfolio/snapshots` and `GET /portfolio/snapshots/latest`
+- added PostgreSQL `portfolio_snapshots` storage and repository mapping
+- added complete, partial, and missing portfolio scenario fixtures for later risk and allocation phases
+
+Affected scope:
+
+- services/agent/.env.example
+- services/agent/app/core/settings.py
+- services/agent/app/api/portfolio.py
+- services/agent/app/schemas/__init__.py
+- services/agent/app/schemas/portfolio.py
+- services/agent/modules/market_data/balances.py
+- services/agent/repositories/db/models.py
+- services/agent/repositories/db/portfolio_repository.py
+- services/agent/tests/integration/test_portfolio.py
+- services/agent/tests/scenarios/portfolio_complete.json
+- services/agent/tests/scenarios/portfolio_missing.json
+- services/agent/tests/scenarios/portfolio_partial.json
+- services/agent/tests/unit/test_portfolio_snapshot.py
+- docs/ai-data-analytics/Phase2.md
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: still read-only; no execution proposal or signing behavior added
+- frontend: portfolio dashboard can consume current, recent, and latest persisted snapshot surfaces with explicit empty/degraded states
+- data quality: target drift is computed only from valued positions, unvalued positions remain visible, and route-depth/slippage fields stay null until Phase 1B quote validation is complete
+
+Assumptions / unresolved verification items:
+
+- local-safe Phase 2 is complete, but live portfolio quality still depends on configured wallet/vault addresses and verified active-chain asset addresses
+- route-depth and slippage enrichment remains blocked on Phase 1B live quote validation
+- richer historical pagination can be added later if frontend requirements exceed the current latest/recent surfaces
+
+Commands to run after this change:
+
+- `python -m unittest services.agent.tests.unit.test_portfolio_snapshot services.agent.tests.integration.test_portfolio -v`
+- `docker compose restart backend`
+- `curl http://localhost:8000/portfolio/current`
+- `curl http://localhost:8000/portfolio/snapshots`
+
+### 2026-05-24
+
+Type:
+Feature
+
+Summary:
+
+- continued Phase 2 by adding an ERC-20 balance-read boundary for configured portfolio addresses
+- wired `/portfolio/current` to attempt balance reads for verified assets on the active chain when `PORTFOLIO_WALLET_ADDRESS` or `EXECUTOR_VAULT_ADDRESS` is configured
+- preserved fail-safe behavior by returning `DATA_MISSING` when no balance source exists and keeping failed token reads as visible unvalued positions
+- updated Phase 2 documentation with current behavior and next implementation slices
+
+Affected scope:
+
+- services/agent/app/api/portfolio.py
+- services/agent/app/schemas/portfolio.py
+- services/agent/modules/market_data/__init__.py
+- services/agent/modules/market_data/balances.py
+- services/agent/tests/unit/test_portfolio_snapshot.py
+- docs/ai-data-analytics/Phase2.md
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no execution behavior added; the endpoint can use configured vault addresses as read-only balance targets
+- frontend: `/portfolio/current` can now progress from empty degraded state to partial/valued positions when a portfolio address and verified asset addresses are available
+- data quality: failed balance reads remain explicit and do not create synthetic balances or values
+
+Assumptions / unresolved verification items:
+
+- active-chain asset coverage still depends on verified asset addresses in settings
+- Mantle Sepolia is expected to remain mostly degraded because real RWA asset surfaces are not available there
+- historical portfolio persistence and allocation drift metrics remain pending Phase 2 work
+
+Commands executed:
+
+- `python -m unittest services.agent.tests.unit.test_portfolio_snapshot services.agent.tests.integration.test_portfolio -v`
+
 ### 2026-05-23
 
 Type:

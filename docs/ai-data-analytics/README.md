@@ -23,6 +23,7 @@ This folder contains the working documentation for the AI + Data Analytics servi
 - [Phase4.md](./Phase4.md)
 - [Phase5.md](./Phase5.md)
 - [Phase2.md](./Phase2.md)
+- [Phase3.md](./Phase3.md)
 - [recommendation_model.md](./recommendation_model.md)
 - [Changes.md](./Changes.md)
 
@@ -35,5 +36,6 @@ This folder contains the working documentation for the AI + Data Analytics servi
 - use `Phase4.md` as the allocation execution guide
 - use `Phase5.md` as the AI reasoning execution guide
 - use `Phase2.md` as the portfolio analytics execution guide
+- use `Phase3.md` as the deterministic risk-engine execution guide
 - use `recommendation_model.md` as the canonical runtime, status, error, and recommendation-output decision contract
 - update `Changes.md` whenever scope, APIs, risk logic, or analytics behavior changes
