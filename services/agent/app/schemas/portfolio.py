@@ -6,6 +6,24 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class AssetBalance(BaseModel):
+    asset_symbol: str
+    balance: float
+    value_usd: float
+    weight: float
+
+
+class PortfolioSnapshot(BaseModel):
+    snapshot_id: str
+    wallet_or_vault: str
+    total_value_usd: float
+    balances: list[AssetBalance]
+    weights: dict[str, float]
+    status_code: str
+    status_reason: str
+    created_at: datetime
+
+
 class BalanceObservation(BaseModel):
     asset_key: str
     asset_symbol: str
@@ -57,6 +75,9 @@ class PortfolioSnapshotResponse(BaseModel):
     status_label: str
     status_reason: str
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+CurrentPortfolioResponse = PortfolioSnapshotResponse
 
 
 class PortfolioSnapshotHistoryResponse(BaseModel):

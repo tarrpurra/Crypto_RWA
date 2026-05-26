@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ from services.agent.modules.oracle import (
     parse_hermes_price_update,
     utc_now,
 )
+logger = logging.getLogger("services.agent.market_data.prices")
 
 
 @dataclass(frozen=True)
@@ -87,7 +89,12 @@ class PriceService:
     async def fetch_latest_prices(self) -> PriceIngestionBundle:
         assets = self.asset_metadata_for_target_chain()
         feed_ids = self._collect_feed_ids(assets)
-        hermes_response = await self.hermes_client.fetch_latest_price_updates(feed_ids) if feed_ids else None
+        hermes_response = None
+        if feed_ids:
+            try:
+                hermes_response = await self.hermes_client.fetch_latest_price_updates(feed_ids)
+            except Exception as exc:
+                logger.warning("Hermes price fetch failed: %s", exc)
         parsed_by_feed_id = self._parse_feeds(feed_ids, hermes_response.payload if hermes_response else {})
 
         bundle = PriceIngestionBundle()

@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import logging
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import uuid4
 
 from services.agent.app.schemas.market_data import NormalizedPriceSnapshot
-from services.agent.app.schemas.portfolio import BalanceObservation, PortfolioPosition, PortfolioSnapshotResponse
+from services.agent.app.schemas.portfolio import (
+    BalanceObservation,
+    PortfolioPosition,
+    PortfolioSnapshotResponse,
+)
 from services.agent.modules.oracle.freshness import utc_now
 
+
+logger = logging.getLogger("services.agent.market_data.balances")
 
 FRESH_PRICE_CODES = {"DATA_FRESH", "ORACLE_FRESH", "QUOTE_FRESH"}
 ERC20_BALANCE_ABI = [
