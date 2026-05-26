@@ -22,6 +22,8 @@ This folder contains the working documentation for the AI + Data Analytics servi
 - [Phase1.md](./Phase1.md)
 - [Phase4.md](./Phase4.md)
 - [Phase5.md](./Phase5.md)
+- [Phase6.md](./Phase6.md)
+- [Phase7.md](./Phase7.md)
 - [Phase2.md](./Phase2.md)
 - [Phase3.md](./Phase3.md)
 - [recommendation_model.md](./recommendation_model.md)
@@ -35,6 +37,8 @@ This folder contains the working documentation for the AI + Data Analytics servi
 - use `Phase1.md` as the market and oracle ingestion execution guide
 - use `Phase4.md` as the allocation execution guide
 - use `Phase5.md` as the AI reasoning execution guide
+- use `Phase6.md` as the simulations and benchmarks execution guide
+- use `Phase7.md` as the production hardening execution guide
 - use `Phase2.md` as the portfolio analytics execution guide
 - use `Phase3.md` as the deterministic risk-engine execution guide
 - use `recommendation_model.md` as the canonical runtime, status, error, and recommendation-output decision contract

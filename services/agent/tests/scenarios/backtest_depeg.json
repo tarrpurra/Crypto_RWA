@@ -1,0 +1,7 @@
+{
+  "scenario_id": "depeg",
+  "name": "USDY Depeg",
+  "category": "stress",
+  "source": "services.agent.simulations.stress.depeg_scenario",
+  "description": "Seeded Phase 6 scenario fixture for USDY depeg replay."
+}

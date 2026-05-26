@@ -1,0 +1,7 @@
+{
+  "scenario_id": "stale_oracle",
+  "name": "Stale Oracle",
+  "category": "stress",
+  "source": "services.agent.simulations.stress.stale_oracle_scenario",
+  "description": "Seeded Phase 6 scenario fixture for stale oracle replay."
+}

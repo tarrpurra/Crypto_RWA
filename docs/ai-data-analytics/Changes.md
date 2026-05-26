@@ -17,6 +17,101 @@ For each entry, record:
 
 ## Change Log
 
+### 2026-05-26
+
+Type:
+Feature
+
+Summary:
+
+- completed the local-safe Phase 7 production-hardening coding path
+- added source-level ops health summaries for RPC, database, market prices, quotes, portfolio, risk, and AI reasoning
+- added deterministic alert threshold evaluation with recommended `pause`, `rebalance_only`, or `monitor_only` modes
+- added a log-only alert notifier and bounded retry helper
+- exposed `/ops/health`, `/ops/alerts`, and `/ops/readiness`
+- added Phase 7 docs and focused unit/integration tests
+
+Affected scope:
+
+- docs/ai-data-analytics/Phase7.md
+- docs/ai-data-analytics/README.md
+- docs/ai-data-analytics/Changes.md
+- services/agent/app/api/ops.py
+- services/agent/app/api/__init__.py
+- services/agent/app/main.py
+- services/agent/app/schemas/ops.py
+- services/agent/app/schemas/__init__.py
+- services/agent/modules/alerts/*
+- services/agent/tests/unit/test_ops_alerts.py
+- services/agent/tests/integration/test_ops.py
+
+Impact:
+
+- smart contracts: no execution behavior added; readiness remains advisory and blocked when source health is degraded
+- frontend: ops screens can consume health, alert, and readiness payloads with source-level reasons
+- data quality: missing or stale data remains explicit and produces restricted operating modes instead of optimistic readiness
+
+Assumptions / unresolved verification items:
+
+- Phase 1B live market validation remains required before marking the service live-ready
+- alert publishing is log-only by default; external sinks can be added later behind settings
+- database health may use local fallback behavior in development and should be verified against PostgreSQL for deployment
+
+Commands to run after this change:
+
+- `python -m unittest services.agent.tests.unit.test_ops_alerts services.agent.tests.integration.test_ops -v`
+- `python -m unittest discover services.agent.tests -v`
+
+### 2026-05-26
+
+Type:
+Feature
+
+Summary:
+
+- completed the local-safe Phase 6 simulations and benchmarks coding path
+- added seeded stress scenarios for USDY depeg, liquidity shock, and stale oracle conditions
+- added a deterministic backtest replay engine that feeds seeded portfolio and risk snapshots through the existing allocation engine
+- added hold-USDY, static-basket, and Guardian-strategy benchmark summaries
+- added metrics for return, max drawdown, turnover, rebalance count, veto count, hit rate, and risk-band frequency
+- exposed Phase 6 `/backtests` API surfaces for scenario listing, single-scenario replay, and demo summary output
+
+Affected scope:
+
+- docs/ai-data-analytics/Phase6.md
+- docs/ai-data-analytics/README.md
+- docs/ai-data-analytics/Changes.md
+- services/agent/app/api/backtests.py
+- services/agent/app/api/__init__.py
+- services/agent/app/main.py
+- services/agent/app/schemas/backtests.py
+- services/agent/app/schemas/risk.py
+- services/agent/app/schemas/__init__.py
+- services/agent/simulations/backtests/*
+- services/agent/simulations/benchmarks/*
+- services/agent/simulations/stress/*
+- services/agent/tests/unit/test_backtest_metrics.py
+- services/agent/tests/unit/test_backtest_engine.py
+- services/agent/tests/integration/test_backtests.py
+- services/agent/tests/scenarios/backtest_*.json
+
+Impact:
+
+- smart contracts: no execution behavior added; simulations do not create proposals or submit transactions
+- frontend: strategy lab and demo surfaces can consume deterministic scenario and benchmark outputs from `/backtests`
+- data quality: scenario inputs are explicit seeded simulation data and do not pretend to be live market, oracle, quote, wallet, or vault data
+
+Assumptions / unresolved verification items:
+
+- Phase 6 local replay is complete, but live replay from persisted production snapshots can be expanded later
+- Phase 1B live market validation is still required before simulation assumptions can be compared against verified Mantle mainnet or mainnet-fork data
+- benchmark strategy accounting is intentionally conservative and summary-oriented for demo use
+
+Commands to run after this change:
+
+- `python -m unittest services.agent.tests.unit.test_backtest_metrics services.agent.tests.unit.test_backtest_engine services.agent.tests.integration.test_backtests -v`
+- `python -m unittest discover services.agent.tests -v`
+
 ### 2026-05-25
 
 Type:

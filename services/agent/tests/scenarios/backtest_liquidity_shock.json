@@ -1,0 +1,7 @@
+{
+  "scenario_id": "liquidity_shock",
+  "name": "Liquidity Shock",
+  "category": "stress",
+  "source": "services.agent.simulations.stress.liquidity_shock_scenario",
+  "description": "Seeded Phase 6 scenario fixture for liquidity shock replay."
+}

@@ -4,11 +4,13 @@ from fastapi import FastAPI
 
 from services.agent.app.api import (
     allocation_router,
+    backtests_router,
     chain_router,
     contracts_router,
     decisions_router,
     health_router,
     market_router,
+    ops_router,
     portfolio_router,
     risk_router,
 )
@@ -28,3 +30,5 @@ app.include_router(portfolio_router)
 app.include_router(risk_router)
 app.include_router(allocation_router)
 app.include_router(decisions_router)
+app.include_router(backtests_router)
+app.include_router(ops_router)
