@@ -50,3 +50,16 @@ COPY . /workspace
 EXPOSE 8000
 
 CMD ["uvicorn", "services.agent.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+FROM node:20-alpine AS frontend
+
+WORKDIR /workspace/frontend
+
+COPY frontend/package*.json ./
+RUN npm ci
+
+COPY frontend/ ./
+
+EXPOSE 8080
+
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

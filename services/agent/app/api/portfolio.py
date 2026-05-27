@@ -8,7 +8,7 @@ from services.agent.app.core.status_codes import DataStatusCode
 from services.agent.app.core.settings import get_settings
 from services.agent.app.schemas.portfolio import PortfolioSnapshotHistoryResponse, PortfolioSnapshotResponse
 from services.agent.modules.market_data import get_price_service
-from services.agent.modules.market_data.balances import Erc20BalanceReader, PortfolioSnapshotEngine
+from services.agent.modules.market_data.balances import Erc20BalanceReader, PortfolioSnapshotEngine, fetch_portfolio_snapshot
 from services.agent.repositories.db.portfolio_repository import PortfolioSnapshotRepository
 
 
@@ -75,6 +75,12 @@ async def current_portfolio() -> PortfolioSnapshotResponse:
     )
     _save_snapshot_best_effort(snapshot)
     return snapshot
+
+
+@router.get("/snapshot", response_model=dict)
+async def legacy_portfolio_snapshot() -> dict:
+    snapshot = fetch_portfolio_snapshot()
+    return {"snapshot": snapshot.model_dump(mode="json")}
 
 
 @router.get("/snapshots/latest", response_model=PortfolioSnapshotResponse)

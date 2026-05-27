@@ -8,7 +8,9 @@ from services.agent.app.api.portfolio import current_portfolio
 from services.agent.app.core.settings import get_settings
 from services.agent.app.core.status_codes import DataStatusCode
 from services.agent.app.schemas.risk import RiskAssessmentHistoryResponse, RiskAssessmentResponse
+from services.agent.modules.market_data.balances import fetch_portfolio_snapshot
 from services.agent.repositories.db.risk_repository import RiskAssessmentRepository
+from services.agent.risk.scoring.score_engine import RiskScoreEngine
 from services.agent.risk.engine import RiskEngine
 
 
@@ -34,6 +36,13 @@ async def current_risk() -> RiskAssessmentResponse:
     )
     _save_assessment_best_effort(assessment)
     return assessment
+
+
+@router.get("/snapshot", response_model=dict)
+async def legacy_risk_snapshot() -> dict:
+    portfolio = fetch_portfolio_snapshot()
+    risk = RiskScoreEngine().compute_risk_snapshot(portfolio)
+    return {"risk": risk.model_dump(mode="json")}
 
 
 @router.get("/assessments/latest", response_model=RiskAssessmentResponse)

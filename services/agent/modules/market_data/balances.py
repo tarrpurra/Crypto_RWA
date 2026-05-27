@@ -7,11 +7,15 @@ from uuid import uuid4
 
 from services.agent.app.schemas.market_data import NormalizedPriceSnapshot
 from services.agent.app.schemas.portfolio import (
+    AssetBalance,
     BalanceObservation,
+    PortfolioSnapshot,
     PortfolioPosition,
     PortfolioSnapshotResponse,
 )
+from services.agent.app.core.settings import get_settings
 from services.agent.modules.oracle.freshness import utc_now
+from services.agent.repositories.db.portfolio_repository import PortfolioSnapshotRepository
 
 
 logger = logging.getLogger("services.agent.market_data.balances")
@@ -27,6 +31,85 @@ ERC20_BALANCE_ABI = [
         "type": "function",
     }
 ]
+
+
+def _float_or_zero(value: str | float | int | None) -> float:
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _missing_internal_snapshot(reason: str, wallet_or_vault: str = "UNCONFIGURED") -> PortfolioSnapshot:
+    return PortfolioSnapshot(
+        snapshot_id=f"portfolio_missing_{int(utc_now().timestamp())}",
+        wallet_or_vault=wallet_or_vault,
+        total_value_usd=0.0,
+        balances=[],
+        weights={},
+        status_code="DATA_MISSING",
+        status_reason=reason,
+        created_at=utc_now(),
+    )
+
+
+def _internal_snapshot_from_response(snapshot: PortfolioSnapshotResponse) -> PortfolioSnapshot:
+    if snapshot.total_value_usd is None or snapshot.status_code != "DATA_FRESH":
+        return _missing_internal_snapshot(
+            snapshot.status_reason,
+            wallet_or_vault=snapshot.portfolio_address or "UNCONFIGURED",
+        )
+
+    balances: list[AssetBalance] = []
+    weights: dict[str, float] = {}
+    for position in snapshot.positions:
+        value_usd = _float_or_zero(position.value_usd)
+        weight = _float_or_zero(position.weight)
+        balance = _float_or_zero(position.balance)
+        balances.append(
+            AssetBalance(
+                asset_symbol=position.asset_symbol,
+                balance=balance,
+                value_usd=value_usd,
+                weight=weight,
+            )
+        )
+        weights[position.asset_symbol] = weight
+
+    return PortfolioSnapshot(
+        snapshot_id=snapshot.snapshot_id,
+        wallet_or_vault=snapshot.portfolio_address or "UNCONFIGURED",
+        total_value_usd=_float_or_zero(snapshot.total_value_usd),
+        balances=balances,
+        weights=weights,
+        status_code=snapshot.status_code,
+        status_reason=snapshot.status_reason,
+        created_at=snapshot.generated_at,
+    )
+
+
+def get_default_mock_snapshot() -> PortfolioSnapshot:
+    return _missing_internal_snapshot("Mock portfolio fallback is disabled; no portfolio snapshot is available.")
+
+
+def fetch_portfolio_snapshot() -> PortfolioSnapshot:
+    settings = get_settings()
+    portfolio_address = settings.portfolio_wallet_address or settings.executor_vault_address
+    try:
+        snapshot = PortfolioSnapshotRepository().latest_snapshot(portfolio_address=portfolio_address)
+    except Exception as exc:
+        return _missing_internal_snapshot(
+            f"Portfolio snapshot repository unavailable: {exc}",
+            wallet_or_vault=portfolio_address or "UNCONFIGURED",
+        )
+    if snapshot is None:
+        return _missing_internal_snapshot(
+            "No persisted portfolio snapshot is available for allocation or decisioning.",
+            wallet_or_vault=portfolio_address or "UNCONFIGURED",
+        )
+    return _internal_snapshot_from_response(snapshot)
 
 
 def _decimal_or_none(value: str | None) -> Decimal | None:
