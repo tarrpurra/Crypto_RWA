@@ -1,11 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { riskApi } from "@/lib/api/risk";
+import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 
 export function useCurrentRisk() {
+  const { walletAddress } = usePortfolioWallet();
   return useQuery({
-    queryKey: ["risk", "current"],
-    queryFn: riskApi.current,
+    queryKey: ["risk", "current", walletAddress],
+    queryFn: () => riskApi.current(walletAddress),
     refetchInterval: 30_000,
   });
 }

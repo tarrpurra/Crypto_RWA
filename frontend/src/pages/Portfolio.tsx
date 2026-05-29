@@ -1,4 +1,5 @@
 import { MetricPanel, PageScaffold, toneFromStatus } from "@/components/rwa/PageScaffold";
+import { WalletScopeControl } from "@/components/rwa/WalletScopeControl";
 import { useCurrentPortfolio, usePortfolioSnapshots } from "@/hooks/usePortfolio";
 
 export default function Portfolio() {
@@ -13,6 +14,7 @@ export default function Portfolio() {
       title="Portfolio"
       description="Current RWA holdings, valuation quality, target drift, and historical snapshots will live here."
     >
+      <WalletScopeControl />
       <div className="grid gap-3 md:grid-cols-3">
         <MetricPanel
           label="Current Snapshot"

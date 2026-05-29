@@ -39,7 +39,12 @@ class AgniDiscoveryService:
         self.web3 = Web3(HTTPProvider(self.settings.effective_http_rpc_url))
 
     def discover_exact_input_single_routes(self, token_in: AssetMetadata, token_out: AssetMetadata) -> list[RouteDescriptor]:
-        if self.settings.target_chain != TargetChain.MANTLE_MAINNET:
+        sepolia_mock_pair = (
+            self.settings.target_chain == TargetChain.MANTLE_SEPOLIA
+            and self.settings.sepolia_mock_routes_enabled
+            and {token_in.asset_key, token_out.asset_key} == {"MOCK_TOKEN_A", "MOCK_TOKEN_B"}
+        )
+        if self.settings.target_chain != TargetChain.MANTLE_MAINNET and not sepolia_mock_pair:
             return []
         if not self.settings.effective_agni_factory_address:
             return []

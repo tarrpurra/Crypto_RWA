@@ -26,9 +26,9 @@ def _save_assessment_best_effort(assessment: RiskAssessmentResponse) -> None:
 
 
 @router.get("/current", response_model=RiskAssessmentResponse)
-async def current_risk() -> RiskAssessmentResponse:
+async def current_risk(wallet_address: str | None = None) -> RiskAssessmentResponse:
     settings = get_settings()
-    portfolio = await current_portfolio()
+    portfolio = await current_portfolio(wallet_address=wallet_address)
     assessment = RiskEngine().evaluate(
         portfolio=portfolio,
         runtime_mode=settings.runtime_mode,

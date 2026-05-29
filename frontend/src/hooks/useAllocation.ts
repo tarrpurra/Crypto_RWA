@@ -1,11 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { allocationApi } from "@/lib/api/allocation";
+import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 
 export function useAllocationRecommendation() {
+  const { walletAddress } = usePortfolioWallet();
   return useQuery({
-    queryKey: ["allocation", "recommendation"],
-    queryFn: allocationApi.recommendation,
+    queryKey: ["allocation", "recommendation", walletAddress],
+    queryFn: () => allocationApi.recommendation(walletAddress),
     refetchInterval: 45_000,
   });
 }

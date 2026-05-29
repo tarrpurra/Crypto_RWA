@@ -17,6 +17,44 @@ For each entry, record:
 
 ## Change Log
 
+### 2026-05-29
+
+Type:
+Feature / UX
+
+Summary:
+
+- added a wallet scope control for local frontend testing without requiring Privy configuration
+- wired portfolio, risk, and allocation API calls to pass the selected or connected wallet address through `wallet_address`
+- added shared wallet-scope state backed by localStorage and Privy wallet data when available
+- aligned active RWA auth token storage with the API client key
+
+Affected scope:
+
+- frontend/src/components/auth/AuthProvider.tsx
+- frontend/src/components/auth/LoginButton.tsx
+- frontend/src/components/auth/AuthProvider.test.tsx
+- frontend/src/components/rwa/WalletScopeControl.tsx
+- frontend/src/hooks/usePortfolioWallet.ts
+- frontend/src/hooks/usePortfolio.ts
+- frontend/src/hooks/useRisk.ts
+- frontend/src/hooks/useAllocation.ts
+- frontend/src/lib/api/portfolio.ts
+- frontend/src/lib/api/risk.ts
+- frontend/src/lib/api/allocation.ts
+- frontend/src/pages/Index.tsx
+- frontend/src/pages/Portfolio.tsx
+
+Impact:
+
+- AI/data analytics: frontend can now exercise wallet-aware backend read paths during end-to-end testing
+- contracts: no direct contract writes added; UI remains read/advisory
+- UX: local testers can paste a wallet address and see dashboard/portfolio/risk/allocation refresh for that wallet
+
+Verification:
+
+- `npm run build` passed in `frontend`.
+
 ### 2026-05-11
 
 Type:

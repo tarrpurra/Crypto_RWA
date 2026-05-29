@@ -10,7 +10,7 @@ from web3 import Web3
 from services.agent.app.schemas.recommendations import RecommendationResponse
 from services.agent.app.schemas.proposals import TradeProposalResponse, TradeProposal, ExecutionPayloadSchema
 from services.agent.app.schemas.allocation import RebalanceAction
-from services.agent.modules.market_data.balances import fetch_portfolio_snapshot
+from services.agent.modules.market_data.balances import fetch_portfolio_snapshot, internal_snapshot_from_response
 from services.agent.repositories.db.market_repository import MarketDataRepository
 from services.agent.risk.scoring.score_engine import RiskScoreEngine
 from services.agent.risk.guards.trade_guard import PolicyGuard
@@ -57,14 +57,19 @@ def _save_proposal_record(proposal: TradeProposal) -> None:
         logger.warning("Failed to persist proposal snapshot: %s", exc)
 
 
+def _active_profile_name() -> str:
+    return profiles.ACTIVE_PROFILE_NAME or get_settings().allocation_profile_name
+
+
 @router.get("/decisions", response_model=RecommendationResponse)
-async def get_latest_decisions() -> RecommendationResponse:
+async def get_latest_decisions(wallet_address: str | None = None) -> RecommendationResponse:
     # 1. Gather context
-    portfolio = fetch_portfolio_snapshot()
+    portfolio_response = await current_portfolio(wallet_address=wallet_address)
+    portfolio = internal_snapshot_from_response(portfolio_response)
     risk_engine = RiskScoreEngine()
     risk = risk_engine.compute_risk_snapshot(portfolio)
     
-    decision, actions = compute_rebalance(portfolio, risk, profiles.ACTIVE_PROFILE_NAME)
+    decision, actions = compute_rebalance(portfolio, risk, _active_profile_name())
     
     # 2. Feed to AI parser (which queries Ollama or falls back to template reasons)
     rec = await generate_recommendation_reasoning(portfolio, risk, decision, actions)
@@ -81,7 +86,7 @@ async def create_trade_proposal(action: RebalanceAction) -> TradeProposalRespons
     if risk.risk_band in ("RISK_VETO", "RISK_PAUSE_REQUIRED"):
         raise HTTPException(status_code=400, detail=f"Cannot create proposal: risk band is {risk.risk_band}")
 
-    decision, allowed_actions = compute_rebalance(portfolio, risk, profiles.ACTIVE_PROFILE_NAME)
+    decision, allowed_actions = compute_rebalance(portfolio, risk, _active_profile_name())
     matching_action = next(
         (
             candidate
@@ -273,3 +278,4 @@ async def reject_proposal(proposal_id: str) -> dict[str, str]:
         session.commit()
         
     return {"status": "ok", "message": f"Proposal {proposal_id} successfully rejected."}
+from services.agent.app.api.portfolio import current_portfolio

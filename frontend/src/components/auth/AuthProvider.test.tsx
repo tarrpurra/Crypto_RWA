@@ -50,12 +50,12 @@ describe("AuthProvider", () => {
 
   it("clears a browser auth token from local mode logout", async () => {
     vi.stubEnv("VITE_PRIVY_APP_ID", "");
-    window.localStorage.setItem("pacifica_auth_token", "local-token");
+    window.localStorage.setItem("aixrwa_auth_token", "local-token");
 
     await renderAuthButton();
     fireEvent.click(screen.getByRole("button", { name: /log out/i }));
 
-    expect(window.localStorage.getItem("pacifica_auth_token")).toBeNull();
+    expect(window.localStorage.getItem("aixrwa_auth_token")).toBeNull();
     expect(privyProviderMock).not.toHaveBeenCalled();
   });
 
@@ -101,12 +101,12 @@ describe("AuthProvider", () => {
     await renderAuthButton();
 
     await waitFor(() => {
-      expect(window.localStorage.getItem("pacifica_auth_token")).toBe("privy-access-token");
+      expect(window.localStorage.getItem("aixrwa_auth_token")).toBe("privy-access-token");
     });
 
     fireEvent.click(screen.getByRole("button"));
 
-    expect(window.localStorage.getItem("pacifica_auth_token")).toBeNull();
+    expect(window.localStorage.getItem("aixrwa_auth_token")).toBeNull();
     expect(privyLogoutMock).toHaveBeenCalledTimes(1);
   });
 });

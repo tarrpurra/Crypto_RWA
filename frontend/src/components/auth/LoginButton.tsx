@@ -5,8 +5,8 @@ import { useAuth } from './AuthProvider';
 import { Button } from '@/components/ui/button';
 import { Loader2, LogIn, LogOut, Wallet } from 'lucide-react';
 
-const AUTH_TOKEN_STORAGE_KEY = 'pacifica_auth_token';
-const AUTH_TOKEN_CHANGE_EVENT = 'pacifica-auth-token-change';
+const AUTH_TOKEN_STORAGE_KEY = 'aixrwa_auth_token';
+const AUTH_TOKEN_CHANGE_EVENT = 'aixrwa-auth-token-change';
 
 function hasStoredAuthToken(): boolean {
   if (typeof window === 'undefined') {

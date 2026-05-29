@@ -55,7 +55,7 @@ def _missing_internal_snapshot(reason: str, wallet_or_vault: str = "UNCONFIGURED
     )
 
 
-def _internal_snapshot_from_response(snapshot: PortfolioSnapshotResponse) -> PortfolioSnapshot:
+def internal_snapshot_from_response(snapshot: PortfolioSnapshotResponse) -> PortfolioSnapshot:
     if snapshot.total_value_usd is None or snapshot.status_code != "DATA_FRESH":
         return _missing_internal_snapshot(
             snapshot.status_reason,
@@ -94,9 +94,9 @@ def get_default_mock_snapshot() -> PortfolioSnapshot:
     return _missing_internal_snapshot("Mock portfolio fallback is disabled; no portfolio snapshot is available.")
 
 
-def fetch_portfolio_snapshot() -> PortfolioSnapshot:
+def fetch_portfolio_snapshot(wallet_address: str | None = None) -> PortfolioSnapshot:
     settings = get_settings()
-    portfolio_address = settings.portfolio_wallet_address or settings.executor_vault_address
+    portfolio_address = wallet_address or settings.portfolio_wallet_address or settings.executor_vault_address
     try:
         snapshot = PortfolioSnapshotRepository().latest_snapshot(portfolio_address=portfolio_address)
     except Exception as exc:
@@ -109,7 +109,7 @@ def fetch_portfolio_snapshot() -> PortfolioSnapshot:
             "No persisted portfolio snapshot is available for allocation or decisioning.",
             wallet_or_vault=portfolio_address or "UNCONFIGURED",
         )
-    return _internal_snapshot_from_response(snapshot)
+    return internal_snapshot_from_response(snapshot)
 
 
 def _decimal_or_none(value: str | None) -> Decimal | None:

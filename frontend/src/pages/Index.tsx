@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { MetricPanel, PageScaffold, StatusPill, toneFromStatus } from "@/components/rwa/PageScaffold";
+import { WalletScopeControl } from "@/components/rwa/WalletScopeControl";
 import { useAllocationRecommendation } from "@/hooks/useAllocation";
 import { useMarketIngestionStatus } from "@/hooks/useMarket";
 import { useCurrentPortfolio } from "@/hooks/usePortfolio";
@@ -105,6 +106,8 @@ const Index = () => {
         title="Dashboard"
         description="The operating surface for AIxRWA: portfolio analytics, risk gates, market data quality, and advisory allocation decisions."
       >
+        <WalletScopeControl />
+
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <MetricPanel
             label="Agent Mode"

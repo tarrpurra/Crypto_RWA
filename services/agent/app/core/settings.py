@@ -56,6 +56,13 @@ class Settings(BaseSettings):
     portfolio_wallet_address: str | None = None
     portfolio_base_currency: str = "USD"
     portfolio_target_weights: str = ""
+    allocation_profile_name: str = "Balanced"
+    sepolia_mock_prices_enabled: bool = True
+    sepolia_mock_routes_enabled: bool = True
+    sepolia_mock_token_a_address: str | None = None
+    sepolia_mock_token_b_address: str | None = None
+    sepolia_mock_token_a_price_usd: str = "1"
+    sepolia_mock_token_b_price_usd: str = "1"
 
     pyth_hermes_url: str = "https://hermes.pyth.network"
     pyth_hermes_latest_price_path: str = "/v2/updates/price/latest"
@@ -256,6 +263,34 @@ class Settings(BaseSettings):
                 "verified": bool(self.meth_sepolia_address),
                 "pyth_feed_id": self.meth_usd_pyth_feed_id,
                 "ratio_feed_id": self.meth_eth_ratio_feed_id,
+                "ondo_oracle_address": None,
+                "decimals": 18,
+            },
+            "MOCK_TOKEN_A": {
+                "asset_key": "MOCK_TOKEN_A",
+                "symbol": "MockTokenA",
+                "chain_id": self.mantle_sepolia_chain_id,
+                "address": self.sepolia_mock_token_a_address,
+                "price_strategy": "sepolia_mock_fixed",
+                "primary_reference_source": "sepolia_validation_asset",
+                "dex_quote_required": True,
+                "verified": bool(self.sepolia_mock_token_a_address),
+                "pyth_feed_id": None,
+                "ratio_feed_id": None,
+                "ondo_oracle_address": None,
+                "decimals": 18,
+            },
+            "MOCK_TOKEN_B": {
+                "asset_key": "MOCK_TOKEN_B",
+                "symbol": "MockTokenB",
+                "chain_id": self.mantle_sepolia_chain_id,
+                "address": self.sepolia_mock_token_b_address,
+                "price_strategy": "sepolia_mock_fixed",
+                "primary_reference_source": "sepolia_validation_asset",
+                "dex_quote_required": True,
+                "verified": bool(self.sepolia_mock_token_b_address),
+                "pyth_feed_id": None,
+                "ratio_feed_id": None,
                 "ondo_oracle_address": None,
                 "decimals": 18,
             },

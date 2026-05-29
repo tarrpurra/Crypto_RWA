@@ -5,8 +5,8 @@ import { PrivyProvider as PrivyProviderPkg, usePrivy } from '@privy-io/react-aut
 import { logger } from '@/lib/logger';
 
 const PRIVY_APP_ID = String(import.meta.env.VITE_PRIVY_APP_ID ?? '').trim();
-const AUTH_TOKEN_STORAGE_KEY = 'pacifica_auth_token';
-const AUTH_TOKEN_CHANGE_EVENT = 'pacifica-auth-token-change';
+const AUTH_TOKEN_STORAGE_KEY = 'aixrwa_auth_token';
+const AUTH_TOKEN_CHANGE_EVENT = 'aixrwa-auth-token-change';
 
 function emitAuthTokenChange() {
   window.dispatchEvent(new Event(AUTH_TOKEN_CHANGE_EVENT));

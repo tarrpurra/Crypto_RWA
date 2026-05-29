@@ -9,6 +9,7 @@ from services.agent.app.core.settings import get_settings
 from services.agent.app.schemas.portfolio import PortfolioSnapshotHistoryResponse, PortfolioSnapshotResponse
 from services.agent.modules.market_data import get_price_service
 from services.agent.modules.market_data.balances import Erc20BalanceReader, PortfolioSnapshotEngine, fetch_portfolio_snapshot
+from services.agent.repositories.db.market_repository import MarketDataRepository
 from services.agent.repositories.db.portfolio_repository import PortfolioSnapshotRepository
 
 
@@ -23,10 +24,17 @@ def _save_snapshot_best_effort(snapshot: PortfolioSnapshotResponse) -> None:
         logger.warning("Portfolio snapshot persistence failed: %s", exc)
 
 
+def _save_prices_best_effort(bundle) -> None:
+    try:
+        MarketDataRepository().save_price_bundle(bundle)
+    except Exception as exc:
+        logger.warning("Portfolio price persistence failed: %s", exc)
+
+
 @router.get("/current", response_model=PortfolioSnapshotResponse)
-async def current_portfolio() -> PortfolioSnapshotResponse:
+async def current_portfolio(wallet_address: str | None = None) -> PortfolioSnapshotResponse:
     settings = get_settings()
-    portfolio_address = settings.portfolio_wallet_address or settings.executor_vault_address
+    portfolio_address = wallet_address or settings.portfolio_wallet_address or settings.executor_vault_address
     if not portfolio_address:
         snapshot = PortfolioSnapshotEngine().build_snapshot(
             balances=[],
@@ -63,6 +71,7 @@ async def current_portfolio() -> PortfolioSnapshotResponse:
     if balances:
         price_bundle = await get_price_service().fetch_latest_prices()
         prices = price_bundle.normalized_snapshots
+        _save_prices_best_effort(price_bundle)
 
     snapshot = PortfolioSnapshotEngine().build_snapshot(
         balances=balances,
@@ -84,9 +93,9 @@ async def legacy_portfolio_snapshot() -> dict:
 
 
 @router.get("/snapshots/latest", response_model=PortfolioSnapshotResponse)
-def latest_portfolio_snapshot() -> PortfolioSnapshotResponse:
+def latest_portfolio_snapshot(wallet_address: str | None = None) -> PortfolioSnapshotResponse:
     settings = get_settings()
-    portfolio_address = settings.portfolio_wallet_address or settings.executor_vault_address
+    portfolio_address = wallet_address or settings.portfolio_wallet_address or settings.executor_vault_address
     try:
         snapshot = PortfolioSnapshotRepository().latest_snapshot(portfolio_address=portfolio_address)
     except Exception as exc:
@@ -97,9 +106,9 @@ def latest_portfolio_snapshot() -> PortfolioSnapshotResponse:
 
 
 @router.get("/snapshots", response_model=PortfolioSnapshotHistoryResponse)
-def portfolio_snapshot_history(limit: int = 20) -> PortfolioSnapshotHistoryResponse:
+def portfolio_snapshot_history(limit: int = 20, wallet_address: str | None = None) -> PortfolioSnapshotHistoryResponse:
     settings = get_settings()
-    portfolio_address = settings.portfolio_wallet_address or settings.executor_vault_address
+    portfolio_address = wallet_address or settings.portfolio_wallet_address or settings.executor_vault_address
     safe_limit = max(1, min(limit, 100))
     try:
         snapshots = PortfolioSnapshotRepository().recent_snapshots(portfolio_address=portfolio_address, limit=safe_limit)
