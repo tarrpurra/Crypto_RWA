@@ -65,7 +65,7 @@ async def latest_prices() -> LatestPricesResponse:
     status_code = "DATA_FRESH"
     status = "ok"
     status_reason = "Latest price snapshots fetched successfully."
-    if any(snapshot.status_code not in {"ORACLE_FRESH", "QUOTE_FRESH"} for snapshot in bundle.normalized_snapshots):
+    if any(snapshot.status_code not in {"DATA_FRESH", "ORACLE_FRESH", "QUOTE_FRESH"} for snapshot in bundle.normalized_snapshots):
         status_code = "DATA_PARTIAL"
         status = "degraded"
         status_reason = "At least one asset is missing, unverified, or stale."

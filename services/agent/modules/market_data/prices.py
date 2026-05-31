@@ -46,6 +46,25 @@ class PriceService:
     def ingestion_status(self) -> list[AssetIngestionStatus]:
         statuses: list[AssetIngestionStatus] = []
         for asset in self.asset_metadata_for_target_chain():
+            if asset.price_strategy == "sepolia_mock_fixed":
+                configured = bool(asset.address and self.settings.sepolia_mock_prices_enabled)
+                statuses.append(
+                    AssetIngestionStatus(
+                        asset_key=asset.asset_key,
+                        asset_symbol=asset.symbol,
+                        configured=configured,
+                        status="simulation_only" if configured else "unverified",
+                        status_code=DataStatusCode.DATA_FRESH.value if configured else DataStatusCode.DATA_MISSING.value,
+                        status_reason=(
+                            "Sepolia validation asset uses explicit simulation-only pricing for frontend and backend test runs."
+                            if configured
+                            else "Sepolia validation asset address or simulation pricing is not configured."
+                        ),
+                        required_sources=["sepolia_mock_fixed_price", "erc20_balanceOf"],
+                    )
+                )
+                continue
+
             if asset.symbol == "USDY":
                 selector = self.settings.ondo_usdy_oracle_method_selector or ""
                 configured = bool(asset.address and asset.ondo_oracle_address)
@@ -151,6 +170,9 @@ class PriceService:
         )
 
     def _build_asset_price(self, asset: AssetMetadata, hermes_response, parsed_by_feed_id: dict[str, object]) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
+        if asset.price_strategy == "sepolia_mock_fixed":
+            return self._build_sepolia_mock_price(asset)
+
         if asset.symbol == "USDY":
             return self._build_usdy_price(asset)
 
@@ -171,6 +193,59 @@ class PriceService:
             return self._build_ratio_snapshot(asset, hermes_response, eth_obs, ratio_obs)
 
         return self._missing_snapshot(asset, "mETH direct or ratio feed data is not available yet.", status="unverified")
+
+    def _build_sepolia_mock_price(self, asset: AssetMetadata) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
+        if not self.settings.sepolia_mock_prices_enabled:
+            return self._missing_snapshot(asset, "Sepolia mock fixed pricing is disabled.", status="unverified")
+
+        price = (
+            self.settings.sepolia_mock_token_a_price_usd
+            if asset.asset_key == "MOCK_TOKEN_A"
+            else self.settings.sepolia_mock_token_b_price_usd
+        )
+        now = utc_now()
+        raw_snapshot = RawPriceSnapshot(
+            snapshot_id=str(uuid4()),
+            asset_key=asset.asset_key,
+            asset_symbol=asset.symbol,
+            asset_address=asset.address,
+            chain_id=asset.chain_id,
+            feed_id=None,
+            source="sepolia_mock_fixed_price",
+            source_url=None,
+            raw_payload_json={
+                "runtime_mode": self.settings.runtime_mode.value,
+                "target_chain": self.settings.target_chain.value,
+                "testnet_only": True,
+            },
+            fetch_timestamp=now,
+            publish_timestamp=now,
+            price_raw=price,
+            confidence_raw=None,
+            exponent=None,
+            status="simulation_only",
+            status_code=DataStatusCode.DATA_FRESH.value,
+            status_reason="Simulation-only Sepolia mock-token price configured for local end-to-end testing.",
+        )
+        normalized = NormalizedPriceSnapshot(
+            snapshot_id=str(uuid4()),
+            asset_key=asset.asset_key,
+            asset_symbol=asset.symbol,
+            asset_address=asset.address,
+            chain_id=asset.chain_id,
+            price_usd=price,
+            confidence_interval_usd=None,
+            publish_timestamp=now,
+            observed_timestamp=now,
+            age_seconds=0,
+            freshness_status="simulation_only",
+            status_code=DataStatusCode.DATA_FRESH.value,
+            status_reason="Simulation-only Sepolia mock-token price configured for local end-to-end testing.",
+            derivation_method="sepolia_mock_fixed_price",
+            data_sources_used=["sepolia_mock_fixed_price"],
+            raw_snapshot_ids=[raw_snapshot.snapshot_id],
+        )
+        return [raw_snapshot], normalized
 
     def _build_usdy_price(self, asset: AssetMetadata) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
         oracle_read = self.ondo_usdy_adapter.read()

@@ -17,6 +17,93 @@ For each entry, record:
 
 ## Change Log
 
+### 2026-05-29
+
+Type:
+Fix / Environment alignment
+
+Summary:
+
+- synced backend local Sepolia runtime env with the deployed contract addresses and mock validation token addresses already present in `contracts/.env`
+- added frontend local env defaults so the Vite app calls the local FastAPI service during full-flow testing
+- normalized risk-scorer timestamp age calculations to tolerate DB-loaded naive timestamps and service-generated UTC-aware timestamps
+- relaxed the portfolio integration smoke expectation so configured Sepolia balance probes can return the correct degraded partial state instead of only the unconfigured missing state
+
+Affected scope:
+
+- frontend/.env.local
+- services/agent/.env
+- services/agent/risk/scoring/score_engine.py
+- services/agent/tests/integration/test_portfolio.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract behavior changed; backend reads now point at the configured Mantle Sepolia deployment
+- frontend: local dev server can call the backend without relying on implicit Vite defaults
+- data quality: Sepolia mock assets remain explicit simulation-only inputs, and partial portfolio states remain degraded rather than treated as complete
+
+Assumptions / unresolved verification items:
+
+- live Sepolia RPC calls still depend on the configured endpoint being reachable from the local machine
+- PostgreSQL is not provisioned locally, so tests fall back to in-memory SQLite for persistence paths
+- Privy remains optional for local unauthenticated UI testing unless `VITE_PRIVY_APP_ID` is configured
+
+Commands executed:
+
+- `.\.venv\Scripts\python.exe -m unittest discover services.agent.tests -v`
+- `npm run test`
+- `npm run build`
+
+### 2026-05-29
+
+Type:
+Feature / Test integration
+
+Summary:
+
+- added wallet-aware query parameters to portfolio, risk, allocation, decision, and snapshot read paths so frontend tests can target a connected wallet without rewriting backend env
+- added Mantle Sepolia validation assets for the deployed mock tokens, with explicit simulation-only fixed prices for local end-to-end testing
+- enabled Sepolia AGNI mock-token route discovery while keeping live quote amount decoding verification-gated
+- added settings for Docker test allocation profile selection and Sepolia mock asset configuration
+- persisted price bundles during portfolio reads so allocation/risk paths can consume the same generated test snapshots
+- fixed the Pyth Hermes parser to match feed IDs with or without a `0x` prefix
+
+Affected scope:
+
+- services/agent/.env.example
+- services/agent/.env.docker.test
+- services/agent/app/api/allocation.py
+- services/agent/app/api/decisions.py
+- services/agent/app/api/market.py
+- services/agent/app/api/portfolio.py
+- services/agent/app/api/risk.py
+- services/agent/app/core/settings.py
+- services/agent/modules/market_data/balances.py
+- services/agent/modules/market_data/prices.py
+- services/agent/modules/oracle/pyth_parser.py
+- services/agent/modules/quotes/agni_discovery.py
+- services/agent/modules/quotes/service.py
+- services/agent/strategies/allocation/profiles.py
+- services/agent/tests/unit/test_pyth_parser.py
+
+Impact:
+
+- smart contracts: no execution behavior changed; Sepolia mock-token reads now align with the deployed validation contracts
+- frontend: portfolio/risk/allocation can now follow the wallet selected in the UI through query parameters
+- data quality: mock-token prices are explicitly labeled simulation-only and do not replace verified mainnet oracle/quote validation
+
+Assumptions / unresolved verification items:
+
+- AGNI QuoterV2 amount-out decoding remains verification-gated, so quote routes may be discoverable while quote amounts remain unknown
+- Sepolia mock prices are for end-to-end testing only and must not be used as live market data
+- production wallet ownership verification still requires signed-message auth before user portfolios are treated as authenticated
+
+Commands executed:
+
+- `python -c "from services.agent.app.main import app; print('backend import ok')"`
+- `python -m unittest services.agent.tests.unit.test_settings services.agent.tests.unit.test_allocation services.agent.tests.unit.test_portfolio_snapshot services.agent.tests.unit.test_pyth_parser -v`
+
 ### 2026-05-25
 
 Type:

@@ -29,10 +29,15 @@ def _extract_entries(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def _normalize_feed_id(feed_id: Any) -> str:
+    return str(feed_id or "").removeprefix("0x").lower()
+
+
 def parse_hermes_price_update(payload: dict[str, Any], feed_id: str) -> PythPriceObservation:
+    expected_feed_id = _normalize_feed_id(feed_id)
     for entry in _extract_entries(payload):
         entry_feed_id = entry.get("id") or entry.get("price_feed", {}).get("id")
-        if entry_feed_id != feed_id:
+        if _normalize_feed_id(entry_feed_id) != expected_feed_id:
             continue
 
         price_block = entry.get("price") or entry.get("price_feed", {}).get("price")

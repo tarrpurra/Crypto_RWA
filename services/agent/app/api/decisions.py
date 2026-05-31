@@ -8,9 +8,9 @@ from eth_hash.auto import keccak
 from web3 import Web3
 
 from services.agent.app.schemas.recommendations import RecommendationResponse
-from services.agent.app.schemas.proposals import TradeProposalResponse, TradeProposal, ExecutionPayloadSchema
+from services.agent.app.schemas.proposals import TradeProposalResponse, TradeProposal, ExecutionPayloadSchema, ProposalListResponse, ProposalExecuteResponse
 from services.agent.app.schemas.allocation import RebalanceAction
-from services.agent.modules.market_data.balances import fetch_portfolio_snapshot
+from services.agent.modules.market_data.balances import fetch_portfolio_snapshot, internal_snapshot_from_response
 from services.agent.repositories.db.market_repository import MarketDataRepository
 from services.agent.risk.scoring.score_engine import RiskScoreEngine
 from services.agent.risk.guards.trade_guard import PolicyGuard
@@ -26,7 +26,7 @@ logger = logging.getLogger("services.agent.decisions.api")
 router = APIRouter(tags=["decisions"])
 
 
-def _save_proposal_record(proposal: TradeProposal) -> None:
+def _save_proposal_record(proposal: TradeProposal, calldata: str | None = None) -> None:
     try:
         init_db()
         record = TradeProposalRecord(
@@ -47,6 +47,7 @@ def _save_proposal_record(proposal: TradeProposal) -> None:
             nonce=proposal.payload.nonce,
             status_code=proposal.status_code,
             risk_snapshot_id=proposal.risk_snapshot_id,
+            calldata=calldata or proposal.payload.calldataHash,
             created_at=proposal.created_at,
             updated_at=proposal.updated_at,
         )
@@ -57,14 +58,19 @@ def _save_proposal_record(proposal: TradeProposal) -> None:
         logger.warning("Failed to persist proposal snapshot: %s", exc)
 
 
+def _active_profile_name() -> str:
+    return profiles.ACTIVE_PROFILE_NAME or get_settings().allocation_profile_name
+
+
 @router.get("/decisions", response_model=RecommendationResponse)
-async def get_latest_decisions() -> RecommendationResponse:
+async def get_latest_decisions(wallet_address: str | None = None) -> RecommendationResponse:
     # 1. Gather context
-    portfolio = fetch_portfolio_snapshot()
+    portfolio_response = await current_portfolio(wallet_address=wallet_address)
+    portfolio = internal_snapshot_from_response(portfolio_response)
     risk_engine = RiskScoreEngine()
     risk = risk_engine.compute_risk_snapshot(portfolio)
     
-    decision, actions = compute_rebalance(portfolio, risk, profiles.ACTIVE_PROFILE_NAME)
+    decision, actions = compute_rebalance(portfolio, risk, _active_profile_name())
     
     # 2. Feed to AI parser (which queries Ollama or falls back to template reasons)
     rec = await generate_recommendation_reasoning(portfolio, risk, decision, actions)
@@ -81,7 +87,7 @@ async def create_trade_proposal(action: RebalanceAction) -> TradeProposalRespons
     if risk.risk_band in ("RISK_VETO", "RISK_PAUSE_REQUIRED"):
         raise HTTPException(status_code=400, detail=f"Cannot create proposal: risk band is {risk.risk_band}")
 
-    decision, allowed_actions = compute_rebalance(portfolio, risk, profiles.ACTIVE_PROFILE_NAME)
+    decision, allowed_actions = compute_rebalance(portfolio, risk, _active_profile_name())
     matching_action = next(
         (
             candidate
@@ -95,44 +101,64 @@ async def create_trade_proposal(action: RebalanceAction) -> TradeProposalRespons
     if decision.recommended_action != "REBALANCE" or matching_action is None:
         raise HTTPException(status_code=400, detail="Requested action is not part of the current deterministic rebalance plan.")
 
-    # Determine token addresses
-    # Default to USDC and mETH mainnet/sepolia addresses from settings
-    usdc_addr = settings.usdc_mainnet_address
-    meth_addr = settings.meth_sepolia_address if settings.target_chain.value == "mantle_sepolia" else settings.meth_mainnet_address
-    if not meth_addr:
-        raise HTTPException(status_code=400, detail="mETH address is not configured for proposal creation.")
-    if not usdc_addr:
-        raise HTTPException(status_code=400, detail="USDC address is not configured for proposal creation.")
+    # Determine token addresses from the rebalance action
+    sepolia_mock = settings.target_chain.value == "mantle_sepolia" and settings.sepolia_mock_prices_enabled
+    token_in: str
+    token_out: str
+    decimals_in: int
+    decimals_out: int
+    price_symbol_in: str
+    price_symbol_out: str
 
-    token_in = usdc_addr if action.action == "BUY" else meth_addr
-    token_out = meth_addr if action.action == "BUY" else usdc_addr
+    if sepolia_mock:
+        mock_a = settings.sepolia_mock_token_a_address
+        mock_b = settings.sepolia_mock_token_b_address
+        if not mock_a or not mock_b:
+            raise HTTPException(status_code=400, detail="Sepolia mock token addresses not configured.")
+        if action.asset_symbol == "MockTokenA":
+            token_in = mock_b if action.action == "BUY" else mock_a
+            token_out = mock_a if action.action == "BUY" else mock_b
+            price_symbol_in = "MockTokenB" if action.action == "BUY" else "MockTokenA"
+            price_symbol_out = "MockTokenA" if action.action == "BUY" else "MockTokenB"
+        elif action.asset_symbol == "MockTokenB":
+            token_in = mock_a if action.action == "BUY" else mock_b
+            token_out = mock_b if action.action == "BUY" else mock_a
+            price_symbol_in = "MockTokenA" if action.action == "BUY" else "MockTokenB"
+            price_symbol_out = "MockTokenB" if action.action == "BUY" else "MockTokenA"
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported asset for Sepolia mock mode: {action.asset_symbol}")
+        decimals_in = 18
+        decimals_out = 18
+    else:
+        usdc_addr = settings.usdc_mainnet_address
+        meth_addr = settings.meth_sepolia_address if settings.target_chain.value == "mantle_sepolia" else settings.meth_mainnet_address
+        if not meth_addr:
+            raise HTTPException(status_code=400, detail="mETH address is not configured for proposal creation.")
+        if not usdc_addr:
+            raise HTTPException(status_code=400, detail="USDC address is not configured for proposal creation.")
+        token_in = usdc_addr if action.action == "BUY" else meth_addr
+        token_out = meth_addr if action.action == "BUY" else usdc_addr
+        decimals_in = 6 if action.action == "BUY" else 18
+        decimals_out = 18 if action.action == "BUY" else 6
+        price_symbol_in = "USDC" if action.action == "BUY" else "mETH"
+        price_symbol_out = "mETH" if action.action == "BUY" else "USDC"
 
-    # Check decimals (mETH: 18, USDC: 6)
-    decimals_in = 6 if token_in == usdc_addr else 18
-    decimals_out = 18 if token_out == meth_addr else 6
-
-    # Convert amounts
     max_amount_in = int(action.amount * (10 ** decimals_in))
-    
+
     # Compute minAmountOut based on current price with 1% slippage buffer
     repo = MarketDataRepository()
     prices = {p.asset_symbol: float(p.price_usd) for p in repo.latest_normalized_prices() if p.price_usd}
-    usdc_price = prices.get("USDC")
-    meth_price = prices.get("mETH")
-    if usdc_price is None or meth_price is None:
-        raise HTTPException(status_code=400, detail="Required USDC and mETH price snapshots are missing.")
+    price_in = prices.get(price_symbol_in)
+    price_out = prices.get(price_symbol_out)
+    if price_in is None or price_out is None:
+        raise HTTPException(status_code=400, detail=f"Required price snapshots missing for {price_symbol_in}/{price_symbol_out}.")
 
     # Implied swap rate
     if action.action == "BUY":
-        # Spending USDC to buy mETH
-        # expected mETH out = usdc_amount / meth_price
-        expected_out = action.amount / meth_price
+        expected_out = action.amount * price_in / price_out
     else:
-        # Selling mETH to get USDC
-        # expected USDC out = meth_amount * meth_price
-        expected_out = action.amount * meth_price
+        expected_out = action.amount * price_out / price_in
 
-    # 1% slippage tolerance
     min_amount_out = int(expected_out * 0.99 * (10 ** decimals_out))
 
     # Router addresses
@@ -228,7 +254,7 @@ async def create_trade_proposal(action: RebalanceAction) -> TradeProposalRespons
         updated_at=t_now,
     )
 
-    _save_proposal_record(proposal)
+    _save_proposal_record(proposal, calldata=Web3.to_hex(calldata))
 
     return TradeProposalResponse(
         status="ok",
@@ -273,3 +299,85 @@ async def reject_proposal(proposal_id: str) -> dict[str, str]:
         session.commit()
         
     return {"status": "ok", "message": f"Proposal {proposal_id} successfully rejected."}
+
+
+@router.get("/proposals", response_model=ProposalListResponse)
+async def list_proposals(status: str | None = None) -> ProposalListResponse:
+    init_db()
+    with create_session() as session:
+        from sqlalchemy import select
+        query = select(TradeProposalRecord).order_by(TradeProposalRecord.created_at.desc())
+        if status:
+            query = query.where(TradeProposalRecord.status_code == status)
+        records = session.scalars(query).all()
+
+    items = [
+        ProposalListItem(
+            proposal_id=r.proposal_id,
+            plan_hash=r.plan_hash,
+            wallet_or_vault=r.wallet_or_vault,
+            router=r.router,
+            selector=r.selector,
+            token_in=r.token_in,
+            token_out=r.token_out,
+            recipient=r.recipient,
+            max_amount_in=r.max_amount_in,
+            min_amount_out=r.min_amount_out,
+            native_value=r.native_value,
+            deadline=r.deadline,
+            proposal_expiry=r.proposal_expiry,
+            nonce=r.nonce,
+            status_code=r.status_code,
+            risk_snapshot_id=r.risk_snapshot_id,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+        )
+        for r in records
+    ]
+
+    return ProposalListResponse(status="ok", proposals=items)
+
+
+@router.post("/proposals/{proposal_id}/execute", response_model=ProposalExecuteResponse)
+async def execute_proposal(proposal_id: str) -> ProposalExecuteResponse:
+    settings = get_settings()
+    init_db()
+    with create_session() as session:
+        from sqlalchemy import select
+        record = session.scalar(
+            select(TradeProposalRecord).where(TradeProposalRecord.proposal_id == proposal_id)
+        )
+        if not record:
+            raise HTTPException(status_code=404, detail=f"Proposal not found: {proposal_id}")
+
+        if record.status_code != "PROPOSAL_APPROVED":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot execute: proposal status is {record.status_code}, must be PROPOSAL_APPROVED",
+            )
+
+        calldata_hex = record.calldata
+        if not calldata_hex:
+            raise HTTPException(status_code=500, detail="Proposal calldata is missing from the record.")
+
+        # Return tx params for the user's wallet to sign and submit
+        return ProposalExecuteResponse(
+            status="ok",
+            status_code="PROPOSAL_APPROVED",
+            proposal_id=record.proposal_id,
+            router=record.router,
+            selector=record.selector,
+            calldata=calldata_hex,
+            calldata_hash=record.calldata_hash,
+            token_in=record.token_in,
+            token_out=record.token_out,
+            recipient=record.recipient,
+            max_amount_in=record.max_amount_in,
+            min_amount_out=record.min_amount_out,
+            native_value=record.native_value,
+            deadline=record.deadline,
+            nonce=record.nonce,
+            chain_id=settings.effective_chain_id,
+        )
+
+from services.agent.app.api.portfolio import current_portfolio

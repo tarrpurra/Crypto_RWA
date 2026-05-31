@@ -18,6 +18,18 @@ class RiskBucket(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class RiskSnapshot(BaseModel):
+    snapshot_id: str
+    total_score: float
+    risk_band: str
+    status_code: str
+    status_reason: str
+    bucket_scores: dict[str, float] = Field(default_factory=dict)
+    prechecks: dict[str, bool] = Field(default_factory=dict)
+    notes: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
 class RiskAssessmentResponse(BaseModel):
     asset: str
     recommended_action: str

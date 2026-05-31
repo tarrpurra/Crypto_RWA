@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from services.agent.app.core.settings import get_settings
 from services.agent.app.schemas.risk import RiskSnapshot
 from services.agent.repositories.db.market_repository import MarketDataRepository
@@ -9,6 +9,12 @@ from services.agent.modules.oracle.freshness import utc_now
 from services.agent.app.schemas.portfolio import PortfolioSnapshot
 
 logger = logging.getLogger("services.agent.risk.score_engine")
+
+
+def _as_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 class RiskScoreEngine:
@@ -42,7 +48,7 @@ class RiskScoreEngine:
         # --- Oracle Risk & Freshness check ---
         max_price_age = 0.0
         for p in prices:
-            age = (now - p.observed_timestamp).total_seconds()
+            age = (now - _as_aware_utc(p.observed_timestamp)).total_seconds()
             if age > max_price_age:
                 max_price_age = age
             

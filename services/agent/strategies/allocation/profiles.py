@@ -1,12 +1,6 @@
 from __future__ import annotations
 
-from typing import TypedDict
-
-
-class AllocationProfile(TypedDict):
-    USDC: float
-    USDY: float
-    mETH: float
+AllocationProfile = dict[str, float]
 
 
 ALLOCATION_PROFILES: dict[str, AllocationProfile] = {
@@ -25,6 +19,10 @@ ALLOCATION_PROFILES: dict[str, AllocationProfile] = {
         "USDY": 0.45,
         "mETH": 0.40,
     },
+    "Sepolia Mock": {
+        "MockTokenA": 0.50,
+        "MockTokenB": 0.50,
+    },
 }
 
-ACTIVE_PROFILE_NAME = "Balanced"  # Global active profile name mutable state for local/simulation scope
+ACTIVE_PROFILE_NAME: str | None = None  # Mutable override for local/simulation scope

@@ -97,6 +97,13 @@ class QuoteService:
         if self.settings.target_chain == TargetChain.MANTLE_MAINNET and {"USDY", "mETH"}.issubset(asset_by_symbol):
             pairs.append(QuotePair(token_in=asset_by_symbol["USDY"], token_out=asset_by_symbol["mETH"], amount_in=Decimal("1000")))
             pairs.append(QuotePair(token_in=asset_by_symbol["mETH"], token_out=asset_by_symbol["USDY"], amount_in=Decimal("1")))
+        if (
+            self.settings.target_chain == TargetChain.MANTLE_SEPOLIA
+            and self.settings.sepolia_mock_routes_enabled
+            and {"MockTokenA", "MockTokenB"}.issubset(asset_by_symbol)
+        ):
+            pairs.append(QuotePair(token_in=asset_by_symbol["MockTokenA"], token_out=asset_by_symbol["MockTokenB"], amount_in=Decimal("1")))
+            pairs.append(QuotePair(token_in=asset_by_symbol["MockTokenB"], token_out=asset_by_symbol["MockTokenA"], amount_in=Decimal("1")))
         return pairs
 
     def _unsupported_attempt(self, route: RouteDescriptor, amount_in: Decimal):

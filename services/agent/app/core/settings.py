@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     app_name: str = "AIxRWA Agent"
     app_env: str = "local"
     api_port: int = 8000
+    cors_allowed_origins: str = "http://localhost:8080,http://localhost:5173"
     runtime_mode: RuntimeMode = RuntimeMode.MONITOR_ONLY
     target_chain: TargetChain = TargetChain.MANTLE_SEPOLIA
 
@@ -56,6 +57,13 @@ class Settings(BaseSettings):
     portfolio_wallet_address: str | None = None
     portfolio_base_currency: str = "USD"
     portfolio_target_weights: str = ""
+    allocation_profile_name: str = "Balanced"
+    sepolia_mock_prices_enabled: bool = True
+    sepolia_mock_routes_enabled: bool = True
+    sepolia_mock_token_a_address: str | None = None
+    sepolia_mock_token_b_address: str | None = None
+    sepolia_mock_token_a_price_usd: str = "1"
+    sepolia_mock_token_b_price_usd: str = "1"
 
     pyth_hermes_url: str = "https://hermes.pyth.network"
     pyth_hermes_latest_price_path: str = "/v2/updates/price/latest"
@@ -72,6 +80,7 @@ class Settings(BaseSettings):
     pause_guardian_address: str | None = None
     trade_approval_manager_address: str | None = None
     executor_vault_address: str | None = None
+    executor_private_key: str | None = None
 
     ondo_usdy_oracle_address: str | None = "0xA96abbe61AfEdEB0D14a20440Ae7100D9aB4882f"
     ondo_usdy_oracle_method_selector: str | None = None
@@ -136,6 +145,7 @@ class Settings(BaseSettings):
 
     simulation_fallback_enabled: bool = True
     ai_reasoning_enabled: bool = False
+    ai_decision_maker_enabled: bool = False
     ai_reasoning_provider: str = "ollama"
     ai_reasoning_model: str = "qwen2.5:3b"
     ollama_url: str = "http://host.docker.internal:11434"
@@ -256,6 +266,34 @@ class Settings(BaseSettings):
                 "verified": bool(self.meth_sepolia_address),
                 "pyth_feed_id": self.meth_usd_pyth_feed_id,
                 "ratio_feed_id": self.meth_eth_ratio_feed_id,
+                "ondo_oracle_address": None,
+                "decimals": 18,
+            },
+            "MOCK_TOKEN_A": {
+                "asset_key": "MOCK_TOKEN_A",
+                "symbol": "MockTokenA",
+                "chain_id": self.mantle_sepolia_chain_id,
+                "address": self.sepolia_mock_token_a_address,
+                "price_strategy": "sepolia_mock_fixed",
+                "primary_reference_source": "sepolia_validation_asset",
+                "dex_quote_required": True,
+                "verified": bool(self.sepolia_mock_token_a_address),
+                "pyth_feed_id": None,
+                "ratio_feed_id": None,
+                "ondo_oracle_address": None,
+                "decimals": 18,
+            },
+            "MOCK_TOKEN_B": {
+                "asset_key": "MOCK_TOKEN_B",
+                "symbol": "MockTokenB",
+                "chain_id": self.mantle_sepolia_chain_id,
+                "address": self.sepolia_mock_token_b_address,
+                "price_strategy": "sepolia_mock_fixed",
+                "primary_reference_source": "sepolia_validation_asset",
+                "dex_quote_required": True,
+                "verified": bool(self.sepolia_mock_token_b_address),
+                "pyth_feed_id": None,
+                "ratio_feed_id": None,
                 "ondo_oracle_address": None,
                 "decimals": 18,
             },

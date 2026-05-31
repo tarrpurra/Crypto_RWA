@@ -1,0 +1,8 @@
+services:
+  backend:
+    env_file:
+      - ./services/agent/.env.docker.mainnet.test
+    environment:
+      PYTHONPATH: /workspace
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/aixrwa
+      OLLAMA_URL: http://ollama:11434

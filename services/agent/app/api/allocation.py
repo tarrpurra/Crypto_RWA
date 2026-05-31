@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import logging
 from fastapi import APIRouter, HTTPException
+from services.agent.app.api.portfolio import current_portfolio
 from services.agent.app.schemas.allocation import AllocationDecisionResponse, AllocationDecision, RebalanceAction, UpdateProfileRequest
-from services.agent.modules.market_data.balances import fetch_portfolio_snapshot
+from services.agent.modules.market_data.balances import internal_snapshot_from_response
 from services.agent.risk.scoring.score_engine import RiskScoreEngine
 from services.agent.strategies.allocation.rebalance import compute_rebalance
 from services.agent.strategies.allocation import profiles
 from services.agent.repositories.db.models import AllocationDecisionRecord
 from services.agent.repositories.db.session import create_session, init_db
 from services.agent.modules.oracle.freshness import utc_now
+from services.agent.app.core.settings import get_settings
 
 logger = logging.getLogger("services.agent.allocation.api")
 router = APIRouter(prefix="/allocation", tags=["allocation"])
@@ -38,13 +40,18 @@ def _save_allocation_decision(decision: AllocationDecision) -> None:
         logger.warning("Failed to persist allocation decision: %s", exc)
 
 
+def _active_profile_name() -> str:
+    return profiles.ACTIVE_PROFILE_NAME or get_settings().allocation_profile_name
+
+
 @router.get("/recommendation", response_model=AllocationDecisionResponse)
-async def get_allocation_recommendation() -> AllocationDecisionResponse:
-    portfolio = fetch_portfolio_snapshot()
+async def get_allocation_recommendation(wallet_address: str | None = None) -> AllocationDecisionResponse:
+    portfolio_response = await current_portfolio(wallet_address=wallet_address)
+    portfolio = internal_snapshot_from_response(portfolio_response)
     risk_engine = RiskScoreEngine()
     risk = risk_engine.compute_risk_snapshot(portfolio)
     
-    decision, actions = compute_rebalance(portfolio, risk, profiles.ACTIVE_PROFILE_NAME)
+    decision, actions = compute_rebalance(portfolio, risk, _active_profile_name())
     _save_allocation_decision(decision)
 
     status = "ok"
