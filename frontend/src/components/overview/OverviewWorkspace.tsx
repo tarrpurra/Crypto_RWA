@@ -21,7 +21,8 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 
-import { useAuth } from "@/components/auth/AuthProvider";
+import { useAccount } from "wagmi";
+import { useConnectModal } from "@rainbow-me/rainbowkit";
 import {
   FundingRateChart,
   type ExchangeSeriesKey,
@@ -2084,7 +2085,8 @@ function TradingCornerPanelContent({
     bybit?: { funding_rate?: string; mark_price?: string; status?: string };
   };
 }) {
-  const { ready, user, login } = useAuth();
+  const { address, isConnected } = useAccount();
+  const { openConnectModal } = useConnectModal();
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const [chatMessages, setChatMessages] = useState<ElfaChatMessage[]>([
     {
@@ -2096,7 +2098,7 @@ function TradingCornerPanelContent({
   ]);
   const [chatInput, setChatInput] = useState("");
   const [isChatLoading, setIsChatLoading] = useState(false);
-  const isLoggedIn = Boolean(user);
+  const isLoggedIn = isConnected;
   const exchanges = [
     { key: "pacifica", label: "Pacifica", data: details?.pacifica },
     { key: "hyperliquid", label: "Hyperliquid", data: details?.hyperliquid },
@@ -2147,7 +2149,7 @@ function TradingCornerPanelContent({
     const userMessage = chatInput.trim();
     setChatInput("");
 
-    if (!ready || !isLoggedIn) {
+    if (!isLoggedIn) {
       setChatMessages((prev) => [
         ...prev,
         {
@@ -2288,7 +2290,7 @@ function TradingCornerPanelContent({
           {!isLoggedIn ? (
             <button
               type="button"
-              onClick={login}
+              onClick={() => openConnectModal?.()}
               className="mb-2 flex w-full items-center justify-center gap-2 border border-warning/40 bg-warning/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-warning transition-colors hover:border-warning"
             >
               <LogIn className="h-3.5 w-3.5" />

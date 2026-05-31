@@ -54,3 +54,48 @@ class TradeExecutionResponse(BaseModel):
     status: str
     status_code: str
     execution: TradeExecution
+
+
+class ProposalListItem(BaseModel):
+    proposal_id: str
+    plan_hash: str
+    wallet_or_vault: str
+    router: str
+    selector: str
+    token_in: str
+    token_out: str
+    recipient: str
+    max_amount_in: str
+    min_amount_out: str
+    native_value: str
+    deadline: int
+    proposal_expiry: int
+    nonce: int
+    status_code: str
+    risk_snapshot_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProposalListResponse(BaseModel):
+    status: str
+    proposals: list[ProposalListItem]
+
+
+class ProposalExecuteResponse(BaseModel):
+    status: str
+    status_code: str
+    proposal_id: str
+    router: str
+    selector: str
+    calldata: str
+    calldata_hash: str
+    token_in: str
+    token_out: str
+    recipient: str
+    max_amount_in: str
+    min_amount_out: str
+    native_value: str
+    deadline: int
+    nonce: int
+    chain_id: int

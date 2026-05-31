@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     app_name: str = "AIxRWA Agent"
     app_env: str = "local"
     api_port: int = 8000
+    cors_allowed_origins: str = "http://localhost:8080,http://localhost:5173"
     runtime_mode: RuntimeMode = RuntimeMode.MONITOR_ONLY
     target_chain: TargetChain = TargetChain.MANTLE_SEPOLIA
 
@@ -79,6 +80,7 @@ class Settings(BaseSettings):
     pause_guardian_address: str | None = None
     trade_approval_manager_address: str | None = None
     executor_vault_address: str | None = None
+    executor_private_key: str | None = None
 
     ondo_usdy_oracle_address: str | None = "0xA96abbe61AfEdEB0D14a20440Ae7100D9aB4882f"
     ondo_usdy_oracle_method_selector: str | None = None
@@ -143,6 +145,7 @@ class Settings(BaseSettings):
 
     simulation_fallback_enabled: bool = True
     ai_reasoning_enabled: bool = False
+    ai_decision_maker_enabled: bool = False
     ai_reasoning_provider: str = "ollama"
     ai_reasoning_model: str = "qwen2.5:3b"
     ollama_url: str = "http://host.docker.internal:11434"

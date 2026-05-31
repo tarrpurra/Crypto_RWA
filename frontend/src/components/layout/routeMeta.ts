@@ -10,15 +10,7 @@ const routeMeta: Array<{ match: RegExp; meta: RouteMeta }> = [
     meta: {
       title: "Dashboard",
       description: "Portfolio state, risk posture, market freshness, and agent readiness.",
-      eyebrow: "RWA Agent",
-    },
-  },
-  {
-    match: /^\/portfolio/,
-    meta: {
-      title: "Portfolio",
-      description: "Current holdings, valuation quality, target drift, and snapshot history.",
-      eyebrow: "Analytics",
+      eyebrow: "AIYield",
     },
   },
   {
@@ -38,19 +30,11 @@ const routeMeta: Array<{ match: RegExp; meta: RouteMeta }> = [
     },
   },
   {
-    match: /^\/market/,
+    match: /^\/(?:market|swap|trade)/,
     meta: {
-      title: "Market",
-      description: "Oracle freshness, route quotes, ingestion health, and data provenance.",
-      eyebrow: "Market Data",
-    },
-  },
-  {
-    match: /^\/approvals/,
-    meta: {
-      title: "Approvals",
-      description: "Proposal queue, human review gates, and execution context.",
-      eyebrow: "Human Review",
+      title: "Trade",
+      description: "Proposals, routes, oracle freshness, prices, and ingestion health — all in one view.",
+      eyebrow: "Market & Trading",
     },
   },
   {
@@ -64,9 +48,9 @@ const routeMeta: Array<{ match: RegExp; meta: RouteMeta }> = [
 ];
 
 const fallbackMeta: RouteMeta = {
-  title: "RWA Agent",
-  description: "AIxRWA advisory dashboard",
-  eyebrow: "RWA Agent",
+  title: "AIYield",
+  description: "AI-powered yield optimization and risk management for RWA portfolios.",
+  eyebrow: "AIYield",
 };
 
 export function getRouteMeta(pathname: string): RouteMeta {

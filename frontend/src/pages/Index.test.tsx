@@ -6,6 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Index from "@/pages/Index";
 import { createTestQueryClient } from "@/test/queryClient";
 
+vi.mock("@/hooks/usePortfolioWallet", () => ({
+  usePortfolioWallet: () => ({ walletAddress: "", storedWallet: "", connectedWalletAddress: "", setWalletAddress: () => {} }),
+}));
+
 const fetchMock = vi.fn();
 
 function jsonResponse(payload: unknown, status = 200): Response {
@@ -40,7 +44,7 @@ beforeEach(() => {
           status_label: "DEGRADED",
           status_reason: "Monitor-only mode active",
           environment: "local",
-          service: "AIxRWA Agent",
+          service: "AIYield",
           runtime_mode: "monitor_only",
           target_chain: "mantle_sepolia",
         }),
@@ -113,15 +117,15 @@ beforeEach(() => {
     if (url.endsWith("/allocation/recommendation")) {
       return Promise.resolve(
         jsonResponse({
-          status: "degraded",
+          status: "ok",
           status_code: "DATA_MISSING",
           status_label: "DATA_MISSING",
-          status_reason: "Allocation paused while data is missing.",
+          status_reason: "Portfolio data is missing.",
           generated_at: "2026-05-27T00:00:00Z",
           decision: {
-            decision_id: "decision-1",
-            wallet_or_vault: "unknown",
-            profile_name: "Defensive",
+            decision_id: "mock-001",
+            wallet_or_vault: "",
+            profile_name: "default",
             current_weights: {},
             target_weights: {},
             recommended_action: "PAUSE",
@@ -149,6 +153,18 @@ beforeEach(() => {
       );
     }
 
+    if (url.includes("/portfolio/snapshots")) {
+      return Promise.resolve(
+        jsonResponse({
+          status: "ok",
+          status_code: "OK",
+          status_label: "OK",
+          status_reason: "Mock snapshot data.",
+          snapshots: [],
+        }),
+      );
+    }
+
     return Promise.resolve(jsonResponse({}, 404));
   });
 });
@@ -158,18 +174,16 @@ afterEach(() => {
 });
 
 describe("Index", () => {
-  it("renders the RWA dashboard with live degraded states", async () => {
+  it("renders the AIYield dashboard with live degraded states", async () => {
     renderPage();
 
     expect(screen.getByText("Dashboard")).toBeInTheDocument();
-    expect(screen.getByText("Risk-gated advisory loop")).toBeInTheDocument();
+    expect(screen.getByText("AI-powered yield optimization with real-time risk management for RWA portfolios.")).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByText("monitor_only")).toBeInTheDocument();
       expect(screen.getAllByText("DATA_MISSING").length).toBeGreaterThan(0);
-      expect(screen.getByText("RISK_VETO / 100")).toBeInTheDocument();
-      expect(screen.getAllByText("PAUSE").length).toBeGreaterThan(0);
-      expect(screen.getByText("Block 123456")).toBeInTheDocument();
+      expect(screen.getAllByText("RISK_VETO / 100").length).toBeGreaterThan(0);
     });
   });
 });

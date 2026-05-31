@@ -33,7 +33,7 @@ function print(level: Exclude<LogLevel, "silent">, message: string, payload?: un
     return;
   }
 
-  const prefix = `[AIxRWA-FE][${level.toUpperCase()}][${now()}] ${message}`;
+  const prefix = `[AIYield-FE][${level.toUpperCase()}][${now()}] ${message}`;
   if (payload !== undefined) {
     if (level === "debug") {
       console.debug(prefix, payload);

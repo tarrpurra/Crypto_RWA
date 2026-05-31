@@ -2,14 +2,12 @@ import { Settings2 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
 import { LoginButton } from "@/components/auth/LoginButton";
+import { ThemeToggle } from "@/components/layout/ThemeToggle";
 
 const navItems = [
   { title: "Dashboard", url: "/" },
-  { title: "Portfolio", url: "/portfolio" },
   { title: "Risk", url: "/risk" },
-  { title: "Allocation", url: "/allocation" },
-  { title: "Market", url: "/market" },
-  { title: "Approvals", url: "/approvals" },
+  { title: "Trade", url: "/trade" },
   { title: "Settings", url: "/settings" },
 ];
 
@@ -23,15 +21,15 @@ export function TopBar() {
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-card">
       <div className="grid min-h-11 grid-cols-[auto_1fr_auto] items-stretch">
-        <Link
-          to="/"
-          className="flex items-center gap-2 border-r border-border px-3 text-foreground"
-        >
-          <span className="terminal-wordmark text-[18px] leading-none">
-            AIxRWA
-          </span>
-          <span className="terminal-label text-primary">AGENT</span>
-        </Link>
+<Link
+           to="/"
+           className="flex items-center gap-2 border-r border-border px-3 text-foreground"
+         >
+           <span className="terminal-wordmark text-[18px] leading-none">
+             AIYield
+           </span>
+           <span className="terminal-label text-primary">PORTFOLIO</span>
+         </Link>
 
         <nav
           data-testid="topbar-nav"
@@ -53,6 +51,7 @@ export function TopBar() {
         </nav>
 
         <div className="flex items-center gap-2 border-l border-border px-3">
+          <ThemeToggle />
           <div className="inline-flex items-center gap-2">
             <span className="h-1.5 w-1.5 bg-warning" />
             <span className="terminal-label">{environmentLabel}</span>

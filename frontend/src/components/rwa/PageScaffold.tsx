@@ -72,33 +72,33 @@ export function toneFromStatus(status?: string | null): StatusTone {
 }
 
 export function PageScaffold({
-  eyebrow,
-  title,
-  description,
-  children,
-}: {
-  eyebrow: string;
-  title: string;
-  description: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="flex min-h-screen w-full flex-col gap-4 px-4 py-4 sm:px-6 lg:px-8">
-      <section className="border-b border-border pb-4">
-        <p className="terminal-label text-primary">{eyebrow}</p>
-        <div className="mt-2 grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
-          <div>
-            <h1 className="terminal-wordmark text-4xl leading-none text-foreground sm:text-5xl">
-              {title}
-            </h1>
-            <p className="mt-3 max-w-3xl text-base leading-6 text-muted-foreground">
-              {description}
-            </p>
+    eyebrow,
+    title,
+    description,
+    children,
+  }: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    children: ReactNode;
+  }) {
+    return (
+      <div className="flex min-h-screen w-full flex-col gap-6 px-4 py-6 sm:px-8 lg:px-10">
+        <section className="border-b border-border pb-6">
+          <p className="terminal-label text-primary">{eyebrow}</p>
+          <div className="mt-4 grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">
+            <div>
+              <h1 className="terminal-wordmark text-4xl leading-none text-foreground sm:text-5xl">
+                {title}
+              </h1>
+              <p className="mt-4 max-w-3xl text-base leading-7 text-muted-foreground">
+                {description}
+              </p>
+            </div>
+            <StatusPill tone="ready">LIVE</StatusPill>
           </div>
-          <StatusPill tone="degraded">frontend phase 1</StatusPill>
-        </div>
-      </section>
-      {children}
-    </div>
-  );
-}
+        </section>
+        {children}
+      </div>
+    );
+  }

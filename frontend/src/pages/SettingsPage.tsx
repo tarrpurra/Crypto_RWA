@@ -16,7 +16,7 @@ export default function SettingsPage() {
     <PageScaffold
       eyebrow="Operations"
       title="Settings"
-      description="Environment visibility and diagnostics for the RWA agent frontend."
+      description="Environment visibility, diagnostics, and runtime configuration for the RWA agent frontend."
     >
       <div className="grid gap-3 md:grid-cols-3">
         <MetricPanel
@@ -52,6 +52,7 @@ export default function SettingsPage() {
           tone={Object.values(status?.configured_contracts ?? {}).some(Boolean) ? "ready" : "degraded"}
         />
       </div>
+
       <section className="terminal-panel p-4">
         <p className="terminal-label text-primary">Configured Contracts</p>
         <div className="mt-3 grid gap-2">

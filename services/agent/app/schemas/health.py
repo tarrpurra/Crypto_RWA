@@ -35,3 +35,4 @@ class ServiceStatusResponse(BaseModel):
     subsystem_log_levels: dict[str, str]
     freshness_thresholds: dict[str, FreshnessThreshold]
     simulation_fallback_enabled: bool
+    ai_decision_maker_enabled: bool

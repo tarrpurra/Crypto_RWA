@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from services.agent.app.core.settings import get_settings
 from services.agent.app.core.status_codes import RuntimeMode, SystemStatusCode
+from services.agent.app.core.runtime_config import AI_DECISION_MAKER_ENABLED
 from services.agent.app.schemas.common import FreshnessThreshold
 from services.agent.app.schemas.health import HealthResponse, ServiceStatusResponse
 from services.agent.modules.contracts.project_contracts import PROJECT_CONTRACTS
@@ -108,4 +109,5 @@ async def service_status() -> ServiceStatusResponse:
             ),
         },
         simulation_fallback_enabled=settings.simulation_fallback_enabled,
+        ai_decision_maker_enabled=AI_DECISION_MAKER_ENABLED,
     )

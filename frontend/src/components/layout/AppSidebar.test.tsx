@@ -39,7 +39,7 @@ afterEach(() => {
 });
 
 describe("AppSidebar", () => {
-  it("shows API and chain readiness for the RWA agent", async () => {
+  it("shows API and chain readiness for the AIYield terminal", async () => {
     fetchMock.mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/health")) {
@@ -50,7 +50,7 @@ describe("AppSidebar", () => {
             status_label: "DEGRADED",
             status_reason: "Monitor-only mode active",
             environment: "local",
-            service: "AIxRWA Agent",
+            service: "AIYield",
             runtime_mode: "monitor_only",
             target_chain: "mantle_sepolia",
           }),

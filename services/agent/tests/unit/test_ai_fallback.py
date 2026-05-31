@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import unittest
+import json
 from datetime import datetime
 from services.agent.app.schemas.portfolio import PortfolioSnapshot, AssetBalance
 from services.agent.app.schemas.risk import RiskSnapshot
 from services.agent.app.schemas.allocation import AllocationDecision, RebalanceAction
 from services.agent.strategies.decision_templates.fallback_rules import generate_deterministic_explanation
-from services.agent.strategies.decision_templates.parser import generate_recommendation_reasoning
+from services.agent.strategies.decision_templates.prompt_builder import build_reasoning_prompt
+from services.agent.strategies.decision_templates.parser import generate_recommendation_reasoning, _override_with_ai_decision
 from services.agent.modules.oracle.freshness import utc_now
 
 
@@ -70,12 +72,54 @@ class AiFallbackTests(unittest.TestCase):
 
     def test_recommendation_parser_returns_valid_schema(self) -> None:
         import asyncio
-        # Generate the full recommendation via parser (which will hit fallback because Ollama is not running)
         response = asyncio.run(generate_recommendation_reasoning(self.portfolio, self.risk, self.decision, []))
         self.assertEqual(response.recommended_action, "HOLD")
         self.assertEqual(response.confidence, 0.95)
         self.assertEqual(response.metadata["ai_reasoning_enabled"], False)
         self.assertEqual(response.metadata["mode"], "fallback_deterministic")
+
+    def test_prompt_builder_decision_maker_mode_includes_action_field(self) -> None:
+        prompt = build_reasoning_prompt(self.portfolio, self.risk, self.decision, [], ai_decision_maker=True)
+        self.assertIn("recommended_action", prompt)
+        self.assertIn("AI Decision Maker", prompt)
+        self.assertIn("override", prompt.lower())
+
+    def test_prompt_builder_reasoning_mode_omits_action_field(self) -> None:
+        prompt = build_reasoning_prompt(self.portfolio, self.risk, self.decision, [], ai_decision_maker=False)
+        self.assertIn("AI Reasoning Layer", prompt)
+        self.assertNotIn("recommended_action", prompt)
+
+    def test_override_with_ai_decision_uses_ai_action(self) -> None:
+        ai_output = {
+            "recommended_action": "REBALANCE",
+            "reasoning_summary": "AI thinks rebalance is warranted",
+            "confidence": 0.85,
+            "notes": ["note 1"],
+        }
+        overridden = _override_with_ai_decision(self.decision, ai_output)
+        self.assertEqual(overridden.recommended_action, "REBALANCE")
+        self.assertEqual(overridden.confidence, 0.85)
+        self.assertIn("AI thinks rebalance", overridden.reasoning)
+
+    def test_override_with_ai_decision_invalid_action_falls_back(self) -> None:
+        ai_output = {
+            "recommended_action": "INVALID_ACTION",
+            "reasoning_summary": "bad",
+            "confidence": 0.5,
+            "notes": [],
+        }
+        overridden = _override_with_ai_decision(self.decision, ai_output)
+        # Should fall back to original decision action
+        self.assertEqual(overridden.recommended_action, self.decision.recommended_action)
+
+    def test_override_with_ai_decision_missing_action_uses_original(self) -> None:
+        ai_output = {
+            "reasoning_summary": "no action field",
+            "confidence": 0.5,
+            "notes": [],
+        }
+        overridden = _override_with_ai_decision(self.decision, ai_output)
+        self.assertEqual(overridden.recommended_action, self.decision.recommended_action)
 
 
 if __name__ == "__main__":

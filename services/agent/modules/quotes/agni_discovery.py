@@ -46,9 +46,28 @@ class AgniDiscoveryService:
         )
         if self.settings.target_chain != TargetChain.MANTLE_MAINNET and not sepolia_mock_pair:
             return []
-        if not self.settings.effective_agni_factory_address:
-            return []
         if not token_in.address or not token_out.address:
+            return []
+
+        # Fully synthetic routes for Sepolia mock mode — skip on-chain checks
+        if sepolia_mock_pair:
+            return [
+                RouteDescriptor(
+                    protocol="AGNI",
+                    route_type="v3_exact_input_single",
+                    token_in=token_in.symbol,
+                    token_out=token_out.symbol,
+                    route_path=[token_in.address, token_out.address],
+                    verification_state="quoter_v2_quote_synthetic",
+                    route_id=f"agni:{token_in.symbol}:{token_out.symbol}:{fee_tier}",
+                    fee_tier_or_bin_step=str(fee_tier),
+                    router_address=self.settings.effective_agni_swap_router_address,
+                    pool_address="0x0000000000000000000000000000000000000001",
+                )
+                for fee_tier in self.settings.parsed_agni_fee_tiers
+            ]
+
+        if not self.settings.effective_agni_factory_address:
             return []
 
         factory = self.web3.eth.contract(

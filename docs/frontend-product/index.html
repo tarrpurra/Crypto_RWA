@@ -519,18 +519,23 @@ body {
     <!-- ===================== DASHBOARD VIEW ===================== -->
     <div class="view-section active" id="view-dashboard">
       
-      <!-- AUM & Yield Overview -->
-      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6 animate-in">
-        <div class="card p-5 relative overflow-hidden">
-          <div class="fingerprint rotating"></div>
-          <div class="text-[0.65rem] font-semibold text-[var(--text-muted)] uppercase tracking-widest mb-2">Total AUM</div>
-          <div class="metric-value text-[var(--accent-gold)]">$142.8M</div>
-          <div class="flex items-center gap-2 mt-2">
-            <span class="badge badge-green">+2.34%</span>
-            <span class="text-[0.7rem] text-[var(--text-muted)]">24h change</span>
+        <!-- AUM & Yield Overview -->
+        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6 animate-in">
+          <div class="card p-5">
+            <div class="text-[0.65rem] font-semibold text-[var(--text-muted)] uppercase tracking-widest mb-2">Total AUM</div>
+            <div class="metric-value text-[var(--accent-gold)]">$142.8M</div>
+            <div class="flex items-center gap-2 mt-2">
+              <span class="badge badge-green">+2.34%</span>
+              <span class="text-[0.7rem] text-[var(--text-muted)]">24h change</span>
+            </div>
+            <div class="mt-4 flex items-center gap-3">
+              <div class="w-2 h-2 rounded-full bg-[var(--accent-gold)]"></div>
+              <span class="text-[0.65rem] text-[var(--text-muted)]">YTD: +18.4%</span>
+              <div class="w-2 h-2 rounded-full bg-[var(--accent-green)]"></div>
+              <span class="text-[0.65rem] text-[var(--text-muted)]">QoQ: +5.2%</span>
+            </div>
+            <div class="mini-chart-container mt-3"><canvas id="aumChart"></canvas></div>
           </div>
-          <div class="mini-chart-container mt-3"><canvas id="aumChart"></canvas></div>
-        </div>
 
         <div class="card p-5">
           <div class="flex items-center justify-between mb-2">

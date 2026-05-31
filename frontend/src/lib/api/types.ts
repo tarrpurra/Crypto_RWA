@@ -25,6 +25,7 @@ export interface ServiceStatusResponse extends HealthResponse {
   subsystem_log_levels: Record<string, string>;
   freshness_thresholds: Record<string, unknown>;
   simulation_fallback_enabled: boolean;
+  ai_decision_maker_enabled: boolean;
 }
 
 export interface ChainStatusResponse extends StatusEnvelope {
@@ -172,6 +173,27 @@ export interface MarketIngestionStatusResponse extends StatusEnvelope {
   assets: AssetIngestionStatus[];
 }
 
+export interface RecommendationResponse {
+  asset: string;
+  recommended_action: string;
+  risk_score: number;
+  confidence: number;
+  reasoning_summary: string;
+  data_sources_used: string[];
+  hard_veto_status: string;
+  required_human_approval_status: string;
+  status: string;
+  status_code: string;
+  status_label: string;
+  status_reason: string;
+  runtime_mode: string;
+  target_chain: string;
+  freshness_status: string;
+  constraints_applied: string[];
+  notes: string[];
+  metadata: Record<string, unknown>;
+}
+
 export interface OndoUsdyOracleStatus {
   asset: string;
   source: string;
@@ -228,5 +250,65 @@ export interface NormalizedQuoteSnapshot {
 export interface LatestQuotesResponse extends StatusEnvelope {
   generated_at: string;
   quotes: NormalizedQuoteSnapshot[];
+}
+
+export interface SettingsResponse {
+  ai_decision_maker_enabled: boolean;
+}
+
+export interface CreateProposalPayload {
+  token_in: string
+  token_out: string
+  amount_in: string
+  route_id: string
+}
+
+export interface ExecutionPayload {
+  tx_data?: string
+  target_contract?: string
+  calldata?: string
+  gas_estimate?: string
+  [key: string]: unknown
+}
+
+export interface TradeProposal {
+  id: string
+  token_in: string
+  token_out: string
+  amount_in: string
+  amount_out: string | null
+  status: string
+  created_at: string
+  updated_at?: string
+  route_id?: string
+  protocol?: string
+  estimated_slippage_bps?: string | null
+  risk_info?: Record<string, unknown>
+  execution_payload?: ExecutionPayload
+}
+
+export interface TradeProposalResponse extends StatusEnvelope {
+  proposal: TradeProposal
+}
+
+export interface ProposalsResponse extends StatusEnvelope {
+  proposals: TradeProposal[]
+}
+
+export interface ProposalExecuteResponse extends StatusEnvelope {
+  proposal_id: string
+  router: string
+  selector: string
+  calldata: string
+  calldata_hash: string
+  token_in: string
+  token_out: string
+  recipient: string
+  max_amount_in: string
+  min_amount_out: string
+  native_value: string
+  deadline: number
+  nonce: number
+  chain_id: number
 }
 

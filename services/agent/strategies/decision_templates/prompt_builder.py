@@ -10,11 +10,14 @@ def build_reasoning_prompt(
     portfolio: PortfolioSnapshot,
     risk: RiskSnapshot,
     decision: AllocationDecision,
-    rebalance_actions: list[RebalanceAction]
+    rebalance_actions: list[RebalanceAction],
+    ai_decision_maker: bool = False,
 ) -> str:
     """
-    Constructs the prompt for the AI reasoning layer, feeding it the exact state
-    and requesting a structured explanation.
+    Constructs the prompt for the AI reasoning layer.
+
+    When ai_decision_maker is False: AI explains the deterministic decision.
+    When ai_decision_maker is True: AI evaluates and makes the final decision.
     """
     portfolio_data = {
         "total_value_usd": portfolio.total_value_usd,
@@ -54,7 +57,36 @@ def build_reasoning_prompt(
         "recommended_decision": decision.recommended_action
     }
 
-    prompt = f"""You are the AI Reasoning Layer of AIxRWA, a risk-managed portfolio allocator on Mantle.
+    if ai_decision_maker:
+        prompt = f"""You are the AI Decision Maker of AIxRWA, a risk-managed portfolio allocator on Mantle.
+Your role is to evaluate the portfolio, risk, and market state below and decide the best action.
+
+Context:
+{json.dumps(context, indent=2)}
+
+Decision rules:
+- The deterministic engine suggests: {decision.recommended_action}
+- You may AGREE with this recommendation or OVERRIDE it with a different action.
+- Valid actions: "HOLD" (no trades), "REBALANCE" (execute proposed trades), "PAUSE" (stop all trading).
+- Consider all risk factors including oracle freshness, depeg risk, liquidity/slippage, and concentration limits.
+- You must still respect hard risk constraints: if risk_band is RISK_VETO or RISK_PAUSE_REQUIRED, you must choose PAUSE.
+
+Please generate a JSON object matching this schema:
+{{
+  "recommended_action": "HOLD", // or "REBALANCE" or "PAUSE"
+  "reasoning_summary": "A concise paragraph explaining your decision, including which factors you weighed most heavily.",
+  "confidence": 0.0, // float between 0.0 and 1.0 representing your confidence in this decision
+  "notes": [
+    "Note 1: key risk observation",
+    "Note 2: market condition note",
+    "Note 3: adjustment rationale if overriding deterministic recommendation"
+  ]
+}}
+
+Make sure to respond with ONLY a valid, parseable JSON object, and no other conversational text.
+"""
+    else:
+        prompt = f"""You are the AI Reasoning Layer of AIxRWA, a risk-managed portfolio allocator on Mantle.
 Your job is to analyze the following structured portfolio, risk, and rebalance state, and provide a clear, professional reasoning narrative.
 
 Context:

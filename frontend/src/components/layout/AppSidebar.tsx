@@ -1,17 +1,13 @@
 import {
-  Activity,
-  BarChart3,
-  DatabaseZap,
-  FileCheck2,
+  ArrowLeftRight,
   LayoutDashboard,
-  PieChart,
   Settings,
   ShieldCheck,
   Zap,
 } from "lucide-react";
 
 import { NavLink } from "@/components/NavLink";
-import { useChainStatus, useSystemHealth } from "@/hooks/useSystem";
+import { useChainStatus, useSystemHealth, useSettings } from "@/hooks/useSystem";
 import {
   Sidebar,
   SidebarContent,
@@ -26,11 +22,8 @@ import {
 
 const navItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { title: "Portfolio", url: "/portfolio", icon: PieChart },
   { title: "Risk", url: "/risk", icon: ShieldCheck },
-  { title: "Allocation", url: "/allocation", icon: BarChart3 },
-  { title: "Market", url: "/market", icon: DatabaseZap },
-  { title: "Approvals", url: "/approvals", icon: FileCheck2 },
+  { title: "Trade", url: "/trade", icon: ArrowLeftRight },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
 
@@ -39,9 +32,12 @@ export function AppSidebar() {
   const collapsed = state === "collapsed";
   const healthQuery = useSystemHealth();
   const chainQuery = useChainStatus();
+  const settingsQuery = useSettings();
 
   const apiConnected = healthQuery.data?.status === "ok";
   const chainReady = chainQuery.data?.status === "ok";
+
+  const aiDecisionMakerOn = settingsQuery.data?.ai_decision_maker_enabled ?? false;
 
   const liveStats = [
     {
@@ -55,9 +51,9 @@ export function AppSidebar() {
       tone: apiConnected ? "primary" : "muted",
     },
     {
-      label: "Mode",
-      value: "Advisory",
-      tone: "accent",
+      label: "Decision",
+      value: aiDecisionMakerOn ? "AI" : "Advisory",
+      tone: aiDecisionMakerOn ? "primary" : "accent",
     },
   ] as const;
 
@@ -74,13 +70,12 @@ export function AppSidebar() {
           {!collapsed && (
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <span className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-[0.24em] text-sidebar-foreground/60">
-                  AIxRWA
-                </span>
-                <span className="h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_14px_hsl(var(--accent)/0.8)]" />
+<span className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-[0.24em] text-sidebar-foreground/60">
+                   AIYield
+                 </span>
               </div>
               <p className="mt-0.5 text-sm font-semibold text-foreground">
-                Agent Console
+                Yield Terminal
               </p>
             </div>
           )}

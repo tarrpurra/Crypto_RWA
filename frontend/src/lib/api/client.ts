@@ -17,15 +17,11 @@ export class ApiClientError extends Error {
 export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/+$/, "");
 
 function getAuthToken(): string | null {
-  if (import.meta.env.VITE_API_TOKEN) {
+  if (typeof window !== "undefined" && import.meta.env.VITE_API_TOKEN) {
     return String(import.meta.env.VITE_API_TOKEN);
   }
 
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  return window.localStorage.getItem("aixrwa_auth_token");
+  return null;
 }
 
 export async function request<T>(path: string, method: HttpMethod = "GET", body?: unknown): Promise<T> {

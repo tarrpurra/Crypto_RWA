@@ -157,6 +157,7 @@ class TradeProposalRecord(Base):
     nonce: Mapped[int] = mapped_column(nullable=False)
     status_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     risk_snapshot_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    calldata: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

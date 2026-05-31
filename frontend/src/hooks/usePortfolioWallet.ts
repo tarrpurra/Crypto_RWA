@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-
-import { useAuth } from "@/components/auth/AuthProvider";
+import { useAccount } from "wagmi";
 
 const STORAGE_KEY = "aixrwa_portfolio_wallet_address";
 const WALLET_EVENT = "aixrwa-portfolio-wallet-change";
@@ -13,7 +12,7 @@ function readStoredWallet(): string {
 }
 
 export function usePortfolioWallet() {
-  const { user } = useAuth();
+  const { address } = useAccount();
   const [storedWallet, setStoredWallet] = useState(readStoredWallet);
 
   useEffect(() => {
@@ -37,15 +36,15 @@ export function usePortfolioWallet() {
     window.dispatchEvent(new Event(WALLET_EVENT));
   }, []);
 
-  const walletAddress = user?.wallet?.address ?? storedWallet;
+  const walletAddress = address ?? storedWallet;
 
   return useMemo(
     () => ({
       walletAddress,
       storedWallet,
-      connectedWalletAddress: user?.wallet?.address ?? "",
+      connectedWalletAddress: address ?? "",
       setWalletAddress,
     }),
-    [setWalletAddress, storedWallet, user?.wallet?.address, walletAddress],
+    [address, setWalletAddress, storedWallet],
   );
 }
