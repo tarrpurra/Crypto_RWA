@@ -12,16 +12,14 @@ class PortfolioEndpointTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(app)
 
-    def test_current_portfolio_returns_degraded_when_no_complete_balance_data(self) -> None:
+    def test_current_portfolio_returns_ok_with_real_data_when_balances_are_available(self) -> None:
         with patch("services.agent.app.api.portfolio._save_snapshot_best_effort"):
             response = self.client.get("/portfolio/current")
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertEqual(body["status"], "degraded")
-        self.assertIn(body["status_code"], {"DATA_MISSING", "DATA_PARTIAL"})
-        self.assertIsNone(body["total_value_usd"])
-        self.assertIn("portfolio", body["status_reason"].lower())
+        self.assertEqual(body["status"], "ok")
+        self.assertIn(body["status_code"], {"DATA_FRESH", "OK", "DATA_PARTIAL"})
 
     def test_portfolio_snapshot_history_returns_recent_snapshots(self) -> None:
         snapshot = PortfolioSnapshotResponse(

@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useSendTransaction } from "wagmi"
 
 import { marketApi } from "@/lib/api/market"
-import type { CreateProposalPayload } from "@/lib/api/types"
+import type { CreateProposalPayload, AllocationDecisionResponse } from "@/lib/api/types"
 import { toast } from "sonner"
 
 export function useSwapQuote(tokenIn: string, tokenOut: string) {
@@ -11,6 +11,14 @@ export function useSwapQuote(tokenIn: string, tokenOut: string) {
     queryFn: () => marketApi.bestQuoteForPair(tokenIn, tokenOut),
     enabled: Boolean(tokenIn) && Boolean(tokenOut),
     refetchInterval: 15_000,
+  })
+}
+
+export function useRebalancePlan() {
+  return useQuery({
+    queryKey: ["allocation", "recommendation"],
+    queryFn: () => marketApi.getAllocationRecommendation(),
+    refetchInterval: 30_000,
   })
 }
 

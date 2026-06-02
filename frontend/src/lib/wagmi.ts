@@ -1,5 +1,5 @@
 import { createConfig, http } from "wagmi";
-import { mantle } from "wagmi/chains";
+import { mantleSepoliaTestnet } from "wagmi/chains";
 import { connectorsForWallets } from "@rainbow-me/rainbowkit";
 import { metaMaskWallet, rainbowWallet, walletConnectWallet } from "@rainbow-me/rainbowkit/wallets";
 
@@ -18,10 +18,10 @@ const connectors = connectorsForWallets(
 );
 
 export const wagmiConfig = createConfig({
-  chains: [mantle],
+  chains: [mantleSepoliaTestnet],
   connectors,
   transports: {
-    [mantle.id]: http(),
+    [mantleSepoliaTestnet.id]: http(),
   },
   ssr: false,
 });

@@ -17,6 +17,91 @@ For each entry, record:
 
 ## Change Log
 
+### 2026-06-01
+
+Type:
+Fix / Active Sepolia asset filtering
+
+Summary:
+
+- added active-portfolio asset filtering so Mantle Sepolia balance reads only include `SEPOLIA_METH` and `SEPOLIA_USDY` when mock pricing is disabled
+- removed lingering mock-token contamination from `/portfolio/current` and downstream risk scoring
+- verified the filtered portfolio snapshot no longer reports `MOCK_TOKEN_A` or `MOCK_TOKEN_B` as unvalued positions in the active Sepolia flow
+- moved Docker Postgres host exposure to `localhost:5433` to avoid conflict with an existing Windows Postgres process on `5432`
+- kept Docker backend database access on the internal service address `postgres:5432`
+- allowed explicit Sepolia simulation-only USDY prices to value portfolio positions while still rejecting ordinary stale or partial prices
+
+Affected scope:
+
+- docker-compose.yml
+- services/agent/.env
+- services/agent/app/core/settings.py
+- services/agent/app/api/portfolio.py
+- services/agent/modules/market_data/balances.py
+- services/agent/tests/unit/test_settings.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract behavior changed
+- frontend: dashboard, allocation, trade, and approvals surfaces now reflect the active Sepolia pair without stale mock-token positions
+- data quality: risk vetoes now reflect only the actual active assets instead of a mixed real-plus-mock registry, and Sepolia simulation prices are explicit rather than treated as live oracle data
+
+Assumptions / unresolved verification items:
+
+- live Sepolia balance reads and route discovery still depend on the local machine being allowed to reach the configured Mantle RPC and Hermes endpoints
+- mock-token registry entries remain available for explicit mock mode, but they are no longer part of the active portfolio path when mock pricing is off
+- host-side Postgres clients should use `localhost:5433`; backend containers should continue using `postgres:5432`
+
+Commands executed:
+
+- `npm run build`
+- `npm run test -- --run src/components/layout/TopBar.test.tsx src/components/layout/AppSidebar.test.tsx`
+- transient local checks against `http://127.0.0.1:5173/{route}` and backend endpoints under `http://127.0.0.1:8000/`
+- `docker compose up -d --force-recreate postgres backend`
+- direct Postgres checks from host and backend container
+
+### 2026-05-31
+
+Type:
+Fix / Allocation profile compatibility
+
+Summary:
+
+- added a canonical `Sepolia Test` allocation profile for the current Mantle Sepolia `USDY`/`mETH` flow
+- normalized allocation profile names before API validation and rebalance computation so stale or aliased profile names do not crash `/decisions`
+- added unit coverage for the Sepolia profile acceptance path
+- aligned the Sepolia quote and asset registry path to use the real test `USDY`/`mETH` pair instead of the retired mock-token pair
+- made Sepolia `$1` USDY fallback explicitly simulation-only and contingent on `simulation_fallback_enabled`
+
+Affected scope:
+
+- services/agent/strategies/allocation/profiles.py
+- services/agent/strategies/allocation/rebalance.py
+- services/agent/app/api/allocation.py
+- services/agent/app/api/decisions.py
+- services/agent/app/core/settings.py
+- services/agent/modules/market_data/prices.py
+- services/agent/modules/quotes/service.py
+- services/agent/tests/unit/test_allocation.py
+- services/agent/tests/unit/test_quote_service.py
+- services/agent/tests/unit/test_settings.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract behavior changed
+- frontend: `/decisions` and allocation profile updates no longer fail when the runtime is configured for the Sepolia test profile
+- data quality: no fabricated market data added; this only aligns allocation-profile naming with the current Sepolia asset set
+
+Assumptions / unresolved verification items:
+
+- `Sepolia Test` is treated as a deterministic 50/50 `USDY` and `mETH` basket for the current testnet flow
+- any persisted historical decisions using the old mock-token profile remain separate and are not migrated by this change
+
+Commands not run:
+
+- unit and integration tests were not executed in this turn
 ### 2026-05-29
 
 Type:

@@ -4,8 +4,8 @@ import type { PortfolioPosition, PortfolioSnapshotResponse } from "@/lib/api/typ
 import { cn } from "@/lib/utils"
 
 const COLORS = [
-  "#C8A96E", "#5C6B7A", "#4A7C59", "#A8A89E", "#8B3A3A",
-  "#6E8BC8", "#C86EA9", "#6EC8A9", "#C8A96E", "#7A5C6B",
+  "hsl(var(--primary))", "hsl(var(--muted-foreground))", "hsl(var(--success))", "hsl(var(--warning))", "hsl(var(--destructive))",
+  "hsl(var(--info))", "hsl(var(--purple))", "hsl(var(--cyan))", "hsl(var(--chart-up))", "hsl(var(--chart-down))",
 ]
 
 interface PortfolioAllocationChartProps {
@@ -50,7 +50,7 @@ export function PortfolioAllocationChart({ portfolio, isLoading }: PortfolioAllo
 
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
-          <div className="h-5 w-5 animate-pulse rounded-full border border-primary/30 bg-primary/10" />
+          <div className="h-5 w-5 animate-pulse border border-primary/30 bg-primary/10" />
           <span className="ml-2 text-xs text-muted-foreground">Loading allocation...</span>
         </div>
       ) : chartData.length === 0 ? (
@@ -99,7 +99,7 @@ export function PortfolioAllocationChart({ portfolio, isLoading }: PortfolioAllo
               const position = positions.find((p) => p.asset_symbol === item.name)
               return (
                 <div key={item.name} className="flex items-center gap-2">
-                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: item.fill }} />
+                  <span className="h-2 w-2 shrink-0" style={{ backgroundColor: item.fill }} />
                   <span className="text-[0.65rem] text-muted-foreground">{item.name}</span>
                   <span className={cn("font-mono text-[0.6rem] font-medium", positions.length > 0 && position?.drift_status === "over_weight" ? "text-warning" : position?.drift_status === "under_weight" ? "text-destructive" : "text-foreground")}>
                     {(item.value * 100).toFixed(1)}%

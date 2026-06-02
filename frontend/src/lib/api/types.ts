@@ -257,10 +257,10 @@ export interface SettingsResponse {
 }
 
 export interface CreateProposalPayload {
-  token_in: string
-  token_out: string
-  amount_in: string
-  route_id: string
+  asset_symbol: string
+  action: "BUY" | "SELL"
+  amount: number
+  route_id?: string
 }
 
 export interface ExecutionPayload {
@@ -272,19 +272,24 @@ export interface ExecutionPayload {
 }
 
 export interface TradeProposal {
-  id: string
+  proposal_id: string
+  plan_hash: string
+  wallet_or_vault: string
+  router: string
+  selector: string
   token_in: string
   token_out: string
-  amount_in: string
-  amount_out: string | null
-  status: string
+  recipient: string
+  max_amount_in: string
+  min_amount_out: string
+  native_value: string
+  deadline: number
+  proposal_expiry: number
+  nonce: number
+  status_code: string
+  risk_snapshot_id: string | null
   created_at: string
-  updated_at?: string
-  route_id?: string
-  protocol?: string
-  estimated_slippage_bps?: string | null
-  risk_info?: Record<string, unknown>
-  execution_payload?: ExecutionPayload
+  updated_at: string
 }
 
 export interface TradeProposalResponse extends StatusEnvelope {

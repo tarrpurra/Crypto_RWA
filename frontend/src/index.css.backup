@@ -1,0 +1,182 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Spectral:wght@300;400;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 60 11% 4%;
+    --foreground: 60 10% 93%;
+
+    --card: 60 3% 7%;
+    --card-foreground: 60 10% 93%;
+
+    --popover: 60 4% 11%;
+    --popover-foreground: 60 9% 82%;
+
+    --primary: 39 44% 61%;
+    --primary-foreground: 60 11% 4%;
+
+    --secondary: 60 4% 11%;
+    --secondary-foreground: 60 10% 93%;
+
+    --muted: 60 4% 15%;
+    --muted-foreground: 60 3% 35%;
+
+    --accent: 39 30% 37%;
+    --accent-foreground: 60 10% 93%;
+
+    --destructive: 0 41% 39%;
+    --destructive-foreground: 60 10% 93%;
+
+    --border: 60 4% 22%;
+    --input: 60 4% 15%;
+    --ring: 39 44% 61%;
+
+    --radius: 0rem;
+
+    --success: 137 25% 39%;
+    --success-foreground: 60 10% 93%;
+    --warning: 43 89% 37%;
+    --warning-foreground: 60 11% 4%;
+    --danger: 18 87% 40%;
+
+    --chart-up: 137 25% 39%;
+    --chart-down: 0 41% 39%;
+
+    --surface-0: 60 11% 4%;
+    --surface-1: 60 3% 7%;
+    --surface-2: 60 4% 11%;
+    --surface-3: 60 4% 15%;
+
+    --glow-primary: 39 44% 61%;
+    --glow-accent: 43 89% 37%;
+
+    --sidebar-background: 60 3% 7%;
+    --sidebar-foreground: 60 9% 82%;
+    --sidebar-primary: 39 44% 61%;
+    --sidebar-primary-foreground: 60 11% 4%;
+    --sidebar-accent: 60 4% 15%;
+    --sidebar-accent-foreground: 60 10% 93%;
+    --sidebar-border: 60 4% 22%;
+    --sidebar-ring: 39 44% 61%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    color-scheme: dark;
+    height: 100%;
+    overflow-y: auto;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: "Barlow Condensed", Arial, sans-serif;
+    height: 100%;
+    min-height: 100vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    background-color: hsl(var(--background));
+  }
+  ::selection {
+    background: hsl(var(--primary) / 0.24);
+    color: hsl(var(--primary-foreground));
+  }
+}
+
+@layer utilities {
+  .text-up {
+    color: hsl(var(--chart-up));
+  }
+  .text-down {
+    color: hsl(var(--chart-down));
+  }
+  .bg-surface-0 {
+    background-color: hsl(var(--surface-0));
+  }
+  .bg-surface-1 {
+    background-color: hsl(var(--surface-1));
+  }
+  .bg-surface-2 {
+    background-color: hsl(var(--surface-2));
+  }
+  .bg-surface-3 {
+    background-color: hsl(var(--surface-3));
+  }
+  .glow-primary {
+    box-shadow: inset 0 0 0 1px hsl(var(--glow-primary) / 0.32);
+  }
+  .glow-accent {
+    box-shadow: inset 0 0 0 1px hsl(var(--glow-accent) / 0.28);
+  }
+  .shell-backdrop {
+    background-color: hsl(var(--background));
+  }
+  .shell-grid {
+    background-color: transparent;
+  }
+  .panel-strong {
+    background-color: hsl(var(--card));
+    box-shadow: inset 0 1px 0 hsl(var(--primary) / 0.08);
+  }
+  .panel-muted {
+    background-color: hsl(var(--surface-2));
+  }
+  .highlight-text {
+    color: hsl(var(--foreground));
+  }
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+  .terminal-grid {
+    display: grid;
+    gap: 1px;
+    background-color: hsl(var(--border));
+  }
+  .terminal-grid > * {
+    background-color: hsl(var(--surface-1));
+  }
+  .terminal-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+  }
+  .terminal-value {
+    font-family: "IBM Plex Mono", "Courier New", monospace;
+    color: hsl(var(--foreground));
+  }
+  .terminal-wordmark {
+    font-family: "Spectral", "Palatino Linotype", Georgia, serif;
+    font-weight: 300;
+  }
+  .terminal-panel {
+    border: 1px solid hsl(var(--border));
+    background-color: hsl(var(--card));
+  }
+  .terminal-panel-muted {
+    border: 1px solid hsl(var(--border));
+    background-color: hsl(var(--surface-2));
+  }
+}
+
+/* Custom scrollbar for webkit */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: hsl(var(--card));
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground));
+}

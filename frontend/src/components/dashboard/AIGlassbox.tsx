@@ -80,7 +80,7 @@ export function AIGlassbox() {
 
       {isLoading ? (
         <div className="flex flex-1 items-center justify-center py-8">
-          <div className="h-5 w-5 animate-pulse rounded-full border border-primary/30 bg-primary/10" />
+          <div className="h-5 w-5 animate-pulse border border-primary/30 bg-primary/10" />
           <span className="ml-2 text-xs text-muted-foreground">Loading reasoning state...</span>
         </div>
       ) : (
@@ -91,7 +91,7 @@ export function AIGlassbox() {
               const Icon = layer.icon
               return (
                 <div key={layer.key} className="flex items-center gap-3">
-                  <div className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-md border", active ? "border-primary/30 bg-primary/10" : "border-border bg-surface-2")}>
+                  <div className={cn("flex h-7 w-7 shrink-0 items-center justify-center border", active ? "border-primary/30 bg-primary/10" : "border-border bg-surface-2")}>
                     <Icon className={cn("h-3.5 w-3.5", active ? "text-primary" : "text-muted-foreground")} />
                   </div>
                   <div className="flex-1 min-w-0">
@@ -114,7 +114,7 @@ export function AIGlassbox() {
           </div>
 
           {decisions?.reasoning_summary && (
-            <div className="mt-4 rounded-md border border-border/60 bg-surface-2 p-3">
+            <div className="mt-4 border border-border/60 bg-surface-2 p-3">
               <div className="flex items-center gap-2">
                 <Cpu className="h-3.5 w-3.5 text-primary" />
                 <span className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Reasoning</span>
@@ -124,15 +124,15 @@ export function AIGlassbox() {
           )}
 
           <div className="mt-3 grid grid-cols-2 gap-2">
-            <div className="rounded-md border border-border/60 bg-surface-2 p-2.5">
-              <p className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">Risk Score</p>
+            <div className="border border-border/60 bg-surface-2 p-2.5">
+               <p className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">Risk Score</p>
               <p className={cn("mt-0.5 font-mono text-sm font-semibold", riskBandColor)}>
                 {risk?.risk_score ?? "-"}
                 <span className="ml-1.5 text-[0.6rem] font-normal text-muted-foreground">{riskBand}</span>
               </p>
             </div>
-            <div className="rounded-md border border-border/60 bg-surface-2 p-2.5">
-              <p className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">Confidence</p>
+            <div className="border border-border/60 bg-surface-2 p-2.5">
+               <p className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">Confidence</p>
               <p className="mt-0.5 font-mono text-sm font-semibold text-foreground">
                 {decisions?.confidence != null ? `${(decisions.confidence * 100).toFixed(1)}%` : "-"}
               </p>

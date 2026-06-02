@@ -107,6 +107,27 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual(decision.recommended_action, "PAUSE")
         self.assertEqual(len(actions), 0)
 
+    def test_sepolia_test_profile_is_accepted(self) -> None:
+        balances = [
+            AssetBalance(asset_symbol="USDY", balance=500000.0, value_usd=500000.0, weight=0.50),
+            AssetBalance(asset_symbol="mETH", balance=100.0, value_usd=500000.0, weight=0.50),
+        ]
+        portfolio = PortfolioSnapshot(
+            snapshot_id="port_test_sepolia",
+            wallet_or_vault="0xvault",
+            total_value_usd=1000000.0,
+            balances=balances,
+            weights={"USDY": 0.50, "mETH": 0.50},
+            status_code="DATA_FRESH",
+            status_reason="",
+            created_at=self.now
+        )
+
+        decision, actions = compute_rebalance(portfolio, self.risk_normal, "Sepolia Test")
+        self.assertEqual(decision.profile_name, "Sepolia Test")
+        self.assertEqual(decision.recommended_action, "HOLD")
+        self.assertEqual(len(actions), 0)
+
     def test_clip_sizing_rules(self) -> None:
         total_port_value = 1000000.0  # $1M
         # mETH limit: 10% of portfolio ($100k) or $30k -> should clip to $30k

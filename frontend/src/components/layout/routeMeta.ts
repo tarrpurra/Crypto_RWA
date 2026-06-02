@@ -6,7 +6,7 @@ export type RouteMeta = {
 
 const routeMeta: Array<{ match: RegExp; meta: RouteMeta }> = [
   {
-    match: /^\/$/,
+    match: /^\/(?:dashboard)?$/,
     meta: {
       title: "Dashboard",
       description: "Portfolio state, risk posture, market freshness, and agent readiness.",
@@ -24,8 +24,8 @@ const routeMeta: Array<{ match: RegExp; meta: RouteMeta }> = [
   {
     match: /^\/allocation/,
     meta: {
-      title: "Allocation",
-      description: "Target profiles, recommendation rationale, and rebalance intent.",
+      title: "Allocation Studio",
+      description: "Target profiles, recommendation rationale, operator controls, and rebalance intent.",
       eyebrow: "Allocation Engine",
     },
   },
@@ -33,8 +33,24 @@ const routeMeta: Array<{ match: RegExp; meta: RouteMeta }> = [
     match: /^\/(?:market|swap|trade)/,
     meta: {
       title: "Trade",
-      description: "Proposals, routes, oracle freshness, prices, and ingestion health — all in one view.",
+      description: "Proposals, routes, oracle freshness, prices, and ingestion health all in one view.",
       eyebrow: "Market & Trading",
+    },
+  },
+  {
+    match: /^\/approvals/,
+    meta: {
+      title: "Approvals",
+      description: "Proposal queue, approval state, execution readiness, and onchain handoff.",
+      eyebrow: "Trade Approval",
+    },
+  },
+  {
+    match: /^\/strategy-lab/,
+    meta: {
+      title: "Strategy Lab",
+      description: "Risk, allocation, and portfolio signals for operator review.",
+      eyebrow: "Strategy Lab",
     },
   },
   {

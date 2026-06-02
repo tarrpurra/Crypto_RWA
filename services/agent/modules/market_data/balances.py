@@ -21,6 +21,7 @@ from services.agent.repositories.db.portfolio_repository import PortfolioSnapsho
 logger = logging.getLogger("services.agent.market_data.balances")
 
 FRESH_PRICE_CODES = {"DATA_FRESH", "ORACLE_FRESH", "QUOTE_FRESH"}
+SIMULATION_PRICE_METHODS = {"sepolia_stable_fallback", "sepolia_mock_fixed_price"}
 ERC20_BALANCE_ABI = [
     {
         "constant": True,
@@ -130,6 +131,14 @@ def _format_decimal(value: Decimal | None) -> str | None:
 def _scaled_token_amount(raw_balance: int, decimals: int) -> str:
     value = Decimal(raw_balance) / (Decimal(10) ** Decimal(decimals))
     return _format_decimal(value) or "0"
+
+
+def _price_is_usable(price: NormalizedPriceSnapshot | None, price_value: Decimal | None) -> bool:
+    if price is None or price_value is None:
+        return False
+    if price.status_code in FRESH_PRICE_CODES:
+        return True
+    return price.freshness_status == "simulation_only" and price.derivation_method in SIMULATION_PRICE_METHODS
 
 
 class Erc20BalanceReader:
@@ -325,7 +334,7 @@ class PortfolioSnapshotEngine:
         amount = _decimal_or_none(balance.balance)
         price = price_by_key.get(balance.asset_key.lower()) or price_by_symbol.get(balance.asset_symbol.lower())
         price_value = _decimal_or_none(price.price_usd) if price else None
-        price_is_usable = bool(price and price.status_code in FRESH_PRICE_CODES and price_value is not None)
+        price_is_usable = _price_is_usable(price, price_value)
 
         value = amount * price_value if amount is not None and price_value is not None and price_is_usable else None
         status_code = "DATA_FRESH" if value is not None and balance.status_code == "DATA_FRESH" else "DATA_MISSING"

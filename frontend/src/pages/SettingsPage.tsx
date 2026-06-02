@@ -49,7 +49,7 @@ export default function SettingsPage() {
           label="Contracts"
           value={`${Object.values(status?.configured_contracts ?? {}).filter(Boolean).length} Configured`}
           detail="Configured contract addresses are read from /status and should match the active environment."
-          tone={Object.values(status?.configured_contracts ?? {}).some(Boolean) ? "ready" : "degraded"}
+          tone={Object.values(status?.configured_contracts ?? {}).some(Boolean) ? "ready" : "neutral"}
         />
       </div>
 

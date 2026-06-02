@@ -8,7 +8,7 @@ from eth_hash.auto import keccak
 from web3 import Web3
 
 from services.agent.app.schemas.recommendations import RecommendationResponse
-from services.agent.app.schemas.proposals import TradeProposalResponse, TradeProposal, ExecutionPayloadSchema, ProposalListResponse, ProposalExecuteResponse
+from services.agent.app.schemas.proposals import TradeProposalResponse, TradeProposal, ExecutionPayloadSchema, ProposalListItem, ProposalListResponse, ProposalExecuteResponse
 from services.agent.app.schemas.allocation import RebalanceAction
 from services.agent.modules.market_data.balances import fetch_portfolio_snapshot, internal_snapshot_from_response
 from services.agent.repositories.db.market_repository import MarketDataRepository
@@ -16,6 +16,7 @@ from services.agent.risk.scoring.score_engine import RiskScoreEngine
 from services.agent.risk.guards.trade_guard import PolicyGuard
 from services.agent.strategies.allocation.rebalance import compute_rebalance
 from services.agent.strategies.allocation import profiles
+from services.agent.strategies.allocation.profiles import normalize_profile_name
 from services.agent.strategies.decision_templates.parser import generate_recommendation_reasoning
 from services.agent.repositories.db.models import TradeProposalRecord, TradeExecutionRecord
 from services.agent.repositories.db.session import create_session, init_db
@@ -59,7 +60,11 @@ def _save_proposal_record(proposal: TradeProposal, calldata: str | None = None) 
 
 
 def _active_profile_name() -> str:
-    return profiles.ACTIVE_PROFILE_NAME or get_settings().allocation_profile_name
+    configured_name = profiles.ACTIVE_PROFILE_NAME or get_settings().allocation_profile_name
+    try:
+        return normalize_profile_name(configured_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/decisions", response_model=RecommendationResponse)
@@ -94,15 +99,16 @@ async def create_trade_proposal(action: RebalanceAction) -> TradeProposalRespons
             for candidate in allowed_actions
             if candidate.asset_symbol == action.asset_symbol
             and candidate.action == action.action
-            and abs(candidate.amount - action.amount) < 1e-9
         ),
         None,
     )
     if decision.recommended_action != "REBALANCE" or matching_action is None:
         raise HTTPException(status_code=400, detail="Requested action is not part of the current deterministic rebalance plan.")
 
+    plan = matching_action
+
     # Determine token addresses from the rebalance action
-    sepolia_mock = settings.target_chain.value == "mantle_sepolia" and settings.sepolia_mock_prices_enabled
+    sepolia = settings.target_chain.value == "mantle_sepolia"
     token_in: str
     token_out: str
     decimals_in: int
@@ -110,40 +116,40 @@ async def create_trade_proposal(action: RebalanceAction) -> TradeProposalRespons
     price_symbol_in: str
     price_symbol_out: str
 
-    if sepolia_mock:
-        mock_a = settings.sepolia_mock_token_a_address
-        mock_b = settings.sepolia_mock_token_b_address
-        if not mock_a or not mock_b:
-            raise HTTPException(status_code=400, detail="Sepolia mock token addresses not configured.")
-        if action.asset_symbol == "MockTokenA":
-            token_in = mock_b if action.action == "BUY" else mock_a
-            token_out = mock_a if action.action == "BUY" else mock_b
-            price_symbol_in = "MockTokenB" if action.action == "BUY" else "MockTokenA"
-            price_symbol_out = "MockTokenA" if action.action == "BUY" else "MockTokenB"
-        elif action.asset_symbol == "MockTokenB":
-            token_in = mock_a if action.action == "BUY" else mock_b
-            token_out = mock_b if action.action == "BUY" else mock_a
-            price_symbol_in = "MockTokenA" if action.action == "BUY" else "MockTokenB"
-            price_symbol_out = "MockTokenB" if action.action == "BUY" else "MockTokenA"
+    if sepolia:
+        meth_addr = settings.effective_sepolia_meth_address
+        usdy_addr = settings.sepolia_usdy_address
+        if not meth_addr or not usdy_addr:
+            raise HTTPException(status_code=400, detail="Sepolia mETH/USDY addresses not configured.")
+        if plan.asset_symbol == "mETH":
+            token_in = usdy_addr if plan.action == "BUY" else meth_addr
+            token_out = meth_addr if plan.action == "BUY" else usdy_addr
+            price_symbol_in = "USDY" if plan.action == "BUY" else "mETH"
+            price_symbol_out = "mETH" if plan.action == "BUY" else "USDY"
+        elif plan.asset_symbol == "USDY":
+            token_in = meth_addr if plan.action == "BUY" else usdy_addr
+            token_out = usdy_addr if plan.action == "BUY" else meth_addr
+            price_symbol_in = "mETH" if plan.action == "BUY" else "USDY"
+            price_symbol_out = "USDY" if plan.action == "BUY" else "mETH"
         else:
-            raise HTTPException(status_code=400, detail=f"Unsupported asset for Sepolia mock mode: {action.asset_symbol}")
+            raise HTTPException(status_code=400, detail=f"Unsupported asset for Sepolia: {plan.asset_symbol}")
         decimals_in = 18
         decimals_out = 18
     else:
         usdc_addr = settings.usdc_mainnet_address
-        meth_addr = settings.meth_sepolia_address if settings.target_chain.value == "mantle_sepolia" else settings.meth_mainnet_address
+        meth_addr = settings.meth_mainnet_address
         if not meth_addr:
             raise HTTPException(status_code=400, detail="mETH address is not configured for proposal creation.")
         if not usdc_addr:
             raise HTTPException(status_code=400, detail="USDC address is not configured for proposal creation.")
-        token_in = usdc_addr if action.action == "BUY" else meth_addr
-        token_out = meth_addr if action.action == "BUY" else usdc_addr
-        decimals_in = 6 if action.action == "BUY" else 18
-        decimals_out = 18 if action.action == "BUY" else 6
-        price_symbol_in = "USDC" if action.action == "BUY" else "mETH"
-        price_symbol_out = "mETH" if action.action == "BUY" else "USDC"
+        token_in = usdc_addr if plan.action == "BUY" else meth_addr
+        token_out = meth_addr if plan.action == "BUY" else usdc_addr
+        decimals_in = 6 if plan.action == "BUY" else 18
+        decimals_out = 18 if plan.action == "BUY" else 6
+        price_symbol_in = "USDC" if plan.action == "BUY" else "mETH"
+        price_symbol_out = "mETH" if plan.action == "BUY" else "USDC"
 
-    max_amount_in = int(action.amount * (10 ** decimals_in))
+    max_amount_in = int(plan.amount * (10 ** decimals_in))
 
     # Compute minAmountOut based on current price with 1% slippage buffer
     repo = MarketDataRepository()
@@ -154,10 +160,10 @@ async def create_trade_proposal(action: RebalanceAction) -> TradeProposalRespons
         raise HTTPException(status_code=400, detail=f"Required price snapshots missing for {price_symbol_in}/{price_symbol_out}.")
 
     # Implied swap rate
-    if action.action == "BUY":
-        expected_out = action.amount * price_in / price_out
+    if plan.action == "BUY":
+        expected_out = plan.amount * price_in / price_out
     else:
-        expected_out = action.amount * price_out / price_in
+        expected_out = plan.amount * price_out / price_in
 
     min_amount_out = int(expected_out * 0.99 * (10 ** decimals_out))
 
@@ -194,7 +200,7 @@ async def create_trade_proposal(action: RebalanceAction) -> TradeProposalRespons
         params = (
             Web3.to_checksum_address(token_in),
             Web3.to_checksum_address(token_out),
-            3000,  # 0.3% fee tier
+            500,  # 0.05% fee tier — matches deployed AGNI pool
             Web3.to_checksum_address(recipient),
             deadline,
             max_amount_in,
@@ -218,7 +224,7 @@ async def create_trade_proposal(action: RebalanceAction) -> TradeProposalRespons
     proposal_id_bytes = keccak(f"proposal_{uuid.uuid4()}_{now}".encode("utf-8"))
     proposal_id = Web3.to_hex(proposal_id_bytes)
     
-    plan_hash_bytes = keccak(f"rebalance_{action.asset_symbol}_{action.action}".encode("utf-8"))
+    plan_hash_bytes = keccak(f"rebalance_{plan.asset_symbol}_{plan.action}".encode("utf-8"))
     plan_hash = Web3.to_hex(plan_hash_bytes)
 
     payload = ExecutionPayloadSchema(

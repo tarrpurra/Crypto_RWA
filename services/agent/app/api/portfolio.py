@@ -51,7 +51,7 @@ async def current_portfolio(wallet_address: str | None = None) -> PortfolioSnaps
     try:
         balances = Erc20BalanceReader(settings.effective_http_rpc_url).read_configured_balances(
             portfolio_address=portfolio_address,
-            asset_registry=settings.asset_registry,
+            asset_registry=settings.active_portfolio_asset_registry,
             chain_id=settings.effective_chain_id,
         )
     except Exception as exc:

@@ -40,6 +40,8 @@ class QuoteService:
         assets: list[AssetMetadata] = []
         for raw_asset in self.settings.asset_registry.values():
             if raw_asset["chain_id"] == target_chain_id:
+                if raw_asset["price_strategy"] == "sepolia_mock_fixed" and not self.settings.sepolia_mock_routes_enabled:
+                    continue
                 assets.append(AssetMetadata(**raw_asset))
         return assets
 
@@ -92,18 +94,26 @@ class QuoteService:
 
     def _quote_pairs(self) -> list[QuotePair]:
         assets = self._assets_for_target_chain()
+        asset_by_key = {asset.asset_key: asset for asset in assets}
         asset_by_symbol = {asset.symbol: asset for asset in assets}
         pairs: list[QuotePair] = []
         if self.settings.target_chain == TargetChain.MANTLE_MAINNET and {"USDY", "mETH"}.issubset(asset_by_symbol):
             pairs.append(QuotePair(token_in=asset_by_symbol["USDY"], token_out=asset_by_symbol["mETH"], amount_in=Decimal("1000")))
             pairs.append(QuotePair(token_in=asset_by_symbol["mETH"], token_out=asset_by_symbol["USDY"], amount_in=Decimal("1")))
+        if self.settings.target_chain == TargetChain.MANTLE_SEPOLIA:
+            sepolia_usdy = asset_by_key.get("SEPOLIA_USDY")
+            sepolia_meth = asset_by_key.get("SEPOLIA_METH")
+            if sepolia_usdy and sepolia_meth:
+                pairs.append(QuotePair(token_in=sepolia_usdy, token_out=sepolia_meth, amount_in=Decimal("1000")))
+                pairs.append(QuotePair(token_in=sepolia_meth, token_out=sepolia_usdy, amount_in=Decimal("1")))
         if (
             self.settings.target_chain == TargetChain.MANTLE_SEPOLIA
+            and not pairs
             and self.settings.sepolia_mock_routes_enabled
-            and {"MockTokenA", "MockTokenB"}.issubset(asset_by_symbol)
+            and {"MOCK_TOKEN_A", "MOCK_TOKEN_B"}.issubset(asset_by_key)
         ):
-            pairs.append(QuotePair(token_in=asset_by_symbol["MockTokenA"], token_out=asset_by_symbol["MockTokenB"], amount_in=Decimal("1")))
-            pairs.append(QuotePair(token_in=asset_by_symbol["MockTokenB"], token_out=asset_by_symbol["MockTokenA"], amount_in=Decimal("1")))
+            pairs.append(QuotePair(token_in=asset_by_key["MOCK_TOKEN_A"], token_out=asset_by_key["MOCK_TOKEN_B"], amount_in=Decimal("1")))
+            pairs.append(QuotePair(token_in=asset_by_key["MOCK_TOKEN_B"], token_out=asset_by_key["MOCK_TOKEN_A"], amount_in=Decimal("1")))
         return pairs
 
     def _unsupported_attempt(self, route: RouteDescriptor, amount_in: Decimal):

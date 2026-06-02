@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, DateTime, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -140,21 +140,21 @@ class TradeProposalRecord(Base):
     __table_args__ = (UniqueConstraint("proposal_id", name="uq_trade_proposals_proposal_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    proposal_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    plan_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    proposal_id: Mapped[str] = mapped_column(String(66), nullable=False)
+    plan_hash: Mapped[str] = mapped_column(String(66), nullable=False)
     wallet_or_vault: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     router: Mapped[str] = mapped_column(String(128), nullable=False)
     selector: Mapped[str] = mapped_column(String(10), nullable=False)
-    calldata_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    calldata_hash: Mapped[str] = mapped_column(String(66), nullable=False)
     token_in: Mapped[str] = mapped_column(String(128), nullable=False)
     token_out: Mapped[str] = mapped_column(String(128), nullable=False)
     recipient: Mapped[str] = mapped_column(String(128), nullable=False)
     max_amount_in: Mapped[str] = mapped_column(String(78), nullable=False)
     min_amount_out: Mapped[str] = mapped_column(String(78), nullable=False)
     native_value: Mapped[str] = mapped_column(String(78), nullable=False)
-    deadline: Mapped[int] = mapped_column(nullable=False)
-    proposal_expiry: Mapped[int] = mapped_column(nullable=False)
-    nonce: Mapped[int] = mapped_column(nullable=False)
+    deadline: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    proposal_expiry: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    nonce: Mapped[int] = mapped_column(BigInteger, nullable=False)
     status_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     risk_snapshot_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     calldata: Mapped[str | None] = mapped_column(Text, nullable=True)

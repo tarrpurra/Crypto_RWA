@@ -1,5 +1,6 @@
 import { request } from "./client";
 import type {
+  AllocationDecisionResponse,
   CreateProposalPayload,
   LatestPricesResponse,
   LatestQuotesResponse,
@@ -22,6 +23,8 @@ export const marketApi = {
     request<LatestQuotesResponse>(`/market/quotes/${tokenIn}/${tokenOut}`),
   bestQuoteForPair: (tokenIn: string, tokenOut: string) =>
     request<NormalizedQuoteSnapshot>(`/market/quotes/${tokenIn}/${tokenOut}/best`),
+  getAllocationRecommendation: () =>
+    request<AllocationDecisionResponse>("/allocation/recommendation"),
   createProposal: (payload: CreateProposalPayload) =>
     request<TradeProposalResponse>("/proposals/create", "POST", payload),
   approveProposal: (id: string) =>

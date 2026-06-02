@@ -5,6 +5,10 @@ import { useAccount, useDisconnect } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { logger } from "@/lib/logger";
 
+const AUTH_TOKEN_KEY = "pacifica_auth_token";
+const PORTFOLIO_WALLET_KEY = "aixrwa_portfolio_wallet_address";
+const PORTFOLIO_WALLET_EVENT = "aixrwa-portfolio-wallet-change";
+
 export interface AuthUser {
   id: string;
   wallet?: {
@@ -70,6 +74,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, [openConnectModal]);
 
   const logout = useCallback(async () => {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(AUTH_TOKEN_KEY);
+      window.localStorage.removeItem(PORTFOLIO_WALLET_KEY);
+      window.dispatchEvent(new Event(PORTFOLIO_WALLET_EVENT));
+    }
     disconnect();
   }, [disconnect]);
 

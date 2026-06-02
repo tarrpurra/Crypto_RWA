@@ -58,12 +58,14 @@ class Settings(BaseSettings):
     portfolio_base_currency: str = "USD"
     portfolio_target_weights: str = ""
     allocation_profile_name: str = "Balanced"
-    sepolia_mock_prices_enabled: bool = True
-    sepolia_mock_routes_enabled: bool = True
+    sepolia_mock_prices_enabled: bool = False
+    sepolia_mock_routes_enabled: bool = False
     sepolia_mock_token_a_address: str | None = None
     sepolia_mock_token_b_address: str | None = None
     sepolia_mock_token_a_price_usd: str = "1"
     sepolia_mock_token_b_price_usd: str = "1"
+    sepolia_meth_address: str | None = None
+    sepolia_usdy_address: str | None = None
 
     pyth_hermes_url: str = "https://hermes.pyth.network"
     pyth_hermes_latest_price_path: str = "/v2/updates/price/latest"
@@ -144,8 +146,8 @@ class Settings(BaseSettings):
     rpc_health_sample_warn_seconds: int = 60
 
     simulation_fallback_enabled: bool = True
-    ai_reasoning_enabled: bool = False
-    ai_decision_maker_enabled: bool = False
+    ai_reasoning_enabled: bool = True
+    ai_decision_maker_enabled: bool = True
     ai_reasoning_provider: str = "ollama"
     ai_reasoning_model: str = "qwen2.5:3b"
     ollama_url: str = "http://host.docker.internal:11434"
@@ -208,6 +210,10 @@ class Settings(BaseSettings):
         }
 
     @property
+    def effective_sepolia_meth_address(self) -> str | None:
+        return self.sepolia_meth_address or self.meth_sepolia_address
+
+    @property
     def parsed_agni_fee_tiers(self) -> list[int]:
         return [int(value.strip()) for value in self.agni_fee_tiers.split(",") if value.strip()]
 
@@ -255,18 +261,32 @@ class Settings(BaseSettings):
                 "ondo_oracle_address": None,
                 "decimals": 18,
             },
-            "METH_SEPOLIA": {
-                "asset_key": "METH_SEPOLIA",
+            "SEPOLIA_METH": {
+                "asset_key": "SEPOLIA_METH",
                 "symbol": "mETH",
                 "chain_id": self.mantle_sepolia_chain_id,
-                "address": self.meth_sepolia_address,
+                "address": self.effective_sepolia_meth_address,
                 "price_strategy": "pyth_eth_usd_plus_dex_basis",
                 "primary_reference_source": "pyth_eth_usd",
                 "dex_quote_required": True,
-                "verified": bool(self.meth_sepolia_address),
+                "verified": bool(self.effective_sepolia_meth_address),
                 "pyth_feed_id": self.meth_usd_pyth_feed_id,
                 "ratio_feed_id": self.meth_eth_ratio_feed_id,
                 "ondo_oracle_address": None,
+                "decimals": 18,
+            },
+            "SEPOLIA_USDY": {
+                "asset_key": "SEPOLIA_USDY",
+                "symbol": "USDY",
+                "chain_id": self.mantle_sepolia_chain_id,
+                "address": self.sepolia_usdy_address,
+                "price_strategy": "ondo_oracle_plus_dex",
+                "primary_reference_source": "ondo_redemption_oracle",
+                "dex_quote_required": True,
+                "verified": bool(self.sepolia_usdy_address),
+                "pyth_feed_id": self.usdy_pyth_feed_id,
+                "ratio_feed_id": None,
+                "ondo_oracle_address": self.ondo_usdy_oracle_address,
                 "decimals": 18,
             },
             "MOCK_TOKEN_A": {
@@ -326,6 +346,19 @@ class Settings(BaseSettings):
                 "decimals": 18,
             },
         }
+
+    @property
+    def active_portfolio_asset_registry(self) -> dict[str, dict[str, object]]:
+        active_assets: dict[str, dict[str, object]] = {}
+        for asset_key, asset in self.asset_registry.items():
+            if int(asset["chain_id"]) != self.effective_chain_id:
+                continue
+            if asset.get("price_strategy") == "route_helper":
+                continue
+            if asset.get("price_strategy") == "sepolia_mock_fixed" and not self.sepolia_mock_prices_enabled:
+                continue
+            active_assets[asset_key] = asset
+        return active_assets
 
 
 @lru_cache(maxsize=1)

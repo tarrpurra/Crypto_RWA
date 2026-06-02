@@ -56,58 +56,6 @@ class AgniQuoteService:
 
     def quote_route(self, route: RouteDescriptor, amount_in: Decimal) -> AgniQuoteAttempt:
         now = utc_now()
-        # Synthetic quotes for Sepolia mock mode — skip on-chain calls
-        if route.verification_state == "quoter_v2_quote_synthetic":
-            decimals_in = self._token_decimals(route.token_in)
-            decimals_out = self._token_decimals(route.token_out)
-            amount_out = amount_in  # 1:1 for mock tokens
-            raw = RawQuoteSnapshot(
-                snapshot_id=str(uuid4()),
-                protocol="AGNI",
-                route_type=route.route_type,
-                chain_id=self.settings.effective_chain_id,
-                token_in=route.token_in,
-                token_out=route.token_out,
-                amount_in_raw=str(amount_in),
-                amount_out_raw=str(amount_out),
-                amount_in_decimals=decimals_in,
-                amount_out_decimals=decimals_out,
-                route_path_json=route.route_path,
-                fee_tier_or_bin_step=route.fee_tier_or_bin_step,
-                block_number=None,
-                rpc_url=self.settings.effective_http_rpc_url,
-                sample_timestamp=now,
-                status="synthetic_quote_ok",
-                status_code=DataStatusCode.QUOTE_FRESH.value,
-                status_reason="Synthetic Sepolia mock quote (1:1).",
-                raw_payload_json={
-                    "router_address": route.router_address,
-                    "pool_address": route.pool_address,
-                    "verification_state": route.verification_state,
-                },
-            )
-            norm = NormalizedQuoteSnapshot(
-                snapshot_id=str(uuid4()),
-                protocol="AGNI",
-                route_id=route.route_id or f"agni:{route.token_in}:{route.token_out}:{route.fee_tier_or_bin_step or route.route_type}",
-                route_label=route.route_type,
-                chain_id=self.settings.effective_chain_id,
-                token_in_symbol=route.token_in,
-                token_out_symbol=route.token_out,
-                amount_in=str(amount_in),
-                amount_out=str(amount_out),
-                quoted_price="1",
-                estimated_slippage_bps="5",
-                route_depth_usd=None,
-                candidate_rank=None,
-                sample_timestamp=now,
-                freshness_status="simulation_only",
-                status_code=DataStatusCode.QUOTE_FRESH.value,
-                status_reason="Synthetic Sepolia mock quote (1:1).",
-                data_sources_used=["agni"],
-            )
-            return AgniQuoteAttempt(route=route, raw_snapshot=raw, normalized_snapshot=norm)
-
         quoter_address = self.settings.effective_agni_quoter_v2_address
         if not quoter_address:
             raw = RawQuoteSnapshot(

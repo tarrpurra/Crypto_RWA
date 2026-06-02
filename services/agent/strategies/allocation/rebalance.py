@@ -5,7 +5,7 @@ from datetime import datetime
 from services.agent.app.schemas.portfolio import PortfolioSnapshot
 from services.agent.app.schemas.risk import RiskSnapshot
 from services.agent.app.schemas.allocation import AllocationDecision, RebalanceAction
-from services.agent.strategies.allocation.profiles import ALLOCATION_PROFILES
+from services.agent.strategies.allocation.profiles import get_allocation_profile
 from services.agent.strategies.allocation.clip_sizing import clip_trade_amount
 from services.agent.modules.oracle.freshness import utc_now
 
@@ -18,9 +18,7 @@ def compute_rebalance(
     profile_name: str
 ) -> tuple[AllocationDecision, list[RebalanceAction]]:
     now = utc_now()
-    target_profile = ALLOCATION_PROFILES.get(profile_name)
-    if not target_profile:
-        raise ValueError(f"Unknown allocation profile: {profile_name}")
+    profile_name, target_profile = get_allocation_profile(profile_name)
 
     if portfolio.status_code != "DATA_FRESH" or portfolio.total_value_usd <= 0 or not portfolio.balances:
         target_weights = {asset: weight for asset, weight in target_profile.items()}
