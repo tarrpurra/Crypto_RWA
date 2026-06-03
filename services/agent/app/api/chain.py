@@ -49,6 +49,7 @@ async def chain_status() -> ChainStatusResponse:
             "status_code": "DATA_MISSING",
             "status_label": "DATA_MISSING",
             "status_reason": "Chain RPC status sample could not be collected.",
+            "target_chain": settings.target_chain.value,
             "chain_id": None,
             "latest_block": None,
             "rpc_url": settings.effective_http_rpc_url,
@@ -64,6 +65,7 @@ async def chain_status() -> ChainStatusResponse:
             "status_code": "DATA_FRESH",
             "status_label": "DATA_FRESH",
             "status_reason": "Chain RPC responded with a fresh sample.",
+            "target_chain": settings.target_chain.value,
         }
     )
     for contract_key, address in _configured_contracts().items():

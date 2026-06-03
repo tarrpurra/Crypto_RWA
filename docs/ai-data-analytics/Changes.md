@@ -17,6 +17,98 @@ For each entry, record:
 
 ## Change Log
 
+### 2026-06-03
+
+Type:
+Feature / Sepolia status normalization and AI debug visibility
+
+Summary:
+
+- added `target_chain` to `/chain/status` so frontend chain diagnostics can render the active network without inferring it from separate status calls
+- normalized Sepolia market, quote, and route responses so simulation-only or verification-gated testnet data no longer appears as degraded by default
+- extended recommendation responses with structured `ai_debug` payloads containing the model prompt, raw output, parsed output, fallback reason, and AI override metadata
+- updated the frontend AI side panel to render full prompt and output debug sections instead of only a truncated reasoning summary
+- labeled the Settings environment card with explicit Mantle Sepolia or Mantle Mainnet network names
+
+Affected scope:
+
+- services/agent/app/api/chain.py
+- services/agent/app/api/market.py
+- services/agent/app/schemas/chain.py
+- services/agent/app/schemas/recommendations.py
+- services/agent/strategies/decision_templates/parser.py
+- frontend/src/lib/api/types.ts
+- frontend/src/components/dashboard/AISidePanel.tsx
+- frontend/src/pages/SettingsPage.tsx
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract behavior changed
+- frontend: the AI Planning or Intelligence side panel can now show prompt-and-output debug data directly, and Settings surfaces the active Mantle network more clearly
+- data quality: Sepolia testnet responses no longer misleadingly present expected simulation-only data paths as degraded, while active-chain context is now explicit in chain diagnostics
+
+Assumptions / unresolved verification items:
+
+- quote and route endpoints intentionally stay permissive on Sepolia when live routes are absent or verification-gated; mainnet should continue treating the same conditions as degraded
+- `ai_debug` is intended as application-owned debugging output, not hidden model chain-of-thought
+- frontend and backend tests, builds, lint, and formatting were not run in this turn
+
+Commands not run:
+
+- backend and frontend tests, builds, lint, and formatting were intentionally not run in this turn
+
+### 2026-06-03
+
+Type:
+Feature / Investment plan flow integration
+
+Summary:
+
+- added a deposit-aware investment plan builder behind `POST /proposals/create` that accepts deposit asset, amount, risk profile, allocation mode, and optional manual weights
+- added backend plan detail responses with target allocations, guard checks, linked proposals, transaction steps, and embedded risk assessment data
+- generalized quote-pair discovery for active chain assets and added best-route attempt lookup so AGNI quoter gas metadata can flow into the investment plan
+- wired the frontend trade and approvals screens to consume backend proposal detail instead of relying only on locally inferred review state
+- normalized proposal list and approval mutation responses to include `status_code`, `status_label`, and `status_reason`
+- added database-backed `investment_plans` persistence so proposal review can survive backend restarts for newly created proposals
+- added a configurable `SEPOLIA_USDC` asset path plus simulation-only stable pricing so Mantle Sepolia `USDC` can be supported when a verified address is supplied
+- surfaced current repository blockers directly in the trade form for unsupported Mantle Sepolia deposit assets such as native `MNT`
+
+Affected scope:
+
+- services/agent/app/api/decisions.py
+- services/agent/app/schemas/proposals.py
+- services/agent/app/core/settings.py
+- services/agent/modules/market_data/prices.py
+- services/agent/modules/proposals/investment_planner.py
+- services/agent/modules/quotes/service.py
+- services/agent/repositories/db/investment_plan_repository.py
+- services/agent/repositories/db/models.py
+- services/agent/.env.example
+- frontend/src/lib/api/market.ts
+- frontend/src/lib/api/types.ts
+- frontend/src/hooks/useSwap.ts
+- frontend/src/pages/Trade.tsx
+- frontend/src/pages/ApprovalsPage.tsx
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: proposal payload generation now carries a fuller guarded-execution review object, but native `MNT` wrap and unwrap execution remains unimplemented and veto-state reads remain address-level only
+- frontend: trade and approvals now display backend-computed guard checks, allocation targets, gas metadata, proposal details, and transaction sequencing with less local inference
+- data quality: proposal review now depends on persisted prices, live quotes, and live oracle state rather than only UI-derived assumptions, while liquidity depth remains inferred from live quote success instead of a strict 2x depth proof
+
+Assumptions / unresolved verification items:
+
+- proposal detail retrieval is persisted only for proposals created after this change; older proposals remain detail-incomplete
+- Mantle Sepolia `USDC` now has a config path, but it still requires a real deployed token address in `SEPOLIA_USDC_ADDRESS`; native `MNT` deposit flow remains blocked by missing wrap and unwrap execution support
+- Merchant Moe is still not part of the executable proposal path; AGNI is the only encoded execution route in the current implementation
+- approval freshness is still advisory because allowance age is not yet read back from chain state
+
+Commands not run:
+
+- backend and frontend tests, builds, lint, and formatting were intentionally not run in this turn
+
 ### 2026-06-01
 
 Type:

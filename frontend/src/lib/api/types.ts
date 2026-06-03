@@ -29,6 +29,7 @@ export interface ServiceStatusResponse extends HealthResponse {
 }
 
 export interface ChainStatusResponse extends StatusEnvelope {
+  target_chain: string;
   chain_id: number | null;
   latest_block: number | null;
   rpc_url: string;
@@ -191,6 +192,15 @@ export interface RecommendationResponse {
   freshness_status: string;
   constraints_applied: string[];
   notes: string[];
+  ai_debug: {
+    prompt: string;
+    raw_response: string | null;
+    parsed_response: Record<string, unknown>;
+    mode: string;
+    used_fallback: boolean;
+    ai_overrode_deterministic: boolean;
+    fallback_reason: string | null;
+  };
   metadata: Record<string, unknown>;
 }
 
@@ -257,10 +267,12 @@ export interface SettingsResponse {
 }
 
 export interface CreateProposalPayload {
-  asset_symbol: string
-  action: "BUY" | "SELL"
-  amount: number
-  route_id?: string
+  wallet_address?: string
+  deposit_asset_symbol: string
+  deposit_amount: number
+  risk_profile: string
+  allocation_mode: string
+  manual_target_weights?: Record<string, number>
 }
 
 export interface ExecutionPayload {
@@ -296,6 +308,11 @@ export interface TradeProposalResponse extends StatusEnvelope {
   proposal: TradeProposal
 }
 
+export interface ProposalMutationResponse extends StatusEnvelope {
+  proposal_id: string
+  message: string
+}
+
 export interface ProposalsResponse extends StatusEnvelope {
   proposals: TradeProposal[]
 }
@@ -315,5 +332,64 @@ export interface ProposalExecuteResponse extends StatusEnvelope {
   deadline: number
   nonce: number
   chain_id: number
+  hash?: string
 }
 
+export interface AllocationTargetItem {
+  asset_symbol: string
+  percentage: number
+  amount: number
+  value_usd: number
+  source: string
+}
+
+export interface RiskValidationCheck {
+  code: string
+  label: string
+  passed: boolean
+  blocking: boolean
+  message: string
+  observed_value?: string | null
+  threshold_value?: string | null
+  data_sources_used: string[]
+}
+
+export interface TransactionStep {
+  step_index: number
+  step_type: string
+  description: string
+  asset_symbol?: string | null
+  amount?: string | null
+  proposal_id?: string | null
+  requires_user_action: boolean
+}
+
+export interface LinkedProposalSummary {
+  proposal_id: string
+  asset_symbol: string
+  action: string
+  token_in_symbol: string
+  token_out_symbol: string
+  amount: number
+  status_code: string
+}
+
+export interface InvestmentPlanResponse extends StatusEnvelope {
+  generated_at: string
+  plan_id: string
+  deposit_asset_symbol: string
+  deposit_amount: number
+  risk_profile: string
+  allocation_mode: string
+  ai_target_allocations: AllocationTargetItem[]
+  selected_target_allocations: AllocationTargetItem[]
+  warning_messages: string[]
+  approval_enabled: boolean
+  approval_blockers: string[]
+  guard_checks: RiskValidationCheck[]
+  estimated_gas_native?: string | null
+  transaction_steps: TransactionStep[]
+  linked_proposals: LinkedProposalSummary[]
+  risk_assessment: RiskAssessmentResponse
+  metadata: Record<string, unknown>
+}

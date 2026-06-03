@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     sepolia_mock_token_b_price_usd: str = "1"
     sepolia_meth_address: str | None = None
     sepolia_usdy_address: str | None = None
+    sepolia_usdc_address: str | None = None
+    sepolia_wmnt_address: str | None = None
+    native_mnt_enabled: bool = False
 
     pyth_hermes_url: str = "https://hermes.pyth.network"
     pyth_hermes_latest_price_path: str = "/v2/updates/price/latest"
@@ -287,6 +290,34 @@ class Settings(BaseSettings):
                 "pyth_feed_id": self.usdy_pyth_feed_id,
                 "ratio_feed_id": None,
                 "ondo_oracle_address": self.ondo_usdy_oracle_address,
+                "decimals": 18,
+            },
+            "SEPOLIA_USDC": {
+                "asset_key": "SEPOLIA_USDC",
+                "symbol": "USDC",
+                "chain_id": self.mantle_sepolia_chain_id,
+                "address": self.sepolia_usdc_address,
+                "price_strategy": "sepolia_stable_fallback",
+                "primary_reference_source": "sepolia_stable_fallback",
+                "dex_quote_required": True,
+                "verified": bool(self.sepolia_usdc_address),
+                "pyth_feed_id": None,
+                "ratio_feed_id": None,
+                "ondo_oracle_address": None,
+                "decimals": 6,
+            },
+            "SEPOLIA_WMNT": {
+                "asset_key": "SEPOLIA_WMNT",
+                "symbol": "WMNT",
+                "chain_id": self.mantle_sepolia_chain_id,
+                "address": self.sepolia_wmnt_address,
+                "price_strategy": "route_helper",
+                "primary_reference_source": "dex_quote_only",
+                "dex_quote_required": True,
+                "verified": bool(self.sepolia_wmnt_address),
+                "pyth_feed_id": None,
+                "ratio_feed_id": None,
+                "ondo_oracle_address": None,
                 "decimals": 18,
             },
             "MOCK_TOKEN_A": {

@@ -10,6 +10,7 @@ class ChainStatusResponse(BaseModel):
     status_code: str
     status_label: str
     status_reason: str
+    target_chain: str
     chain_id: int | None = None
     latest_block: int | None = None
     rpc_url: str

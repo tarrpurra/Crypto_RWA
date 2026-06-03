@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Cpu, ShieldCheck, GitMerge, ArrowRight, AlertTriangle, CheckCircle2, ChevronLeft, Database, Circle, ChevronRight, X } from "lucide-react"
+import { Cpu, ShieldCheck, GitMerge, ArrowRight, AlertTriangle, CheckCircle2, ChevronLeft, Database, Circle, ChevronRight } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { useDecisions } from "@/hooks/useDecisions"
 import { useCurrentRisk } from "@/hooks/useRisk"
@@ -58,6 +58,21 @@ export function AISidePanel() {
   }
 
   const constraints = decisions?.constraints_applied ?? []
+  const aiDebug = decisions?.ai_debug
+
+  function prettyDebugValue(value: unknown): string {
+    if (value == null) {
+      return "No data."
+    }
+    if (typeof value === "string") {
+      return value
+    }
+    try {
+      return JSON.stringify(value, null, 2)
+    } catch {
+      return String(value)
+    }
+  }
 
   const decisionItems: Array<{
     key: string
@@ -241,14 +256,47 @@ export function AISidePanel() {
             })}
           </div>
 
-          {/* Raw reasoning */}
-          {decisions?.reasoning_summary && (
+          {/* AI debug */}
+          {aiDebug && (
             <div className="mt-2 rounded border border-border/60 bg-surface-2 p-2">
               <div className="flex items-center gap-1.5">
                 <Cpu className="h-3 w-3 text-primary" />
-                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Raw Reasoning</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">AI Debug</span>
               </div>
-              <p className="mt-1 text-xs leading-4 text-foreground">{decisions.reasoning_summary}</p>
+              <div className="mt-2 space-y-2">
+                <div>
+                  <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">Mode</p>
+                  <p className="mt-1 text-xs text-foreground">
+                    {aiDebug.mode}
+                    {aiDebug.used_fallback ? " (fallback)" : ""}
+                    {aiDebug.ai_overrode_deterministic ? " | AI override active" : ""}
+                  </p>
+                </div>
+                {aiDebug.fallback_reason && (
+                  <div>
+                    <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">Fallback Reason</p>
+                    <p className="mt-1 text-xs leading-4 text-foreground">{aiDebug.fallback_reason}</p>
+                  </div>
+                )}
+                <div>
+                  <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">Prompt</p>
+                  <pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-words border border-border/60 bg-card p-2 font-mono text-[0.68rem] leading-4 text-foreground">
+                    {prettyDebugValue(aiDebug.prompt)}
+                  </pre>
+                </div>
+                <div>
+                  <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">Raw Output</p>
+                  <pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-words border border-border/60 bg-card p-2 font-mono text-[0.68rem] leading-4 text-foreground">
+                    {prettyDebugValue(aiDebug.raw_response)}
+                  </pre>
+                </div>
+                <div>
+                  <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">Parsed Output</p>
+                  <pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-words border border-border/60 bg-card p-2 font-mono text-[0.68rem] leading-4 text-foreground">
+                    {prettyDebugValue(aiDebug.parsed_response)}
+                  </pre>
+                </div>
+              </div>
             </div>
           )}
 

@@ -21,11 +21,21 @@ from services.agent.app.schemas.portfolio import (
     PortfolioSnapshotResponse,
 )
 from services.agent.app.schemas.proposals import (
+    AllocationTargetItem,
     ExecutionPayloadSchema,
+    InvestmentPlanRequest,
+    InvestmentPlanResponse,
+    LinkedProposalSummary,
+    ProposalExecuteResponse,
+    ProposalListItem,
+    ProposalListResponse,
+    ProposalMutationResponse,
+    RiskValidationCheck,
     TradeExecution,
     TradeExecutionResponse,
     TradeProposal,
     TradeProposalResponse,
+    TransactionStep,
 )
 from services.agent.app.schemas.quotes import LatestQuotesResponse, NormalizedQuoteSnapshot, RawQuoteSnapshot, RouteDescriptor, RoutesResponse
 from services.agent.app.schemas.recommendations import RecommendationResponse
@@ -34,6 +44,7 @@ from services.agent.app.schemas.risk import RiskAssessmentHistoryResponse, RiskA
 __all__ = [
     "AllocationDecision",
     "AllocationDecisionResponse",
+    "AllocationTargetItem",
     "AssetBalance",
     "AssetIngestionStatus",
     "AssetMetadata",
@@ -46,8 +57,11 @@ __all__ = [
     "FreshnessThreshold",
     "HealthResponse",
     "HermesFetchResponse",
+    "InvestmentPlanRequest",
+    "InvestmentPlanResponse",
     "LatestPricesResponse",
     "LatestQuotesResponse",
+    "LinkedProposalSummary",
     "MarketIngestionStatusResponse",
     "NormalizedPriceSnapshot",
     "NormalizedQuoteSnapshot",
@@ -56,6 +70,10 @@ __all__ = [
     "PortfolioSnapshot",
     "PortfolioSnapshotHistoryResponse",
     "PortfolioSnapshotResponse",
+    "ProposalExecuteResponse",
+    "ProposalListItem",
+    "ProposalListResponse",
+    "ProposalMutationResponse",
     "PythPricePoint",
     "RawPriceSnapshot",
     "RawQuoteSnapshot",
@@ -64,6 +82,7 @@ __all__ = [
     "RiskAssessmentHistoryResponse",
     "RiskAssessmentResponse",
     "RiskBucket",
+    "RiskValidationCheck",
     "RouteDescriptor",
     "RoutesResponse",
     "ServiceStatusResponse",
@@ -71,5 +90,6 @@ __all__ = [
     "TradeExecutionResponse",
     "TradeProposal",
     "TradeProposalResponse",
+    "TransactionStep",
     "UpdateProfileRequest",
 ]

@@ -67,6 +67,25 @@ class PriceService:
                 )
                 continue
 
+            if asset.price_strategy == "sepolia_stable_fallback":
+                configured = bool(asset.address and self.settings.simulation_fallback_enabled)
+                statuses.append(
+                    AssetIngestionStatus(
+                        asset_key=asset.asset_key,
+                        asset_symbol=asset.symbol,
+                        configured=configured,
+                        status="simulation_only" if configured else "unverified",
+                        status_code=DataStatusCode.DATA_PARTIAL.value if configured else DataStatusCode.DATA_MISSING.value,
+                        status_reason=(
+                            "Sepolia stable asset uses simulation fallback pricing for end-to-end allocator and swap testing."
+                            if configured
+                            else "Sepolia stable asset address or simulation fallback is not configured."
+                        ),
+                        required_sources=["sepolia_stable_fallback", "dex_quote", "liquidity_check"],
+                    )
+                )
+                continue
+
             if asset.symbol == "USDY":
                 if self.settings.target_chain == TargetChain.MANTLE_SEPOLIA:
                     configured = bool(asset.address and self.settings.simulation_fallback_enabled)
@@ -208,6 +227,10 @@ class PriceService:
     def _build_asset_price(self, asset: AssetMetadata, hermes_response, parsed_by_feed_id: dict[str, object]) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
         if asset.price_strategy == "sepolia_mock_fixed":
             return self._build_sepolia_mock_price(asset)
+        if asset.price_strategy == "sepolia_stable_fallback":
+            if self.settings.simulation_fallback_enabled and asset.address:
+                return self._build_sepolia_stable_price(asset, "Sepolia stable fallback pricing enabled for testnet end-to-end flow.")
+            return self._missing_snapshot(asset, "Sepolia stable fallback pricing is disabled or asset address is not configured.", status="unverified")
 
         if asset.symbol == "USDY":
             return self._build_usdy_price(asset)

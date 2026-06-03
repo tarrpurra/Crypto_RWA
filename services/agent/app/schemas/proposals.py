@@ -79,7 +79,19 @@ class ProposalListItem(BaseModel):
 
 class ProposalListResponse(BaseModel):
     status: str
+    status_code: str
+    status_label: str
+    status_reason: str
     proposals: list[ProposalListItem]
+
+
+class ProposalMutationResponse(BaseModel):
+    status: str
+    status_code: str
+    status_label: str
+    status_reason: str
+    proposal_id: str
+    message: str
 
 
 class ProposalExecuteResponse(BaseModel):
@@ -99,3 +111,75 @@ class ProposalExecuteResponse(BaseModel):
     deadline: int
     nonce: int
     chain_id: int
+
+
+class InvestmentPlanRequest(BaseModel):
+    wallet_address: str | None = None
+    deposit_asset_symbol: str
+    deposit_amount: float
+    risk_profile: str
+    allocation_mode: str
+    manual_target_weights: dict[str, float] = Field(default_factory=dict)
+
+
+class AllocationTargetItem(BaseModel):
+    asset_symbol: str
+    percentage: float
+    amount: float
+    value_usd: float
+    source: str
+
+
+class RiskValidationCheck(BaseModel):
+    code: str
+    label: str
+    passed: bool
+    blocking: bool
+    message: str
+    observed_value: str | None = None
+    threshold_value: str | None = None
+    data_sources_used: list[str] = Field(default_factory=list)
+
+
+class TransactionStep(BaseModel):
+    step_index: int
+    step_type: str
+    description: str
+    asset_symbol: str | None = None
+    amount: str | None = None
+    proposal_id: str | None = None
+    requires_user_action: bool = True
+
+
+class LinkedProposalSummary(BaseModel):
+    proposal_id: str
+    asset_symbol: str
+    action: str
+    token_in_symbol: str
+    token_out_symbol: str
+    amount: float
+    status_code: str
+
+
+class InvestmentPlanResponse(BaseModel):
+    status: str
+    status_code: str
+    status_label: str
+    status_reason: str
+    generated_at: datetime
+    plan_id: str
+    deposit_asset_symbol: str
+    deposit_amount: float
+    risk_profile: str
+    allocation_mode: str
+    ai_target_allocations: list[AllocationTargetItem] = Field(default_factory=list)
+    selected_target_allocations: list[AllocationTargetItem] = Field(default_factory=list)
+    warning_messages: list[str] = Field(default_factory=list)
+    approval_enabled: bool
+    approval_blockers: list[str] = Field(default_factory=list)
+    guard_checks: list[RiskValidationCheck] = Field(default_factory=list)
+    estimated_gas_native: str | None = None
+    transaction_steps: list[TransactionStep] = Field(default_factory=list)
+    linked_proposals: list[LinkedProposalSummary] = Field(default_factory=list)
+    risk_assessment: dict = Field(default_factory=dict)
+    metadata: dict = Field(default_factory=dict)

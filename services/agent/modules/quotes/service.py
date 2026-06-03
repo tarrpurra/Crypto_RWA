@@ -92,28 +92,66 @@ class QuoteService:
         quotes = self.latest_quotes_for_pair(token_in, token_out)
         return quotes[0] if quotes else None
 
+    def best_quote_attempt_for_pair(self, token_in: str, token_out: str):
+        routes = [
+            route
+            for route in self.discover_routes()
+            if route.token_in.lower() == token_in.lower() and route.token_out.lower() == token_out.lower()
+        ]
+        attempts = []
+        amount_in = self._default_amount_in(token_in)
+        for route in routes:
+            if route.protocol == "AGNI":
+                attempt = self.agni_quotes.quote_route(route, amount_in)
+            elif route.protocol == "MERCHANT_MOE":
+                attempt = self.merchant_moe_quotes.quote_route(route, amount_in)
+            else:
+                attempt = self._unsupported_attempt(route, amount_in)
+            attempts.append(attempt)
+        if not attempts:
+            return None
+        ranked = rank_quotes([attempt.normalized_snapshot for attempt in attempts])
+        if not ranked:
+            return None
+        best_snapshot = ranked[0]
+        return next(
+            (
+                attempt
+                for attempt in attempts
+                if attempt.normalized_snapshot.route_id == best_snapshot.route_id
+                and attempt.normalized_snapshot.token_in_symbol.lower() == token_in.lower()
+                and attempt.normalized_snapshot.token_out_symbol.lower() == token_out.lower()
+            ),
+            None,
+        )
+
     def _quote_pairs(self) -> list[QuotePair]:
         assets = self._assets_for_target_chain()
         asset_by_key = {asset.asset_key: asset for asset in assets}
-        asset_by_symbol = {asset.symbol: asset for asset in assets}
         pairs: list[QuotePair] = []
-        if self.settings.target_chain == TargetChain.MANTLE_MAINNET and {"USDY", "mETH"}.issubset(asset_by_symbol):
-            pairs.append(QuotePair(token_in=asset_by_symbol["USDY"], token_out=asset_by_symbol["mETH"], amount_in=Decimal("1000")))
-            pairs.append(QuotePair(token_in=asset_by_symbol["mETH"], token_out=asset_by_symbol["USDY"], amount_in=Decimal("1")))
-        if self.settings.target_chain == TargetChain.MANTLE_SEPOLIA:
-            sepolia_usdy = asset_by_key.get("SEPOLIA_USDY")
-            sepolia_meth = asset_by_key.get("SEPOLIA_METH")
-            if sepolia_usdy and sepolia_meth:
-                pairs.append(QuotePair(token_in=sepolia_usdy, token_out=sepolia_meth, amount_in=Decimal("1000")))
-                pairs.append(QuotePair(token_in=sepolia_meth, token_out=sepolia_usdy, amount_in=Decimal("1")))
         if (
             self.settings.target_chain == TargetChain.MANTLE_SEPOLIA
-            and not pairs
             and self.settings.sepolia_mock_routes_enabled
             and {"MOCK_TOKEN_A", "MOCK_TOKEN_B"}.issubset(asset_by_key)
         ):
             pairs.append(QuotePair(token_in=asset_by_key["MOCK_TOKEN_A"], token_out=asset_by_key["MOCK_TOKEN_B"], amount_in=Decimal("1")))
             pairs.append(QuotePair(token_in=asset_by_key["MOCK_TOKEN_B"], token_out=asset_by_key["MOCK_TOKEN_A"], amount_in=Decimal("1")))
+        seen: set[tuple[str, str]] = set()
+        for token_in in assets:
+            for token_out in assets:
+                if token_in.asset_key == token_out.asset_key:
+                    continue
+                pair_key = (token_in.asset_key, token_out.asset_key)
+                if pair_key in seen:
+                    continue
+                seen.add(pair_key)
+                pairs.append(
+                    QuotePair(
+                        token_in=token_in,
+                        token_out=token_out,
+                        amount_in=self._default_amount_in(token_in.symbol),
+                    )
+                )
         return pairs
 
     def _unsupported_attempt(self, route: RouteDescriptor, amount_in: Decimal):
@@ -163,8 +201,10 @@ class QuoteService:
 
     @staticmethod
     def _default_amount_in(symbol: str) -> Decimal:
-        if symbol.upper() == "USDY":
+        if symbol.upper() in {"USDY", "USDC"}:
             return Decimal("1000")
+        if symbol.upper() in {"WMNT", "MNT"}:
+            return Decimal("10")
         return Decimal("1")
 
 

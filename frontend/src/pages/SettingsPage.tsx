@@ -12,6 +12,13 @@ export default function SettingsPage() {
   const status = statusQuery.data;
   const chain = chainQuery.data;
 
+  const networkLabel =
+    status?.target_chain === "mantle_sepolia" || chain?.target_chain === "mantle_sepolia"
+      ? "Mantle Sepolia Testnet"
+      : status?.target_chain === "mantle_mainnet" || chain?.target_chain === "mantle_mainnet"
+        ? "Mantle Mainnet"
+        : status?.runtime_mode ?? appEnv;
+
   return (
     <PageScaffold
       eyebrow="Operations"
@@ -27,7 +34,7 @@ export default function SettingsPage() {
         />
         <MetricPanel
           label="Environment"
-          value={status?.runtime_mode ?? appEnv}
+          value={networkLabel}
           detail={status?.status_reason ?? "Live, local, and simulation-only states are shown explicitly throughout the app."}
           tone={toneFromStatus(status?.status)}
         />
@@ -42,7 +49,11 @@ export default function SettingsPage() {
         <MetricPanel
           label="Chain"
           value={chain?.chain_id ? String(chain.chain_id) : chain?.status_label ?? "Loading"}
-          detail={chain?.rpc_error ?? chain?.status_reason ?? "Reading /chain/status."}
+          detail={
+            chain?.rpc_error
+            ?? chain?.status_reason
+            ?? "Reading /chain/status."
+          }
           tone={toneFromStatus(chain?.status)}
         />
         <MetricPanel
