@@ -4,7 +4,6 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import { TopBar } from "@/components/layout/TopBar";
-import { SidebarProvider } from "@/components/ui/sidebar";
 import { createTestQueryClient } from "@/test/queryClient";
 
 vi.mock("@/components/auth/LoginButton", () => ({
@@ -16,9 +15,7 @@ function renderTopBar(pathname = "/risk") {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[pathname]}>
-        <SidebarProvider>
-          <TopBar />
-        </SidebarProvider>
+        <TopBar />
       </MemoryRouter>
     </QueryClientProvider>,
   );

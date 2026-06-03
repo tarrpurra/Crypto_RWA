@@ -14,13 +14,33 @@ export function useSwapQuote(tokenIn: string, tokenOut: string) {
   })
 }
 
+export function useRebalancePlan() {
+  return useQuery({
+    queryKey: ["allocation", "recommendation"],
+    queryFn: () => marketApi.getAllocationRecommendation(),
+    refetchInterval: 30_000,
+  })
+}
+
 export function useCreateProposal() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (payload: CreateProposalPayload) => marketApi.createProposal(payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["proposals"] })
+      void queryClient.invalidateQueries({ queryKey: ["allocation"] })
+      void queryClient.invalidateQueries({ queryKey: ["risk"] })
     },
+  })
+}
+
+export function useProposalDetail(id: string | null) {
+  return useQuery({
+    queryKey: ["proposals", "detail", id],
+    queryFn: () => marketApi.getProposalDetail(id as string),
+    enabled: Boolean(id),
+    retry: false,
+    refetchInterval: (query) => (query.state.error ? false : 30_000),
   })
 }
 
@@ -28,8 +48,9 @@ export function useApproveProposal() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => marketApi.approveProposal(id),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       void queryClient.invalidateQueries({ queryKey: ["proposals"] })
+      void queryClient.invalidateQueries({ queryKey: ["proposals", "detail", id] })
     },
   })
 }
@@ -38,8 +59,9 @@ export function useRejectProposal() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => marketApi.rejectProposal(id),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       void queryClient.invalidateQueries({ queryKey: ["proposals"] })
+      void queryClient.invalidateQueries({ queryKey: ["proposals", "detail", id] })
     },
   })
 }
@@ -61,6 +83,10 @@ export function useExecuteProposal() {
     onSuccess: (data) => {
       toast.success(`Transaction sent: ${data.hash.slice(0, 16)}...`)
       void queryClient.invalidateQueries({ queryKey: ["proposals"] })
+      void queryClient.invalidateQueries({ queryKey: ["proposals", "detail", data.proposal_id] })
+      void queryClient.invalidateQueries({ queryKey: ["portfolio"] })
+      void queryClient.invalidateQueries({ queryKey: ["risk"] })
+      void queryClient.invalidateQueries({ queryKey: ["allocation"] })
     },
     onError: (err) => {
       toast.error(err instanceof Error ? err.message : "Failed to execute proposal")

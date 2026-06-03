@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Cpu, ShieldCheck, GitMerge, ArrowRight, AlertTriangle, CheckCircle2, ChevronLeft, Database, Circle, ChevronRight, X } from "lucide-react"
+import { Cpu, ShieldCheck, GitMerge, ArrowRight, AlertTriangle, CheckCircle2, ChevronLeft, Database, Circle, ChevronRight } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { useDecisions } from "@/hooks/useDecisions"
 import { useCurrentRisk } from "@/hooks/useRisk"
@@ -58,6 +58,21 @@ export function AISidePanel() {
   }
 
   const constraints = decisions?.constraints_applied ?? []
+  const aiDebug = decisions?.ai_debug
+
+  function prettyDebugValue(value: unknown): string {
+    if (value == null) {
+      return "No data."
+    }
+    if (typeof value === "string") {
+      return value
+    }
+    try {
+      return JSON.stringify(value, null, 2)
+    } catch {
+      return String(value)
+    }
+  }
 
   const decisionItems: Array<{
     key: string
@@ -122,7 +137,7 @@ export function AISidePanel() {
       >
         <div className="relative">
           <Cpu className="h-3.5 w-3.5 text-primary" />
-          <span className={cn("absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full", aiDecisionMakerOn ? "bg-success" : "bg-muted-foreground")} />
+          <span className={cn("absolute -right-0.5 -top-0.5 h-1.5 w-1.5", aiDecisionMakerOn ? "bg-success" : "bg-muted-foreground")} />
         </div>
         <span className="text-xs font-semibold uppercase tracking-widest text-muted-foreground" style={{ writingMode: "vertical-rl" }}>
           AI PANEL
@@ -134,7 +149,7 @@ export function AISidePanel() {
 
   return (
     <div
-      className="fixed right-0 top-11 z-20 flex w-80 flex-col border-l border-border bg-card panel-inverted"
+      className="fixed right-0 top-11 z-20 flex w-80 flex-col border-l-2 border-border bg-card panel-inverted"
       style={{ height: "calc(100vh - 2.75rem)" }}
     >
       {/* Header */}
@@ -142,7 +157,7 @@ export function AISidePanel() {
         <div className="flex items-center gap-2">
           <div className="relative">
             <Cpu className="h-4 w-4 text-primary" />
-            <span className={cn("absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full", aiDecisionMakerOn ? "bg-success" : "bg-muted-foreground")} />
+            <span className={cn("absolute -right-0.5 -top-0.5 h-1.5 w-1.5", aiDecisionMakerOn ? "bg-success" : "bg-muted-foreground")} />
           </div>
           <span className="text-xs font-semibold text-foreground">AI Panel</span>
         </div>
@@ -154,7 +169,7 @@ export function AISidePanel() {
           />
           <button
             onClick={() => setCollapsed(true)}
-            className="flex h-6 w-6 items-center justify-center rounded border border-border transition-colors hover:bg-surface-2"
+            className="flex h-6 w-6 items-center justify-center border-2 border-border transition-colors hover:bg-surface-2"
             title="Collapse"
           >
             <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
@@ -175,7 +190,7 @@ export function AISidePanel() {
             </div>
           ) : (
             <>
-              <div className={cn("flex items-center gap-2 rounded-md border px-3 py-2", action === "PAUSE" ? "border-destructive/30 bg-destructive/10" : "border-primary/20 bg-primary/8")}>
+              <div className={cn("flex items-center gap-2 border-2 px-3 py-2", action === "PAUSE" ? "border-destructive/30 bg-destructive/10" : "border-primary/20 bg-primary/8")}>
                 <Icon className={cn("h-4 w-4 shrink-0", config.color)} />
                 <div className="min-w-0">
                   <p className={cn("text-xs font-semibold", config.color)}>{config.label}</p>
@@ -187,7 +202,7 @@ export function AISidePanel() {
 
               <div className="mt-2 space-y-1">
                 {decisionItems.map((item) => (
-                  <div key={item.key} className="flex items-center justify-between rounded-md border border-border/60 bg-surface-2 px-2.5 py-1.5">
+                  <div key={item.key} className="flex items-center justify-between border-2 border-border/60 bg-surface-2 px-2.5 py-1.5">
                     <div className="flex items-center gap-1.5 min-w-0">
                       <item.icon className="h-3 w-3 shrink-0 text-primary" />
                       <span className="text-[0.7rem] text-muted-foreground">{item.label}</span>
@@ -241,14 +256,47 @@ export function AISidePanel() {
             })}
           </div>
 
-          {/* Raw reasoning */}
-          {decisions?.reasoning_summary && (
+          {/* AI debug */}
+          {aiDebug && (
             <div className="mt-2 rounded border border-border/60 bg-surface-2 p-2">
               <div className="flex items-center gap-1.5">
                 <Cpu className="h-3 w-3 text-primary" />
-                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Raw Reasoning</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">AI Debug</span>
               </div>
-              <p className="mt-1 text-xs leading-4 text-foreground">{decisions.reasoning_summary}</p>
+              <div className="mt-2 space-y-2">
+                <div>
+                  <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">Mode</p>
+                  <p className="mt-1 text-xs text-foreground">
+                    {aiDebug.mode}
+                    {aiDebug.used_fallback ? " (fallback)" : ""}
+                    {aiDebug.ai_overrode_deterministic ? " | AI override active" : ""}
+                  </p>
+                </div>
+                {aiDebug.fallback_reason && (
+                  <div>
+                    <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">Fallback Reason</p>
+                    <p className="mt-1 text-xs leading-4 text-foreground">{aiDebug.fallback_reason}</p>
+                  </div>
+                )}
+                <div>
+                  <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">Prompt</p>
+                  <pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-words border border-border/60 bg-card p-2 font-mono text-[0.68rem] leading-4 text-foreground">
+                    {prettyDebugValue(aiDebug.prompt)}
+                  </pre>
+                </div>
+                <div>
+                  <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">Raw Output</p>
+                  <pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-words border border-border/60 bg-card p-2 font-mono text-[0.68rem] leading-4 text-foreground">
+                    {prettyDebugValue(aiDebug.raw_response)}
+                  </pre>
+                </div>
+                <div>
+                  <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">Parsed Output</p>
+                  <pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-words border border-border/60 bg-card p-2 font-mono text-[0.68rem] leading-4 text-foreground">
+                    {prettyDebugValue(aiDebug.parsed_response)}
+                  </pre>
+                </div>
+              </div>
             </div>
           )}
 

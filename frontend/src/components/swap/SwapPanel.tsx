@@ -17,7 +17,7 @@ export function SwapPanel() {
         onClick={() => setOpen(!open)}
         title={open ? "Close swap panel" : "Open swap panel"}
         className={cn(
-          "fixed left-0 top-1/2 z-40 flex h-24 w-6 -translate-y-1/2 items-center justify-center rounded-r-md border border-l-0 border-border bg-card text-muted-foreground shadow-sm transition-all hover:border-primary hover:text-primary hover:shadow-md",
+          "fixed left-0 top-1/2 z-40 flex h-24 w-6 -translate-y-1/2 items-center justify-center border-2 border-l-0 border-border bg-card text-muted-foreground transition-all hover:border-primary hover:text-primary",
           open && "opacity-0 pointer-events-none",
         )}
       >
@@ -28,7 +28,7 @@ export function SwapPanel() {
       {/* Panel backdrop — click to close */}
       {open && (
         <div
-          className="fixed inset-0 z-30 bg-black/20 backdrop-blur-[2px]"
+          className="fixed inset-0 z-30 bg-black/40"
           onClick={() => setOpen(false)}
         />
       )}

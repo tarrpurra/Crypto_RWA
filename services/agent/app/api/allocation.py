@@ -8,6 +8,7 @@ from services.agent.modules.market_data.balances import internal_snapshot_from_r
 from services.agent.risk.scoring.score_engine import RiskScoreEngine
 from services.agent.strategies.allocation.rebalance import compute_rebalance
 from services.agent.strategies.allocation import profiles
+from services.agent.strategies.allocation.profiles import normalize_profile_name
 from services.agent.repositories.db.models import AllocationDecisionRecord
 from services.agent.repositories.db.session import create_session, init_db
 from services.agent.modules.oracle.freshness import utc_now
@@ -41,7 +42,11 @@ def _save_allocation_decision(decision: AllocationDecision) -> None:
 
 
 def _active_profile_name() -> str:
-    return profiles.ACTIVE_PROFILE_NAME or get_settings().allocation_profile_name
+    configured_name = profiles.ACTIVE_PROFILE_NAME or get_settings().allocation_profile_name
+    try:
+        return normalize_profile_name(configured_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/recommendation", response_model=AllocationDecisionResponse)
@@ -71,8 +76,10 @@ async def get_allocation_recommendation(wallet_address: str | None = None) -> Al
 
 @router.post("/profile", response_model=dict[str, str])
 async def update_active_profile(request: UpdateProfileRequest) -> dict[str, str]:
-    if request.profile_name not in profiles.ALLOCATION_PROFILES:
+    try:
+        canonical_name = normalize_profile_name(request.profile_name)
+    except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid profile name: {request.profile_name}. Approved: {list(profiles.ALLOCATION_PROFILES.keys())}")
-    
-    profiles.ACTIVE_PROFILE_NAME = request.profile_name
-    return {"status": "ok", "message": f"Active allocation profile set to {request.profile_name}"}
+
+    profiles.ACTIVE_PROFILE_NAME = canonical_name
+    return {"status": "ok", "message": f"Active allocation profile set to {canonical_name}"}

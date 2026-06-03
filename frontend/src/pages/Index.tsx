@@ -2,6 +2,7 @@ import { MetricPanel, PageScaffold, toneFromStatus } from "@/components/rwa/Page
 import { AISidePanel } from "@/components/dashboard/AISidePanel";
 import { PortfolioAllocationChart } from "@/components/dashboard/PortfolioAllocationChart";
 import { RiskBucketChart } from "@/components/dashboard/RiskBucketChart";
+import { WalletScopeControl } from "@/components/rwa/WalletScopeControl";
 import { useMarketIngestionStatus } from "@/hooks/useMarket";
 import { useCurrentPortfolio, usePortfolioSnapshots } from "@/hooks/usePortfolio";
 import { useCurrentRisk } from "@/hooks/useRisk";
@@ -27,6 +28,7 @@ const Index = () => {
         title="Dashboard"
         description="AI-powered yield optimization with real-time risk management for RWA portfolios."
       >
+        <WalletScopeControl />
         {/* Top Metrics Row */}
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <MetricPanel
@@ -45,7 +47,7 @@ const Index = () => {
             label="Target Drift"
             value={`${portfolio?.positions?.filter((p) => p.weight_drift !== null).length ?? 0} Assets`}
             detail="Positions with target weights expose drift and valuation status as backend data becomes available."
-            tone={portfolio?.positions?.length ? toneFromStatus(portfolio?.status) : "degraded"}
+            tone={portfolio?.positions?.length ? toneFromStatus(portfolio?.status) : "neutral"}
           />
           <MetricPanel
             label="Risk"
@@ -96,13 +98,13 @@ const Index = () => {
                     <td className="py-2 pr-3 font-mono text-muted-foreground">{position.price_usd ?? "-"}</td>
                     <td className="py-2 pr-3 font-mono text-muted-foreground">{position.value_usd ?? "-"}</td>
                     <td className="py-2 pr-3 font-mono text-muted-foreground">{position.weight ?? "-"}</td>
-                    <td className="py-2 pr-3 text-muted-foreground">{position.status_code}</td>
+                    <td className="py-2 pr-3 text-muted-foreground">{position.status_code === "DATA_FRESH" ? "Active" : position.status_code}</td>
                   </tr>
                 ))}
                 {!portfolio?.positions?.length && (
                   <tr>
                     <td className="py-4 text-muted-foreground" colSpan={6}>
-                      {portfolio?.status_reason ?? "No portfolio positions loaded yet."}
+                      No positions available yet.
                     </td>
                   </tr>
                 )}

@@ -42,10 +42,10 @@ export class RenderBoundary extends React.Component<
     }
 
     return (
-      <section className="rounded-[1.25rem] border border-danger/30 bg-card/90 p-6 shadow-[0_24px_80px_-60px_rgba(0,0,0,0.95)]">
+      <section className="border-2 border-danger/30 bg-card p-6 shadow-[4px_4px_0px_hsl(var(--danger)/0.3)]">
         <div className="flex max-w-2xl flex-col gap-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-danger/30 bg-danger/10 text-danger">
+            <div className="flex h-10 w-10 items-center justify-center border-2 border-danger/30 bg-danger/10 text-danger">
               <AlertTriangle className="h-5 w-5" />
             </div>
             <div>

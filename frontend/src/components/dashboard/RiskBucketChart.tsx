@@ -4,13 +4,13 @@ import type { RiskAssessmentResponse } from "@/lib/api/types"
 import { cn } from "@/lib/utils"
 
 const BUCKET_COLORS: Record<string, string> = {
-  concentration: "#C8A96E",
-  liquidity: "#5C6B7A",
-  volatility: "#4A7C59",
-  counterparty: "#A8A89E",
-  market: "#8B3A3A",
-  operational: "#6E8BC8",
-  credit: "#C86EA9",
+  concentration: "hsl(var(--primary))",
+  liquidity: "hsl(var(--muted-foreground))",
+  volatility: "hsl(var(--success))",
+  counterparty: "hsl(var(--warning))",
+  market: "hsl(var(--destructive))",
+  operational: "hsl(var(--info))",
+  credit: "hsl(var(--purple))",
 }
 
 interface RiskBucketChartProps {
@@ -27,7 +27,7 @@ export function RiskBucketChart({ risk, isLoading }: RiskBucketChartProps) {
     weight: b.weight,
     status: b.status,
     reason: b.reason,
-    fill: BUCKET_COLORS[b.bucket] ?? "#7A5C6B",
+    fill: BUCKET_COLORS[b.bucket] ?? "hsl(var(--muted-foreground))",
   }))
 
   const config = {
@@ -50,7 +50,7 @@ export function RiskBucketChart({ risk, isLoading }: RiskBucketChartProps) {
 
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
-          <div className="h-5 w-5 animate-pulse rounded-full border border-primary/30 bg-primary/10" />
+          <div className="h-5 w-5 animate-pulse border border-primary/30 bg-primary/10" />
           <span className="ml-2 text-xs text-muted-foreground">Loading risk assessment...</span>
         </div>
       ) : chartData.length === 0 ? (
@@ -70,7 +70,7 @@ export function RiskBucketChart({ risk, isLoading }: RiskBucketChartProps) {
               <YAxis
                 type="category"
                 dataKey="name"
-                tick={{ fill: "rgba(200, 200, 200, 0.8)", fontSize: 10 }}
+                tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
                 tickLine={false}
                 axisLine={false}
                 width={80}
@@ -95,7 +95,7 @@ export function RiskBucketChart({ risk, isLoading }: RiskBucketChartProps) {
                     )}
                   />
                 }
-                cursor={{ fill: "rgba(200, 200, 200, 0.08)" }}
+                cursor={{ fill: "hsl(var(--muted-foreground) / 0.08)" }}
               />
               <Bar dataKey="value" radius={[0, 3, 3, 0]} maxBarSize={20}>
                 {chartData.map((entry, i) => (

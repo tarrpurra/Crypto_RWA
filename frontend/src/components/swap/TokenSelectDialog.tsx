@@ -21,8 +21,7 @@ const AVAILABLE_TOKENS: TokenInfo[] = [
   { symbol: "mETH", name: "Mantle Staked Ether" },
   { symbol: "USDC", name: "USD Coin" },
   { symbol: "WMNT", name: "Wrapped Mantle" },
-  { symbol: "MockTokenA", name: "Mock Token A" },
-  { symbol: "MockTokenB", name: "Mock Token B" },
+
 ]
 
 export function TokenSelectDialog({
@@ -67,7 +66,7 @@ export function TokenSelectDialog({
                 setSearch("")
               }}
               className={cn(
-                "flex items-center justify-between rounded-md px-3 py-2.5 text-left transition-colors",
+                "flex items-center justify-between px-3 py-2.5 text-left transition-colors",
                 "hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               )}
             >

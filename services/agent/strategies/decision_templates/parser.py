@@ -52,6 +52,9 @@ async def generate_recommendation_reasoning(
     explanation = None
     ai_disabled = True
     effective_decision = decision
+    raw_response_text: str | None = None
+    parsed_response: dict = {}
+    fallback_reason: str | None = None
 
     ollama_url = settings.ollama_url
 
@@ -77,10 +80,11 @@ async def generate_recommendation_reasoning(
                 res = await client.post(f"{ollama_url}/api/generate", json=payload)
                 if res.status_code == 200:
                     result_json = res.json()
-                    response_text = result_json.get("response", "").strip()
-                    logger.debug("Ollama raw response: %s", response_text)
+                    raw_response_text = result_json.get("response", "").strip()
+                    logger.debug("Ollama raw response: %s", raw_response_text)
 
-                    parsed = json.loads(response_text)
+                    parsed = json.loads(raw_response_text)
+                    parsed_response = parsed if isinstance(parsed, dict) else {}
                     if ai_decision_maker:
                         if "recommended_action" in parsed:
                             effective_decision = _override_with_ai_decision(decision, parsed)
@@ -96,12 +100,18 @@ async def generate_recommendation_reasoning(
                                 "confidence": float(parsed.get("confidence", 0.90)),
                                 "notes": list(parsed.get("notes", [])),
                             }
+                    if explanation is None:
+                        fallback_reason = "AI response did not contain the expected reasoning fields."
         except Exception as exc:
             logger.warning("AI model query failed or output was invalid: %s. Falling back.", exc)
+            fallback_reason = str(exc)
 
     if explanation is None:
         explanation = generate_deterministic_explanation(portfolio, risk, decision, rebalance_actions)
+        parsed_response = explanation if not parsed_response else parsed_response
         metadata = {"ai_reasoning_enabled": False, "mode": "fallback_deterministic"}
+        ai_debug_mode = "fallback_deterministic"
+        used_fallback = True
     else:
         metadata = {
             "ai_reasoning_enabled": True,
@@ -109,6 +119,8 @@ async def generate_recommendation_reasoning(
             "ai_decision_maker": ai_decision_maker,
             "ai_overrode_deterministic": ai_decision_maker and effective_decision.recommended_action != decision.recommended_action,
         }
+        ai_debug_mode = f"ollama:{settings.ai_reasoning_model}"
+        used_fallback = False
 
     asset_focus = "PORTFOLIO"
     if rebalance_actions:
@@ -138,5 +150,14 @@ async def generate_recommendation_reasoning(
         freshness_status=portfolio.status_code,
         constraints_applied=list(explanation.get("notes", [])),
         notes=risk.notes,
+        ai_debug={
+            "prompt": prompt,
+            "raw_response": raw_response_text,
+            "parsed_response": parsed_response,
+            "mode": ai_debug_mode,
+            "used_fallback": used_fallback,
+            "ai_overrode_deterministic": ai_decision_maker and effective_decision.recommended_action != decision.recommended_action,
+            "fallback_reason": fallback_reason,
+        },
         metadata=metadata,
     )

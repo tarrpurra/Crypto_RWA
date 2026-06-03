@@ -93,13 +93,13 @@ export function AIDecisionFeed() {
 
       {isLoading ? (
         <div className="flex flex-1 items-center justify-center py-8">
-          <div className="h-5 w-5 animate-pulse rounded-full border border-primary/30 bg-primary/10" />
+          <div className="h-5 w-5 animate-pulse border border-primary/30 bg-primary/10" />
           <span className="ml-2 text-xs text-muted-foreground">Loading decision state...</span>
         </div>
       ) : (
         <>
           {/* Current action banner */}
-          <div className={cn("mt-4 flex items-center gap-3 rounded-md border px-3 py-2.5", action === "PAUSE" ? "border-destructive/30 bg-destructive/10" : "border-primary/20 bg-primary/8")}>
+          <div className={cn("mt-4 flex items-center gap-3 border px-3 py-2.5", action === "PAUSE" ? "border-destructive/30 bg-destructive/10" : "border-primary/20 bg-primary/8")}>
             <Icon className={cn("h-5 w-5", config.color)} />
             <div className="min-w-0">
               <p className={cn("text-sm font-semibold", config.color)}>{config.label}</p>
@@ -112,7 +112,7 @@ export function AIDecisionFeed() {
           {/* Decision metrics */}
           <div className="mt-3 space-y-1.5">
             {decisionItems.map((item) => (
-              <div key={item.key} className="flex items-center justify-between rounded-md border border-border/60 bg-surface-2 px-3 py-2">
+              <div key={item.key} className="flex items-center justify-between border border-border/60 bg-surface-2 px-3 py-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <item.icon className="h-3.5 w-3.5 shrink-0 text-primary" />
                   <span className="text-[0.65rem] text-muted-foreground">{item.label}</span>

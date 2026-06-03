@@ -5,6 +5,16 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class AIDebugPayload(BaseModel):
+    prompt: str
+    raw_response: str | None = None
+    parsed_response: dict[str, Any] = Field(default_factory=dict)
+    mode: str
+    used_fallback: bool
+    ai_overrode_deterministic: bool = False
+    fallback_reason: str | None = None
+
+
 class RecommendationResponse(BaseModel):
     asset: str
     recommended_action: str
@@ -23,4 +33,5 @@ class RecommendationResponse(BaseModel):
     freshness_status: str
     constraints_applied: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+    ai_debug: AIDebugPayload
     metadata: dict[str, Any] = Field(default_factory=dict)

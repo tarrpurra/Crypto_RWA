@@ -5,10 +5,17 @@ import { cn } from "@/lib/utils";
 type StatusTone = "ready" | "degraded" | "blocked" | "neutral";
 
 const toneClass: Record<StatusTone, string> = {
-  ready: "border-success/40 bg-success/10 text-success",
-  degraded: "border-warning/40 bg-warning/10 text-warning",
-  blocked: "border-destructive/40 bg-destructive/10 text-destructive",
+  ready: "border-success/35 bg-success/10 text-success",
+  degraded: "border-warning/35 bg-warning/10 text-warning",
+  blocked: "border-destructive/35 bg-destructive/10 text-destructive",
   neutral: "border-border bg-surface-2 text-muted-foreground",
+};
+
+const toneLabel: Record<StatusTone, string> = {
+  ready: "Operational",
+  degraded: "Warning",
+  blocked: "Blocked",
+  neutral: "Standby",
 };
 
 export function StatusPill({
@@ -21,11 +28,11 @@ export function StatusPill({
   return (
     <span
       className={cn(
-        "inline-flex h-7 items-center border px-2.5 text-[10px] font-semibold uppercase tracking-[0.12em]",
+        "inline-flex h-7 items-center border-2 px-2.5 text-[10px] font-semibold uppercase tracking-[0.12em]",
         toneClass[tone],
       )}
     >
-      {children}
+      {children ?? toneLabel[tone]}
     </span>
   );
 }
@@ -42,10 +49,10 @@ export function MetricPanel({
   tone?: StatusTone;
 }) {
   return (
-    <section className="terminal-panel flex min-h-32 flex-col justify-between p-4">
+    <section className="terminal-panel flex min-h-32 flex-col justify-between p-4 transition-colors hover:border-primary/35">
       <div className="flex items-start justify-between gap-3">
         <p className="terminal-label">{label}</p>
-        <StatusPill tone={tone}>{tone}</StatusPill>
+        <StatusPill tone={tone} />
       </div>
       <div>
         <p className="terminal-value mt-6 text-2xl">{value}</p>
@@ -83,19 +90,19 @@ export function PageScaffold({
     children: ReactNode;
   }) {
     return (
-      <div className="flex min-h-screen w-full flex-col gap-6 px-4 py-6 sm:px-8 lg:px-10">
-        <section className="border-b border-border pb-6">
-          <p className="terminal-label text-primary">{eyebrow}</p>
-          <div className="mt-4 grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">
+      <div className="mx-auto flex min-h-screen w-full max-w-[1440px] flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+        <section className="border-b-2 border-border pb-6">
+          <p className="text-xs font-semibold text-primary">{eyebrow}</p>
+          <div className="mt-3 grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">
             <div>
-              <h1 className="terminal-wordmark text-4xl leading-none text-foreground sm:text-5xl">
+              <h1 className="terminal-wordmark text-3xl font-semibold leading-tight text-foreground sm:text-4xl">
                 {title}
               </h1>
-              <p className="mt-4 max-w-3xl text-base leading-7 text-muted-foreground">
+              <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground sm:text-base">
                 {description}
               </p>
             </div>
-            <StatusPill tone="ready">LIVE</StatusPill>
+            <StatusPill tone="ready">Live</StatusPill>
           </div>
         </section>
         {children}

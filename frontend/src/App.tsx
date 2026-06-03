@@ -11,9 +11,13 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { AuthProvider } from "@/components/auth/AuthProvider";
 import { wagmiConfig } from "@/lib/wagmi";
 import { logger } from "@/lib/logger";
+import Landing from "./pages/Landing";
 import Index from "./pages/Index";
 import RiskCenter from "./pages/RiskCenter";
 import Trade from "./pages/Trade";
+import AllocationStudio from "./pages/AllocationStudio";
+import ApprovalsPage from "./pages/ApprovalsPage";
+import StrategyLab from "./pages/StrategyLab";
 import SettingsPage from "./pages/SettingsPage";
 import NotFound from "./pages/NotFound";
 
@@ -54,15 +58,17 @@ const App = () => (
         <Sonner />
         <BrowserRouter>
           <RouteChangeLogger />
-          <DashboardLayout>
-            <Routes>
-              <Route path="/" element={<Index />} />
-              <Route path="/risk" element={<RiskCenter />} />
-              <Route path="/trade" element={<Trade />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </DashboardLayout>
+          <Routes>
+            <Route path="/" element={<Landing />} />
+            <Route path="/dashboard" element={<DashboardLayout><Index /></DashboardLayout>} />
+            <Route path="/risk" element={<DashboardLayout><RiskCenter /></DashboardLayout>} />
+            <Route path="/allocation" element={<DashboardLayout><AllocationStudio /></DashboardLayout>} />
+            <Route path="/trade" element={<DashboardLayout><Trade /></DashboardLayout>} />
+            <Route path="/approvals" element={<DashboardLayout><ApprovalsPage /></DashboardLayout>} />
+            <Route path="/strategy-lab" element={<DashboardLayout><StrategyLab /></DashboardLayout>} />
+            <Route path="/settings" element={<DashboardLayout><SettingsPage /></DashboardLayout>} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
         </BrowserRouter>
       </AuthProvider>
     </TooltipProvider>

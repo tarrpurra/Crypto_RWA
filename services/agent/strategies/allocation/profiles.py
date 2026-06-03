@@ -19,10 +19,30 @@ ALLOCATION_PROFILES: dict[str, AllocationProfile] = {
         "USDY": 0.45,
         "mETH": 0.40,
     },
+    "Sepolia Test": {
+        "USDY": 0.50,
+        "mETH": 0.50,
+    },
     "Sepolia Mock": {
         "MockTokenA": 0.50,
         "MockTokenB": 0.50,
     },
 }
 
+ALLOCATION_PROFILE_ALIASES: dict[str, str] = {
+    "Sepolia Live": "Sepolia Test",
+}
+
 ACTIVE_PROFILE_NAME: str | None = None  # Mutable override for local/simulation scope
+
+
+def normalize_profile_name(profile_name: str) -> str:
+    canonical = ALLOCATION_PROFILE_ALIASES.get(profile_name, profile_name)
+    if canonical not in ALLOCATION_PROFILES:
+        raise ValueError(f"Unknown allocation profile: {profile_name}")
+    return canonical
+
+
+def get_allocation_profile(profile_name: str) -> tuple[str, AllocationProfile]:
+    canonical = normalize_profile_name(profile_name)
+    return canonical, ALLOCATION_PROFILES[canonical]

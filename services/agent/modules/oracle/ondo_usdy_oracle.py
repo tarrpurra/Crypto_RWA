@@ -33,7 +33,7 @@ class OndoUsdyOracleAdapter:
                     chain_id=self.settings.effective_chain_id,
                     address=address,
                     ingested_at=ingested_at,
-                    status="mainnet_only",
+                    status="simulation_only",
                 ),
             )
 

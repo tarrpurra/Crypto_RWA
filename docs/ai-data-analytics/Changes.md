@@ -17,6 +17,183 @@ For each entry, record:
 
 ## Change Log
 
+### 2026-06-03
+
+Type:
+Feature / Sepolia status normalization and AI debug visibility
+
+Summary:
+
+- added `target_chain` to `/chain/status` so frontend chain diagnostics can render the active network without inferring it from separate status calls
+- normalized Sepolia market, quote, and route responses so simulation-only or verification-gated testnet data no longer appears as degraded by default
+- extended recommendation responses with structured `ai_debug` payloads containing the model prompt, raw output, parsed output, fallback reason, and AI override metadata
+- updated the frontend AI side panel to render full prompt and output debug sections instead of only a truncated reasoning summary
+- labeled the Settings environment card with explicit Mantle Sepolia or Mantle Mainnet network names
+
+Affected scope:
+
+- services/agent/app/api/chain.py
+- services/agent/app/api/market.py
+- services/agent/app/schemas/chain.py
+- services/agent/app/schemas/recommendations.py
+- services/agent/strategies/decision_templates/parser.py
+- frontend/src/lib/api/types.ts
+- frontend/src/components/dashboard/AISidePanel.tsx
+- frontend/src/pages/SettingsPage.tsx
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract behavior changed
+- frontend: the AI Planning or Intelligence side panel can now show prompt-and-output debug data directly, and Settings surfaces the active Mantle network more clearly
+- data quality: Sepolia testnet responses no longer misleadingly present expected simulation-only data paths as degraded, while active-chain context is now explicit in chain diagnostics
+
+Assumptions / unresolved verification items:
+
+- quote and route endpoints intentionally stay permissive on Sepolia when live routes are absent or verification-gated; mainnet should continue treating the same conditions as degraded
+- `ai_debug` is intended as application-owned debugging output, not hidden model chain-of-thought
+- frontend and backend tests, builds, lint, and formatting were not run in this turn
+
+Commands not run:
+
+- backend and frontend tests, builds, lint, and formatting were intentionally not run in this turn
+
+### 2026-06-03
+
+Type:
+Feature / Investment plan flow integration
+
+Summary:
+
+- added a deposit-aware investment plan builder behind `POST /proposals/create` that accepts deposit asset, amount, risk profile, allocation mode, and optional manual weights
+- added backend plan detail responses with target allocations, guard checks, linked proposals, transaction steps, and embedded risk assessment data
+- generalized quote-pair discovery for active chain assets and added best-route attempt lookup so AGNI quoter gas metadata can flow into the investment plan
+- wired the frontend trade and approvals screens to consume backend proposal detail instead of relying only on locally inferred review state
+- normalized proposal list and approval mutation responses to include `status_code`, `status_label`, and `status_reason`
+- added database-backed `investment_plans` persistence so proposal review can survive backend restarts for newly created proposals
+- added a configurable `SEPOLIA_USDC` asset path plus simulation-only stable pricing so Mantle Sepolia `USDC` can be supported when a verified address is supplied
+- surfaced current repository blockers directly in the trade form for unsupported Mantle Sepolia deposit assets such as native `MNT`
+
+Affected scope:
+
+- services/agent/app/api/decisions.py
+- services/agent/app/schemas/proposals.py
+- services/agent/app/core/settings.py
+- services/agent/modules/market_data/prices.py
+- services/agent/modules/proposals/investment_planner.py
+- services/agent/modules/quotes/service.py
+- services/agent/repositories/db/investment_plan_repository.py
+- services/agent/repositories/db/models.py
+- services/agent/.env.example
+- frontend/src/lib/api/market.ts
+- frontend/src/lib/api/types.ts
+- frontend/src/hooks/useSwap.ts
+- frontend/src/pages/Trade.tsx
+- frontend/src/pages/ApprovalsPage.tsx
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: proposal payload generation now carries a fuller guarded-execution review object, but native `MNT` wrap and unwrap execution remains unimplemented and veto-state reads remain address-level only
+- frontend: trade and approvals now display backend-computed guard checks, allocation targets, gas metadata, proposal details, and transaction sequencing with less local inference
+- data quality: proposal review now depends on persisted prices, live quotes, and live oracle state rather than only UI-derived assumptions, while liquidity depth remains inferred from live quote success instead of a strict 2x depth proof
+
+Assumptions / unresolved verification items:
+
+- proposal detail retrieval is persisted only for proposals created after this change; older proposals remain detail-incomplete
+- Mantle Sepolia `USDC` now has a config path, but it still requires a real deployed token address in `SEPOLIA_USDC_ADDRESS`; native `MNT` deposit flow remains blocked by missing wrap and unwrap execution support
+- Merchant Moe is still not part of the executable proposal path; AGNI is the only encoded execution route in the current implementation
+- approval freshness is still advisory because allowance age is not yet read back from chain state
+
+Commands not run:
+
+- backend and frontend tests, builds, lint, and formatting were intentionally not run in this turn
+
+### 2026-06-01
+
+Type:
+Fix / Active Sepolia asset filtering
+
+Summary:
+
+- added active-portfolio asset filtering so Mantle Sepolia balance reads only include `SEPOLIA_METH` and `SEPOLIA_USDY` when mock pricing is disabled
+- removed lingering mock-token contamination from `/portfolio/current` and downstream risk scoring
+- verified the filtered portfolio snapshot no longer reports `MOCK_TOKEN_A` or `MOCK_TOKEN_B` as unvalued positions in the active Sepolia flow
+- moved Docker Postgres host exposure to `localhost:5433` to avoid conflict with an existing Windows Postgres process on `5432`
+- kept Docker backend database access on the internal service address `postgres:5432`
+- allowed explicit Sepolia simulation-only USDY prices to value portfolio positions while still rejecting ordinary stale or partial prices
+
+Affected scope:
+
+- docker-compose.yml
+- services/agent/.env
+- services/agent/app/core/settings.py
+- services/agent/app/api/portfolio.py
+- services/agent/modules/market_data/balances.py
+- services/agent/tests/unit/test_settings.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract behavior changed
+- frontend: dashboard, allocation, trade, and approvals surfaces now reflect the active Sepolia pair without stale mock-token positions
+- data quality: risk vetoes now reflect only the actual active assets instead of a mixed real-plus-mock registry, and Sepolia simulation prices are explicit rather than treated as live oracle data
+
+Assumptions / unresolved verification items:
+
+- live Sepolia balance reads and route discovery still depend on the local machine being allowed to reach the configured Mantle RPC and Hermes endpoints
+- mock-token registry entries remain available for explicit mock mode, but they are no longer part of the active portfolio path when mock pricing is off
+- host-side Postgres clients should use `localhost:5433`; backend containers should continue using `postgres:5432`
+
+Commands executed:
+
+- `npm run build`
+- `npm run test -- --run src/components/layout/TopBar.test.tsx src/components/layout/AppSidebar.test.tsx`
+- transient local checks against `http://127.0.0.1:5173/{route}` and backend endpoints under `http://127.0.0.1:8000/`
+- `docker compose up -d --force-recreate postgres backend`
+- direct Postgres checks from host and backend container
+
+### 2026-05-31
+
+Type:
+Fix / Allocation profile compatibility
+
+Summary:
+
+- added a canonical `Sepolia Test` allocation profile for the current Mantle Sepolia `USDY`/`mETH` flow
+- normalized allocation profile names before API validation and rebalance computation so stale or aliased profile names do not crash `/decisions`
+- added unit coverage for the Sepolia profile acceptance path
+- aligned the Sepolia quote and asset registry path to use the real test `USDY`/`mETH` pair instead of the retired mock-token pair
+- made Sepolia `$1` USDY fallback explicitly simulation-only and contingent on `simulation_fallback_enabled`
+
+Affected scope:
+
+- services/agent/strategies/allocation/profiles.py
+- services/agent/strategies/allocation/rebalance.py
+- services/agent/app/api/allocation.py
+- services/agent/app/api/decisions.py
+- services/agent/app/core/settings.py
+- services/agent/modules/market_data/prices.py
+- services/agent/modules/quotes/service.py
+- services/agent/tests/unit/test_allocation.py
+- services/agent/tests/unit/test_quote_service.py
+- services/agent/tests/unit/test_settings.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract behavior changed
+- frontend: `/decisions` and allocation profile updates no longer fail when the runtime is configured for the Sepolia test profile
+- data quality: no fabricated market data added; this only aligns allocation-profile naming with the current Sepolia asset set
+
+Assumptions / unresolved verification items:
+
+- `Sepolia Test` is treated as a deterministic 50/50 `USDY` and `mETH` basket for the current testnet flow
+- any persisted historical decisions using the old mock-token profile remain separate and are not migrated by this change
+
+Commands not run:
+
+- unit and integration tests were not executed in this turn
 ### 2026-05-29
 
 Type:

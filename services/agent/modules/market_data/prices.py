@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from uuid import uuid4
 
-from services.agent.app.core.settings import Settings, get_settings
+from services.agent.app.core.settings import Settings, TargetChain, get_settings
 from services.agent.app.core.status_codes import DataStatusCode
 from services.agent.app.schemas.market_data import AssetIngestionStatus, AssetMetadata, NormalizedPriceSnapshot, RawPriceSnapshot
 from services.agent.modules.market_data.snapshots import PriceIngestionBundle
@@ -40,6 +40,8 @@ class PriceService:
         assets: list[AssetMetadata] = []
         for raw_asset in self.settings.asset_registry.values():
             if raw_asset["chain_id"] == target_chain_id and raw_asset["price_strategy"] != "route_helper":
+                if raw_asset["price_strategy"] == "sepolia_mock_fixed" and not self.settings.sepolia_mock_prices_enabled:
+                    continue
                 assets.append(AssetMetadata(**raw_asset))
         return assets
 
@@ -65,7 +67,44 @@ class PriceService:
                 )
                 continue
 
+            if asset.price_strategy == "sepolia_stable_fallback":
+                configured = bool(asset.address and self.settings.simulation_fallback_enabled)
+                statuses.append(
+                    AssetIngestionStatus(
+                        asset_key=asset.asset_key,
+                        asset_symbol=asset.symbol,
+                        configured=configured,
+                        status="simulation_only" if configured else "unverified",
+                        status_code=DataStatusCode.DATA_PARTIAL.value if configured else DataStatusCode.DATA_MISSING.value,
+                        status_reason=(
+                            "Sepolia stable asset uses simulation fallback pricing for end-to-end allocator and swap testing."
+                            if configured
+                            else "Sepolia stable asset address or simulation fallback is not configured."
+                        ),
+                        required_sources=["sepolia_stable_fallback", "dex_quote", "liquidity_check"],
+                    )
+                )
+                continue
+
             if asset.symbol == "USDY":
+                if self.settings.target_chain == TargetChain.MANTLE_SEPOLIA:
+                    configured = bool(asset.address and self.settings.simulation_fallback_enabled)
+                    statuses.append(
+                        AssetIngestionStatus(
+                            asset_key=asset.asset_key,
+                            asset_symbol=asset.symbol,
+                            configured=configured,
+                            status="simulation_only" if configured else "unverified",
+                            status_code=DataStatusCode.DATA_PARTIAL.value if configured else DataStatusCode.DATA_MISSING.value,
+                            status_reason=(
+                                "Sepolia USDY uses simulation fallback pricing for end-to-end allocator and swap testing."
+                                if configured
+                                else "Sepolia USDY address or simulation fallback is not configured."
+                            ),
+                            required_sources=["sepolia_stable_fallback", "dex_quote", "liquidity_check"],
+                        )
+                    )
+                    continue
                 selector = self.settings.ondo_usdy_oracle_method_selector or ""
                 configured = bool(asset.address and asset.ondo_oracle_address)
                 selector_verified = bool(selector and not selector.upper().startswith("TODO_"))
@@ -89,20 +128,36 @@ class PriceService:
                 continue
 
             inputs = self._price_inputs(asset)
-            configured = bool(inputs.eth_usd_feed_id and (inputs.direct_feed_id or inputs.ratio_feed_id or asset.symbol == "mETH"))
-            status = "ok" if configured else "unverified"
-            reason = "mETH price inputs are configured." if configured else "mETH still needs verified ETH/USD plus direct or ratio feed inputs."
-            statuses.append(
-                AssetIngestionStatus(
-                    asset_key=asset.asset_key,
-                    asset_symbol=asset.symbol,
-                    configured=configured,
-                    status=status,
-                    status_code=DataStatusCode.DATA_FRESH.value if configured else DataStatusCode.DATA_MISSING.value,
-                    status_reason=reason,
-                    required_sources=["pyth_eth_usd", "dex_quote", "mETH direct or ratio feed"],
+            if asset.symbol == "mETH":
+                configured = bool(inputs.eth_usd_feed_id)
+                status = "ok" if configured else "unverified"
+                reason = "mETH using ETH/USD Pyth feed proxy." if configured else "ETH/USD Pyth feed not configured."
+                statuses.append(
+                    AssetIngestionStatus(
+                        asset_key=asset.asset_key,
+                        asset_symbol=asset.symbol,
+                        configured=configured,
+                        status=status,
+                        status_code=DataStatusCode.DATA_FRESH.value if configured else DataStatusCode.DATA_MISSING.value,
+                        status_reason=reason,
+                        required_sources=["pyth_eth_usd", "dex_quote"],
+                    )
                 )
-            )
+            else:
+                configured = bool(inputs.eth_usd_feed_id and (inputs.direct_feed_id or inputs.ratio_feed_id))
+                status = "ok" if configured else "unverified"
+                reason = "Price inputs are configured." if configured else "Needs verified ETH/USD plus direct or ratio feed inputs."
+                statuses.append(
+                    AssetIngestionStatus(
+                        asset_key=asset.asset_key,
+                        asset_symbol=asset.symbol,
+                        configured=configured,
+                        status=status,
+                        status_code=DataStatusCode.DATA_FRESH.value if configured else DataStatusCode.DATA_MISSING.value,
+                        status_reason=reason,
+                        required_sources=["pyth_eth_usd", "dex_quote", "direct or ratio feed"],
+                    )
+                )
         return statuses
 
     async def fetch_latest_prices(self) -> PriceIngestionBundle:
@@ -172,6 +227,10 @@ class PriceService:
     def _build_asset_price(self, asset: AssetMetadata, hermes_response, parsed_by_feed_id: dict[str, object]) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
         if asset.price_strategy == "sepolia_mock_fixed":
             return self._build_sepolia_mock_price(asset)
+        if asset.price_strategy == "sepolia_stable_fallback":
+            if self.settings.simulation_fallback_enabled and asset.address:
+                return self._build_sepolia_stable_price(asset, "Sepolia stable fallback pricing enabled for testnet end-to-end flow.")
+            return self._missing_snapshot(asset, "Sepolia stable fallback pricing is disabled or asset address is not configured.", status="unverified")
 
         if asset.symbol == "USDY":
             return self._build_usdy_price(asset)
@@ -192,7 +251,11 @@ class PriceService:
             ratio_obs = parsed_by_feed_id[inputs.ratio_feed_id]
             return self._build_ratio_snapshot(asset, hermes_response, eth_obs, ratio_obs)
 
-        return self._missing_snapshot(asset, "mETH direct or ratio feed data is not available yet.", status="unverified")
+        # Fallback: use ETH/USD as proxy for mETH
+        return self._build_direct_snapshot(
+            asset, hermes_response, eth_obs,
+            derivation_method="pyth_eth_usd_proxy",
+        )
 
     def _build_sepolia_mock_price(self, asset: AssetMetadata) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
         if not self.settings.sepolia_mock_prices_enabled:
@@ -247,12 +310,60 @@ class PriceService:
         )
         return [raw_snapshot], normalized
 
+    def _build_sepolia_stable_price(self, asset: AssetMetadata, reason: str) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
+        now = utc_now()
+        price = "1"
+        raw_snapshot = RawPriceSnapshot(
+            snapshot_id=str(uuid4()),
+            asset_key=asset.asset_key,
+            asset_symbol=asset.symbol,
+            asset_address=asset.address,
+            chain_id=asset.chain_id,
+            feed_id=None,
+            source="sepolia_stable_fallback",
+            source_url=None,
+            raw_payload_json={
+                "target_chain": self.settings.target_chain.value,
+                "testnet_only": True,
+                "reason": reason,
+            },
+            fetch_timestamp=now,
+            publish_timestamp=now,
+            price_raw=price,
+            confidence_raw=None,
+            exponent=None,
+            status="simulation_only",
+            status_code=DataStatusCode.DATA_PARTIAL.value,
+            status_reason=reason,
+        )
+        normalized = NormalizedPriceSnapshot(
+            snapshot_id=str(uuid4()),
+            asset_key=asset.asset_key,
+            asset_symbol=asset.symbol,
+            asset_address=asset.address,
+            chain_id=asset.chain_id,
+            price_usd=price,
+            confidence_interval_usd=None,
+            publish_timestamp=now,
+            observed_timestamp=now,
+            age_seconds=0,
+            freshness_status="simulation_only",
+            status_code=DataStatusCode.DATA_PARTIAL.value,
+            status_reason=reason,
+            derivation_method="sepolia_stable_fallback",
+            data_sources_used=["sepolia_stable_fallback"],
+            raw_snapshot_ids=[raw_snapshot.snapshot_id],
+        )
+        return [raw_snapshot], normalized
+
     def _build_usdy_price(self, asset: AssetMetadata) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
         oracle_read = self.ondo_usdy_adapter.read()
         if oracle_read.observation is None:
+            if self.settings.target_chain.value == "mantle_sepolia" and self.settings.simulation_fallback_enabled:
+                return self._build_sepolia_stable_price(asset, f"Ondo USDY oracle: {oracle_read.status.status}, using $1 test fallback.")
             status_code = DataStatusCode.DATA_MISSING.value
             freshness_status = "unverified" if oracle_read.status.status == "selector_verification_required" else "missing"
-            if oracle_read.status.status == "mainnet_only":
+            if oracle_read.status.status == "simulation_only":
                 freshness_status = "unverified"
             return self._missing_snapshot(asset, f"Ondo USDY oracle status: {oracle_read.status.status}.", status=freshness_status, status_code=status_code)
 
