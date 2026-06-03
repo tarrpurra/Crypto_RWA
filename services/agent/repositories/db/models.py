@@ -162,6 +162,19 @@ class TradeProposalRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
 
+class InvestmentPlanRecord(Base):
+    __tablename__ = "investment_plans"
+    __table_args__ = (UniqueConstraint("proposal_id", name="uq_investment_plans_proposal_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    proposal_id: Mapped[str] = mapped_column(String(66), nullable=False, index=True)
+    plan_id: Mapped[str] = mapped_column(String(66), nullable=False, index=True)
+    portfolio_address: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    plan_json: Mapped[dict] = mapped_column(JSON_TYPE, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
 class TradeExecutionRecord(Base):
     __tablename__ = "trade_executions"
     __table_args__ = (UniqueConstraint("proposal_id", name="uq_trade_executions_proposal_id"),)
