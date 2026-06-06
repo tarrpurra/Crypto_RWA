@@ -19,6 +19,7 @@ import AllocationStudio from "./pages/AllocationStudio";
 import ApprovalsPage from "./pages/ApprovalsPage";
 import StrategyLab from "./pages/StrategyLab";
 import SettingsPage from "./pages/SettingsPage";
+import SimplexDemo from "./pages/SimplexDemo";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -67,6 +68,7 @@ const App = () => (
             <Route path="/approvals" element={<DashboardLayout><ApprovalsPage /></DashboardLayout>} />
             <Route path="/strategy-lab" element={<DashboardLayout><StrategyLab /></DashboardLayout>} />
             <Route path="/settings" element={<DashboardLayout><SettingsPage /></DashboardLayout>} />
+            <Route path="/simplex" element={<SimplexDemo />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

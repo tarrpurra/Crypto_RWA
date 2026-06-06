@@ -17,6 +17,378 @@ For each entry, record:
 
 ## Change Log
 
+### 2026-06-06
+
+Type:
+Config / verified Pyth feed-id refresh for USDY, mETH, and WMNT
+
+Author:
+Codex
+
+Summary:
+
+- updated the USDY direct Pyth feed id to the verified `Crypto.USDY/USD` Hermes feed
+- updated the main mETH USD feed and mETH/ETH ratio feed ids to the verified Hermes records
+- routed WMNT through the configured MNT/USD feed path instead of a flat parity stub when the feed is available
+- kept WMNT on a fallback native MNT parity path only when the MNT/USD feed is missing, because Hermes does not expose a dedicated WMNT feed
+- aligned the Sepolia and mainnet settings defaults, `.env.example`, and ingestion checks with the verified feed ids
+
+Affected scope:
+
+- services/agent/app/core/settings.py
+- services/agent/modules/market_data/prices.py
+- services/agent/.env.example
+- services/agent/tests/unit/test_settings.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract bytecode changed
+- frontend: no direct UI change, but the dashboard and trade surfaces now receive cleaner price readiness signals for USDY, mETH, and WMNT
+- data quality: verified Hermes feed ids replace placeholder or parity-only assumptions, improving the reliability of price ingestion and asset readiness checks
+
+Assumptions / unresolved verification items:
+
+- Hermes currently exposes a direct MNT/USD feed but no dedicated WMNT feed, so WMNT still reuses the MNT/USD price path
+- the Sepolia mETH test-token flow continues to use the existing manual-mirror branch when explicitly enabled
+- backend and frontend tests, builds, lint, and formatting were only partially verified in this turn
+
+Commands not run:
+
+- full backend and frontend test suites, builds, lint, and formatting were not run in this turn
+
+### 2026-06-06
+
+Type:
+Feature / wallet-connected investment flow, recommendation notifications, and downloadable report
+
+Author:
+Codex
+
+Summary:
+
+- added a wallet-scoped investment flow that starts from the dashboard, carries the deposit amount into the trade page, and exposes the AI access choice as recommendation only versus full access AI
+- wired the connect-wallet action to the auth wallet flow so the primary CTA no longer just scrolls the page
+- added a recommendation notification banner and toast so recommendation-only mode can prompt the user with prefilled swap details before approval
+- added full-access AI execution on the trade page so linked proposals auto-approve and auto-execute when the AI decision maker is enabled
+- added a new `/reports/latest` endpoint plus a downloadable markdown report in Settings that summarizes portfolio, risk, allocation, system readiness, market health, and execution queue state
+- hardened portfolio valuation so live-price failures fall back to persisted market data or a degraded empty-price snapshot instead of hard-failing the page
+- switched runtime AI access reads to the live settings flag so the UI, health endpoints, and report output stay consistent after toggling AI mode
+
+Affected scope:
+
+- services/agent/app/api/portfolio.py
+- services/agent/app/api/reports.py
+- services/agent/app/api/settings.py
+- services/agent/app/api/health.py
+- services/agent/app/api/__init__.py
+- services/agent/app/main.py
+- services/agent/app/schemas/reports.py
+- services/agent/modules/reports/builder.py
+- services/agent/strategies/decision_templates/parser.py
+- frontend/src/pages/Index.tsx
+- frontend/src/pages/Trade.tsx
+- frontend/src/pages/SettingsPage.tsx
+- frontend/src/components/dashboard/AISidePanel.tsx
+- frontend/src/hooks/useReports.ts
+- frontend/src/lib/api/reports.ts
+- frontend/src/lib/download.ts
+- frontend/src/lib/api/types.ts
+
+Impact:
+
+- smart contracts: no contract bytecode changes were introduced, but the UI now drives a stricter execution flow before calling the existing proposal approval and execution endpoints
+- frontend: the main dashboard now supports wallet connect, investment scope entry, recommendation notifications, AI access selection, and a settings report download path
+- data quality: missing live market data no longer hard-fails the portfolio route, and the report generator records data gaps instead of silently omitting missing sources
+
+Assumptions / unresolved verification items:
+
+- the new fallback behavior relies on the repo's existing market-data providers and persisted price snapshots; no new third-party provider was added in this turn
+- full-access AI still requires the user to create the investment plan from the trade page before auto-execution begins
+- backend and frontend tests, builds, lint, and formatting were not run in this turn
+
+Commands not run:
+
+- backend and frontend tests, builds, lint, and formatting were intentionally not run in this turn
+
+### 2026-06-06
+
+Type:
+Feature / Sepolia demo-asset readiness and manual-mirror mETH support
+
+Summary:
+
+- added explicit Sepolia demo-asset config fields for `mETH`, including `SEPOLIA_METH_IS_TEST_TOKEN`, `SEPOLIA_METH_PRICE_MODE`, `METH_MANUAL_PRICE_USD`, and `REQUIRE_LIVE_PRICES`
+- fixed the broken Sepolia USDY ingestion branch in `prices.py` and added a first-class `manual_mirror` pricing path for the Sepolia `mETH` demo asset
+- expanded `/settings` so the frontend can see the active Sepolia chain and token configuration instead of only WMNT wrap support
+- added `GET /system/readiness` to report token verification, pricing mode, AGNI route status, and current execution mode for Mantle Sepolia debugging
+- updated frontend system types and trade surfaces so the `mETH` sleeve is labeled as a Sepolia demo asset while still using live wallet and AGNI routing surfaces
+
+Affected scope:
+
+- services/agent/app/core/settings.py
+- services/agent/modules/market_data/prices.py
+- services/agent/app/api/settings.py
+- services/agent/app/api/health.py
+- services/agent/app/schemas/health.py
+- services/agent/.env.example
+- services/agent/tests/unit/test_settings.py
+- services/agent/tests/integration/test_health.py
+- frontend/src/lib/api/types.ts
+- frontend/src/lib/api/system.ts
+- frontend/src/hooks/useSystem.ts
+- frontend/src/components/swap/TokenSelectDialog.tsx
+- frontend/src/components/swap/SwapForm.tsx
+- frontend/src/pages/Trade.tsx
+
+Impact:
+
+- smart contracts: no runtime contract bytecode changed in the agent service, but the backend now expects an explicitly marked Sepolia demo-token path for `mETH`
+- frontend: trade and token-selection flows now expose the Sepolia `mETH` sleeve as a demo asset instead of implying canonical protocol liquidity
+- data quality: Sepolia `mETH` pricing can now be made explicit as `manual_mirror` rather than silently falling through to stale or misleading assumptions
+
+Assumptions / unresolved verification items:
+
+- a new Sepolia `mETH` demo token still needs to be deployed and its address written into the live `.env` before the route checks can return `ok`
+- the new readiness endpoint reports current AGNI single-hop route status, but it does not seed liquidity or create pools by itself
+- backend and frontend tests, builds, lint, formatting, and on-chain deployment commands were not run in this turn
+
+Commands not run:
+
+- backend and frontend tests, builds, lint, formatting, and Sepolia deployment commands were intentionally not run in this turn
+
+### 2026-06-04
+
+Type:
+Config / Sepolia mock-token mETH pricing alignment
+
+Summary:
+
+- kept the existing deployed Sepolia mock ERC-20 at `SEPOLIA_METH_ADDRESS` as the application-owned testnet `mETH` asset for demo speed
+- cleared the unverified direct `METH_USD_PYTH_FEED_ID` and `METH_ETH_RATIO_FEED_ID` placeholders so the backend intentionally falls back to the existing ETH/USD Pyth proxy path for `mETH` valuation
+- preserved the repo's asset-registry symbol as `mETH`, so frontend and portfolio surfaces continue to present the token as the testnet `mETH` sleeve while its price follows the live ETH reference
+
+Affected scope:
+
+- services/agent/.env
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract behavior changed
+- frontend: no UI code changed, but the active Sepolia `mETH` sleeve is now intentionally backed by the deployed mock token rather than accidentally using a stale or misleading feed config
+- data quality: `mETH` valuation now explicitly follows the ETH/USD Pyth proxy path instead of carrying unresolved `TODO_VERIFY` direct-feed placeholders
+
+Assumptions / unresolved verification items:
+
+- the configured Sepolia `mETH` address remains a mock ERC-20 contract, not an official `mETH` deployment
+- this is acceptable for the current demo because the token's price behavior, not its protocol identity, is what the allocation and swap flow need
+- backend and frontend tests, builds, lint, and formatting were not run in this turn
+
+Commands not run:
+
+- backend and frontend tests, builds, lint, and formatting were intentionally not run in this turn
+
+### 2026-06-04
+
+Type:
+Feature / Sepolia USDY mainnet-oracle reference wiring
+
+Summary:
+
+- verified the Ondo `RWADynamicOracle` mainnet read selector as `getPrice()` with selector `0x98d5fdca`
+- confirmed the configured Ondo oracle address has no code on Mantle Sepolia and therefore cannot be used as a native Sepolia oracle deployment
+- added `ONDO_USDY_REFERENCE_RPC_URL` so Mantle Sepolia can mirror the verified Mantle mainnet Ondo oracle as its USDY reference source
+- updated Sepolia USDY ingestion and proposal guard logic to treat the mirrored Ondo mainnet oracle as the preferred reference source when configured
+
+Affected scope:
+
+- services/agent/.env
+- services/agent/app/core/settings.py
+- services/agent/modules/oracle/ondo_usdy_oracle.py
+- services/agent/modules/market_data/prices.py
+- services/agent/modules/proposals/investment_planner.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract behavior changed
+- frontend: no direct UI code changed, but backend price and proposal surfaces can now expose a real Ondo-derived USDY reference during Mantle Sepolia runs
+- data quality: Sepolia USDY pricing can now follow the verified Mantle mainnet Ondo oracle instead of relying on manual mirror or fixed simulation fallback
+
+Assumptions / unresolved verification items:
+
+- the mainnet selector verification was performed against Mantle mainnet RPC and Ondo docs describing `getPrice()` and `getPriceData()`
+- Mantle Sepolia still does not host code at the configured Ondo oracle address, so this remains a mirrored mainnet reference model rather than a native Sepolia oracle deployment
+- the configured `SEPOLIA_METH_ADDRESS` is still a mock token in the current env and must be replaced before `mETH` can be treated as a real tracked asset
+- backend and frontend tests, builds, lint, and formatting were not run in this turn
+
+Commands not run:
+
+- backend and frontend tests, builds, lint, and formatting were intentionally not run in this turn
+
+### 2026-06-04
+
+Type:
+Feature / Native MNT wrap-first investment flow
+
+Summary:
+
+- made `MNT` the default deposit asset in the dashboard launcher, swap launcher, and trade flow
+- exposed `native_mnt_enabled` and `sepolia_wmnt_address` through `/settings` so the frontend can verify whether native wrapping is configured
+- changed the trade flow to wrap native `MNT` into `WMNT` in the connected wallet before creating the investment plan, instead of blocking `MNT` deposits outright
+- updated the backend investment-plan steps so `MNT` plans explicitly include a wrap step and use ERC-20 `WMNT` swap execution rather than pretending the router will consume native value directly
+- taught execution to submit an ERC-20 approval transaction when allowance is missing before sending the swap transaction
+- updated scoped-price resolution so `MNT` can reuse `WMNT` pricing in investment-scope previews
+
+Affected scope:
+
+- frontend/src/pages/Index.tsx
+- frontend/src/pages/Trade.tsx
+- frontend/src/components/swap/SwapForm.tsx
+- frontend/src/hooks/useSwap.ts
+- frontend/src/lib/api/types.ts
+- services/agent/app/api/settings.py
+- services/agent/app/api/investment_scope.py
+- services/agent/modules/proposals/investment_planner.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract bytecode changed, but the frontend now uses the deployed `WMNT` contract as the required wrap entrypoint before swap execution
+- frontend: `MNT` is now the primary deposit path and the UI no longer treats it as a permanent blocker when wrapping is configured
+- data quality: scoped previews and plan sequencing now align more closely with the actual `MNT -> WMNT -> swap` flow
+
+Assumptions / unresolved verification items:
+
+- the configured `SEPOLIA_WMNT_ADDRESS` must expose a standard payable `deposit()` method
+- direct guarded execution is still limited by the repository's broader proposal and contract-execution architecture; this change specifically fixes the wrap-first deposit path
+- backend and frontend tests, builds, lint, and formatting were not run in this turn
+
+Commands not run:
+
+- backend and frontend tests, builds, lint, and formatting were intentionally not run in this turn
+
+### 2026-06-04
+
+Type:
+Fix / Wallet-scoped portfolio gating and Sepolia USDY mirrored pricing path
+
+Summary:
+
+- stopped the frontend from treating a disconnected but locally stored wallet address as an active portfolio scope, so dashboard and AI surfaces no longer keep querying wallet-scoped backend endpoints after disconnect
+- removed the dashboard's explicit env-fallback reads for `/portfolio/current` and `/risk/current`, keeping wallet-required states visible instead of surfacing backend preview balances
+- gated `/decisions` queries behind an active wallet and updated the AI side panel to show a connect-wallet state when no Mantle Sepolia wallet is connected
+- added a Sepolia USDY mirrored-price path that prefers a configured direct `USDY_PYTH_FEED_ID`, falls back to an explicit `SEPOLIA_USDY_REFERENCE_PRICE_USD`, and only uses the old `$1` simulation fallback as the last resort
+
+Affected scope:
+
+- frontend/src/hooks/usePortfolioWallet.ts
+- frontend/src/hooks/useDecisions.ts
+- frontend/src/components/dashboard/AISidePanel.tsx
+- frontend/src/pages/Index.tsx
+- frontend/src/pages/Index.test.tsx
+- services/agent/app/core/settings.py
+- services/agent/.env.example
+- services/agent/modules/market_data/prices.py
+- services/agent/tests/unit/test_settings.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract behavior changed
+- frontend: disconnecting a wallet now clears wallet-scoped analytics reads immediately, and the dashboard/AI panel no longer shows backend preview portfolio values as if they belonged to the user
+- data quality: Sepolia USDY valuation can now follow a configured mirrored direct feed instead of always degrading to a generic `$1` fallback
+
+Assumptions / unresolved verification items:
+
+- `USDY_PYTH_FEED_ID` still needs a verified live feed id before Sepolia USDY can truly follow a live mirrored market source automatically
+- `SEPOLIA_USDY_REFERENCE_PRICE_USD` is only a controlled fallback for testnet valuation; it does not replace a live mirrored feed
+- backend and frontend tests, builds, lint, and formatting were not run in this turn
+
+Commands not run:
+
+- backend and frontend tests, builds, lint, and formatting were intentionally not run in this turn
+
+### 2026-06-04
+
+Type:
+Config / Simulation runtime posture
+
+Summary:
+
+- updated the active service env to `RUNTIME_MODE=simulation` so the agent can run the AI reasoning and allocation surfaces without claiming live execution readiness
+- aligned `.env.example` with the simulation posture and enabled AI reasoning by default for new local setups
+
+Affected scope:
+
+- services/agent/.env
+- services/agent/.env.example
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract behavior changed
+- frontend: no UI behavior changed directly, but the backend can now expose AI reasoning in simulation mode instead of monitor-only posture
+- data quality: the service is still not live-execution ready, but the runtime posture now matches the intended simulation workflow
+
+Assumptions / unresolved verification items:
+
+- the running backend process still needs to be restarted to pick up the `.env` change
+- live execution should remain disabled until quote, oracle, and approval paths are fully verified
+
+Commands not run:
+
+- backend and frontend tests, builds, lint, and formatting were intentionally not run in this turn
+
+### 2026-06-03
+
+Type:
+Feature / Investment scope and Mantle Sepolia chain gating
+
+Summary:
+
+- added a persisted frontend investment scope so the user-entered deposit asset, deploy amount, risk profile, and allocation mode can be reused across Trade, the side launcher, and AI-facing analytics surfaces
+- tightened wallet scoping so a connected wallet only counts for portfolio and planning when the active chain is Mantle Sepolia `5003`
+- extended `/allocation/recommendation`, `/risk/current`, and `/decisions` with optional investment-scope parameters so they can return deposit-sized analysis instead of always analyzing the full connected wallet balance
+- added backend synthetic portfolio builders for scoped allocation, scoped risk scoring, and scoped recommendation reasoning
+
+Affected scope:
+
+- frontend/src/hooks/useInvestmentScope.ts
+- frontend/src/hooks/usePortfolioWallet.ts
+- frontend/src/hooks/useAllocation.ts
+- frontend/src/hooks/useRisk.ts
+- frontend/src/hooks/useDecisions.ts
+- frontend/src/lib/api/allocation.ts
+- frontend/src/lib/api/risk.ts
+- frontend/src/lib/api/decisions.ts
+- frontend/src/lib/api/types.ts
+- frontend/src/components/rwa/WalletScopeControl.tsx
+- frontend/src/components/swap/SwapForm.tsx
+- frontend/src/pages/Trade.tsx
+- services/agent/app/api/investment_scope.py
+- services/agent/app/api/allocation.py
+- services/agent/app/api/risk.py
+- services/agent/app/api/decisions.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract behavior changed
+- frontend: the connected wallet is now chain-gated to Mantle Sepolia `5003`, and investment-analysis hooks can follow the user-entered deploy amount instead of defaulting to the entire wallet balance
+- data quality: allocation, risk, and decision views can now reflect a scoped investment preview, but they still depend on current price and quote availability for the selected assets
+
+Assumptions / unresolved verification items:
+
+- scoped preview uses synthetic portfolio data derived from the selected deposit amount and current target weights; it is not a substitute for post-execution reconciliation
+- quote freshness and route availability for scoped previews still depend on the same AGNI and market-data surfaces as the rest of the service
+- backend and frontend tests, builds, lint, and formatting were not run in this turn
+
+Commands not run:
+
+- backend and frontend tests, builds, lint, and formatting were intentionally not run in this turn
+
 ### 2026-06-03
 
 Type:

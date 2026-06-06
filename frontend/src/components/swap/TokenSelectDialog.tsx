@@ -18,7 +18,7 @@ export interface TokenInfo {
 
 const AVAILABLE_TOKENS: TokenInfo[] = [
   { symbol: "USDY", name: "Ondo US Dollar Yield" },
-  { symbol: "mETH", name: "Mantle Staked Ether" },
+  { symbol: "mETH", name: "Mantle Staked Ether (Sepolia demo asset)" },
   { symbol: "USDC", name: "USD Coin" },
   { symbol: "WMNT", name: "Wrapped Mantle" },
 

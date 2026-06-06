@@ -40,7 +40,7 @@ class QuoteService:
         assets: list[AssetMetadata] = []
         for raw_asset in self.settings.asset_registry.values():
             if raw_asset["chain_id"] == target_chain_id:
-                if raw_asset["price_strategy"] == "sepolia_mock_fixed" and not self.settings.sepolia_mock_routes_enabled:
+                if raw_asset["price_strategy"] == "sepolia_mock_fixed":
                     continue
                 assets.append(AssetMetadata(**raw_asset))
         return assets
@@ -69,7 +69,10 @@ class QuoteService:
         for route in routes:
             amount_in = amount_by_symbol.get(route.token_in, self._default_amount_in(route.token_in))
             if route.protocol == "AGNI":
-                attempt = self.agni_quotes.quote_route(route, amount_in)
+                if self._should_attempt_live_agni_quote(route):
+                    attempt = self.agni_quotes.quote_route(route, amount_in)
+                else:
+                    attempt = self._unsupported_attempt(route, amount_in)
             elif route.protocol == "MERCHANT_MOE":
                 attempt = self.merchant_moe_quotes.quote_route(route, amount_in)
             else:
@@ -102,7 +105,10 @@ class QuoteService:
         amount_in = self._default_amount_in(token_in)
         for route in routes:
             if route.protocol == "AGNI":
-                attempt = self.agni_quotes.quote_route(route, amount_in)
+                if self._should_attempt_live_agni_quote(route):
+                    attempt = self.agni_quotes.quote_route(route, amount_in)
+                else:
+                    attempt = self._unsupported_attempt(route, amount_in)
             elif route.protocol == "MERCHANT_MOE":
                 attempt = self.merchant_moe_quotes.quote_route(route, amount_in)
             else:
@@ -129,13 +135,6 @@ class QuoteService:
         assets = self._assets_for_target_chain()
         asset_by_key = {asset.asset_key: asset for asset in assets}
         pairs: list[QuotePair] = []
-        if (
-            self.settings.target_chain == TargetChain.MANTLE_SEPOLIA
-            and self.settings.sepolia_mock_routes_enabled
-            and {"MOCK_TOKEN_A", "MOCK_TOKEN_B"}.issubset(asset_by_key)
-        ):
-            pairs.append(QuotePair(token_in=asset_by_key["MOCK_TOKEN_A"], token_out=asset_by_key["MOCK_TOKEN_B"], amount_in=Decimal("1")))
-            pairs.append(QuotePair(token_in=asset_by_key["MOCK_TOKEN_B"], token_out=asset_by_key["MOCK_TOKEN_A"], amount_in=Decimal("1")))
         seen: set[tuple[str, str]] = set()
         for token_in in assets:
             for token_out in assets:
@@ -153,6 +152,15 @@ class QuoteService:
                     )
                 )
         return pairs
+
+    def _should_attempt_live_agni_quote(self, route: RouteDescriptor) -> bool:
+        if self.settings.target_chain != TargetChain.MANTLE_SEPOLIA:
+            return True
+        allowed_pairs = {
+            ("WMNT", "mETH"),
+            ("mETH", "WMNT"),
+        }
+        return (route.token_in, route.token_out) in allowed_pairs
 
     def _unsupported_attempt(self, route: RouteDescriptor, amount_in: Decimal):
         now = utc_now()

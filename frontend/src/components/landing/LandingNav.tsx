@@ -52,17 +52,17 @@ export function LandingNav({ isVisible, isSettled, isLaunching }: LandingNavProp
         !isVisible && "pointer-events-none",
       )}
     >
-      <div
-        className={cn(
-          "border-b transition-colors duration-200",
-          scrolled || isVisible
-            ? "border-lp-border-muted bg-black/78 backdrop-blur-xl"
-            : "border-transparent bg-transparent",
-        )}
-      >
+        <div
+          className={cn(
+            "border-b transition-colors duration-200",
+            scrolled || isVisible
+              ? "border-lp-border-muted bg-lp-bg/84 backdrop-blur-xl"
+              : "border-transparent bg-transparent",
+          )}
+        >
         <div className="mx-auto max-w-screen-2xl px-6 lg:px-8">
           <div className="flex h-[72px] items-center justify-between">
-            <Link to="/" className="flex items-center gap-3">
+            <div className="flex items-center gap-3">
               <motion.div
                 initial={false}
                 animate={{
@@ -94,7 +94,7 @@ export function LandingNav({ isVisible, isSettled, isLaunching }: LandingNavProp
                   YieldMind
                 </motion.span>
               </div>
-            </Link>
+            </div>
 
             <motion.div
               initial={false}
@@ -120,6 +120,14 @@ export function LandingNav({ isVisible, isSettled, isLaunching }: LandingNavProp
               ))}
             </motion.div>
 
+            <button
+              onClick={() => setMobileOpen(!mobileOpen)}
+              className="flex items-center justify-center text-lp-fg-secondary hover:text-lp-fg md:hidden"
+              aria-label="Toggle menu"
+            >
+              {mobileOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+            </button>
+
             <motion.div
               initial={false}
               animate={{
@@ -135,31 +143,17 @@ export function LandingNav({ isVisible, isSettled, isLaunching }: LandingNavProp
             >
               <Link
                 to="/dashboard"
-                className="border border-lp-border-muted px-5 py-2.5 text-sm font-medium text-lp-fg-muted transition-colors hover:border-lp-border hover:text-lp-fg"
-              >
-                Log in
-              </Link>
-              <Link
-                to="/dashboard"
                 className="border-2 border-lp-gold bg-lp-gold px-6 py-2.5 text-sm font-semibold text-lp-bg transition-opacity duration-200 hover:opacity-90 active:scale-[0.98]"
               >
                 Get started
               </Link>
             </motion.div>
-
-            <button
-              onClick={() => setMobileOpen(!mobileOpen)}
-              className="flex items-center justify-center text-lp-fg-secondary hover:text-lp-fg md:hidden"
-              aria-label="Toggle menu"
-            >
-              {mobileOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
-            </button>
           </div>
         </div>
       </div>
 
       {mobileOpen && (
-        <div className="border-t border-lp-border-muted bg-black/95 backdrop-blur-xl md:hidden">
+        <div className="border-t border-lp-border-muted bg-lp-bg/96 backdrop-blur-xl md:hidden">
           <div className="space-y-2 px-6 py-4">
             {navLinks.map((link) => (
               <a
@@ -171,14 +165,6 @@ export function LandingNav({ isVisible, isSettled, isLaunching }: LandingNavProp
                 {link.label}
               </a>
             ))}
-            <hr className="border-lp-border-muted" />
-            <Link
-              to="/dashboard"
-              onClick={() => setMobileOpen(false)}
-              className="block py-2 text-sm text-lp-fg-muted transition-colors hover:text-lp-fg"
-            >
-              Log in
-            </Link>
             <Link
               to="/dashboard"
               onClick={() => setMobileOpen(false)}

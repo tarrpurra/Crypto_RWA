@@ -38,9 +38,9 @@ const defaultData: DataPoint[] = [
 const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: { value: number }[]; label?: string }) => {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-xl border border-white/10 bg-zinc-900/90 px-3 py-2 shadow-xl backdrop-blur-lg">
-      <p className="text-xs text-white/50">{label}</p>
-      <p className="font-mono text-sm font-medium text-white">${payload[0].value.toFixed(1)}M</p>
+    <div className="rounded-xl border border-lp-border-muted bg-lp-bg/92 px-3 py-2 shadow-xl backdrop-blur-lg">
+      <p className="text-xs text-lp-fg-muted">{label}</p>
+      <p className="font-mono text-sm font-medium text-lp-fg">${payload[0].value.toFixed(1)}M</p>
     </div>
   );
 };

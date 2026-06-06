@@ -21,9 +21,9 @@ const defaultData = [
 const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: { value: number; payload: { label: string } }[]; label?: string }) => {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-xl border border-white/10 bg-zinc-900/90 px-3 py-2 shadow-xl backdrop-blur-lg">
-      <p className="text-xs text-white/50">{payload[0].payload.label}</p>
-      <p className="font-mono text-sm font-medium text-white">{payload[0].value}% APY</p>
+    <div className="rounded-xl border border-lp-border-muted bg-lp-bg/92 px-3 py-2 shadow-xl backdrop-blur-lg">
+      <p className="text-xs text-lp-fg-muted">{payload[0].payload.label}</p>
+      <p className="font-mono text-sm font-medium text-lp-fg">{payload[0].value}% APY</p>
     </div>
   );
 };

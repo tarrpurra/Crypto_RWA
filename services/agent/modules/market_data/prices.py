@@ -39,7 +39,7 @@ class PriceService:
         target_chain_id = self.settings.effective_chain_id
         assets: list[AssetMetadata] = []
         for raw_asset in self.settings.asset_registry.values():
-            if raw_asset["chain_id"] == target_chain_id and raw_asset["price_strategy"] != "route_helper":
+            if raw_asset["chain_id"] == target_chain_id:
                 if raw_asset["price_strategy"] == "sepolia_mock_fixed" and not self.settings.sepolia_mock_prices_enabled:
                     continue
                 assets.append(AssetMetadata(**raw_asset))
@@ -48,6 +48,7 @@ class PriceService:
     def ingestion_status(self) -> list[AssetIngestionStatus]:
         statuses: list[AssetIngestionStatus] = []
         for asset in self.asset_metadata_for_target_chain():
+            inputs = self._price_inputs(asset)
             if asset.price_strategy == "sepolia_mock_fixed":
                 configured = bool(asset.address and self.settings.sepolia_mock_prices_enabled)
                 statuses.append(
@@ -86,22 +87,89 @@ class PriceService:
                 )
                 continue
 
+            if asset.price_strategy == "route_helper" and asset.symbol == "WMNT":
+                configured = bool(asset.address and inputs.direct_feed_id)
+                if configured:
+                    status = "ok"
+                    status_code = DataStatusCode.DATA_FRESH.value
+                    reason = "WMNT uses the configured MNT/USD Pyth feed for valuation."
+                    required_sources = ["pyth_direct", "dex_quote"]
+                elif asset.address:
+                    status = "simulation_only"
+                    status_code = DataStatusCode.DATA_PARTIAL.value
+                    reason = "WMNT falls back to native MNT parity until the MNT/USD Pyth feed is configured."
+                    required_sources = ["native_mnt_parity", "dex_quote"]
+                else:
+                    status = "unverified"
+                    status_code = DataStatusCode.DATA_MISSING.value
+                    reason = "WMNT address or MNT/USD Pyth feed is not configured."
+                    required_sources = ["pyth_direct", "dex_quote"]
+                statuses.append(
+                    AssetIngestionStatus(
+                        asset_key=asset.asset_key,
+                        asset_symbol=asset.symbol,
+                        configured=configured,
+                        status=status,
+                        status_code=status_code,
+                        status_reason=reason,
+                        required_sources=required_sources,
+                    )
+                )
+                continue
+
             if asset.symbol == "USDY":
                 if self.settings.target_chain == TargetChain.MANTLE_SEPOLIA:
-                    configured = bool(asset.address and self.settings.simulation_fallback_enabled)
+                    inputs = self._price_inputs(asset)
+                    selector = self.settings.ondo_usdy_oracle_method_selector or ""
+                    selector_verified = bool(selector and not selector.upper().startswith("TODO_"))
+                    has_oracle_reference = bool(
+                        asset.address
+                        and asset.ondo_oracle_address
+                        and selector_verified
+                        and self.settings.ondo_usdy_reference_rpc_url
+                    )
+                    configured = bool(
+                        asset.address
+                        and (
+                            has_oracle_reference
+                            or inputs.direct_feed_id
+                            or self.settings.sepolia_usdy_reference_price_usd
+                            or self.settings.simulation_fallback_enabled
+                        )
+                    )
+                    if has_oracle_reference:
+                        status = "ok"
+                        status_code = DataStatusCode.DATA_FRESH.value
+                        status_reason = "Sepolia USDY uses the verified Ondo mainnet oracle as its mirrored reference source."
+                        required_sources = ["ondo_redemption_oracle", "dex_quote", "liquidity_check"]
+                    elif inputs.direct_feed_id:
+                        status = "ok"
+                        status_code = DataStatusCode.DATA_FRESH.value
+                        status_reason = "Sepolia USDY uses a direct mirrored USDY/USD feed for valuation."
+                        required_sources = ["pyth_direct", "dex_quote", "liquidity_check"]
+                    elif self.settings.sepolia_usdy_reference_price_usd:
+                        status = "simulation_only"
+                        status_code = DataStatusCode.DATA_PARTIAL.value
+                        status_reason = "Sepolia USDY uses a configured mirrored reference price for testnet valuation."
+                        required_sources = ["configured_reference_price", "dex_quote", "liquidity_check"]
+                    else:
+                        status = "simulation_only" if configured else "unverified"
+                        status_code = DataStatusCode.DATA_PARTIAL.value if configured else DataStatusCode.DATA_MISSING.value
+                        status_reason = (
+                            "Sepolia USDY uses a $1 simulation fallback because no mirrored USDY reference feed is configured."
+                            if configured
+                            else "Sepolia USDY address or simulation fallback is not configured."
+                        )
+                        required_sources = ["sepolia_stable_fallback", "dex_quote", "liquidity_check"]
                     statuses.append(
                         AssetIngestionStatus(
                             asset_key=asset.asset_key,
                             asset_symbol=asset.symbol,
                             configured=configured,
-                            status="simulation_only" if configured else "unverified",
-                            status_code=DataStatusCode.DATA_PARTIAL.value if configured else DataStatusCode.DATA_MISSING.value,
-                            status_reason=(
-                                "Sepolia USDY uses simulation fallback pricing for end-to-end allocator and swap testing."
-                                if configured
-                                else "Sepolia USDY address or simulation fallback is not configured."
-                            ),
-                            required_sources=["sepolia_stable_fallback", "dex_quote", "liquidity_check"],
+                            status=status,
+                            status_code=status_code,
+                            status_reason=status_reason,
+                            required_sources=required_sources,
                         )
                     )
                     continue
@@ -127,11 +195,46 @@ class PriceService:
                 )
                 continue
 
-            inputs = self._price_inputs(asset)
             if asset.symbol == "mETH":
-                configured = bool(inputs.eth_usd_feed_id)
-                status = "ok" if configured else "unverified"
-                reason = "mETH using ETH/USD Pyth feed proxy." if configured else "ETH/USD Pyth feed not configured."
+                if (
+                    self.settings.target_chain == TargetChain.MANTLE_SEPOLIA
+                    and self.settings.sepolia_meth_is_test_token
+                    and self.settings.effective_sepolia_meth_price_mode == "manual_mirror"
+                ):
+                    configured = bool(asset.address and self.settings.meth_manual_price_usd)
+                    status = "simulation_only" if configured else "unverified"
+                    reason = (
+                        "Sepolia mETH test token uses a manual mirrored USD price for demo-safe risk and allocation logic."
+                        if configured
+                        else "Sepolia mETH test token manual mirror pricing is enabled, but METH_MANUAL_PRICE_USD is not configured."
+                    )
+                    statuses.append(
+                        AssetIngestionStatus(
+                            asset_key=asset.asset_key,
+                            asset_symbol=asset.symbol,
+                            configured=configured,
+                            status=status,
+                            status_code=DataStatusCode.DATA_PARTIAL.value if configured else DataStatusCode.DATA_MISSING.value,
+                            status_reason=reason,
+                            required_sources=["manual_mirror", "dex_quote"],
+                        )
+                    )
+                    continue
+                if inputs.direct_feed_id:
+                    configured = True
+                    status = "ok"
+                    reason = "mETH uses the configured direct METH/USD Pyth feed."
+                    required_sources = ["pyth_direct", "dex_quote"]
+                elif inputs.ratio_feed_id and inputs.eth_usd_feed_id:
+                    configured = True
+                    status = "ok"
+                    reason = "mETH uses the configured ETH/USD plus METH/ETH ratio feed pair."
+                    required_sources = ["pyth_eth_usd", "pyth_meth_eth_ratio", "dex_quote"]
+                else:
+                    configured = bool(inputs.eth_usd_feed_id)
+                    status = "ok" if configured else "unverified"
+                    reason = "mETH using ETH/USD Pyth feed proxy." if configured else "ETH/USD Pyth feed not configured."
+                    required_sources = ["pyth_eth_usd", "dex_quote"]
                 statuses.append(
                     AssetIngestionStatus(
                         asset_key=asset.asset_key,
@@ -140,7 +243,7 @@ class PriceService:
                         status=status,
                         status_code=DataStatusCode.DATA_FRESH.value if configured else DataStatusCode.DATA_MISSING.value,
                         status_reason=reason,
-                        required_sources=["pyth_eth_usd", "dex_quote"],
+                        required_sources=required_sources,
                     )
                 )
             else:
@@ -168,7 +271,7 @@ class PriceService:
             try:
                 hermes_response = await self.hermes_client.fetch_latest_price_updates(feed_ids)
             except Exception as exc:
-                logger.warning("Hermes price fetch failed: %s", exc)
+                logger.warning("Hermes price fetch failed: %s: %r", type(exc).__name__, exc)
         parsed_by_feed_id = self._parse_feeds(feed_ids, hermes_response.payload if hermes_response else {})
 
         bundle = PriceIngestionBundle()
@@ -225,6 +328,7 @@ class PriceService:
         )
 
     def _build_asset_price(self, asset: AssetMetadata, hermes_response, parsed_by_feed_id: dict[str, object]) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
+        inputs = self._price_inputs(asset)
         if asset.price_strategy == "sepolia_mock_fixed":
             return self._build_sepolia_mock_price(asset)
         if asset.price_strategy == "sepolia_stable_fallback":
@@ -232,8 +336,46 @@ class PriceService:
                 return self._build_sepolia_stable_price(asset, "Sepolia stable fallback pricing enabled for testnet end-to-end flow.")
             return self._missing_snapshot(asset, "Sepolia stable fallback pricing is disabled or asset address is not configured.", status="unverified")
 
+        if asset.price_strategy == "route_helper" and asset.symbol == "WMNT":
+            if inputs.direct_feed_id and parsed_by_feed_id.get(inputs.direct_feed_id) is not None:
+                direct_obs = parsed_by_feed_id[inputs.direct_feed_id]
+                return self._build_direct_snapshot(
+                    asset,
+                    hermes_response,
+                    direct_obs,
+                    derivation_method="pyth_direct",
+                    data_source_label="pyth_direct",
+                )
+            if asset.address:
+                return self._build_configured_reference_price(
+                    asset,
+                    source="native_mnt_parity",
+                    price="1",
+                    reason="WMNT uses a derived native MNT parity price while the MNT/USD Pyth feed is unavailable.",
+                )
+            return self._missing_snapshot(asset, "WMNT address is not configured.", status="unverified")
+
         if asset.symbol == "USDY":
-            return self._build_usdy_price(asset)
+            return self._build_usdy_price(asset, hermes_response, parsed_by_feed_id)
+        if (
+            asset.symbol == "mETH"
+            and self.settings.target_chain == TargetChain.MANTLE_SEPOLIA
+            and self.settings.sepolia_meth_is_test_token
+            and self.settings.effective_sepolia_meth_price_mode == "manual_mirror"
+        ):
+            if self.settings.meth_manual_price_usd:
+                return self._build_configured_reference_price(
+                    asset,
+                    source="manual_mirror",
+                    price=self.settings.meth_manual_price_usd,
+                    reason="Sepolia mETH test token uses a manual mirrored USD price for demo-safe execution and risk evaluation.",
+                )
+            if self.settings.require_live_prices:
+                return self._missing_snapshot(
+                    asset,
+                    "Sepolia mETH test token manual mirror mode is enabled, but METH_MANUAL_PRICE_USD is not configured.",
+                    status="unverified",
+                )
 
         inputs = self._price_inputs(asset)
         if not inputs.eth_usd_feed_id:
@@ -245,7 +387,13 @@ class PriceService:
 
         if inputs.direct_feed_id and parsed_by_feed_id.get(inputs.direct_feed_id) is not None:
             direct_obs = parsed_by_feed_id[inputs.direct_feed_id]
-            return self._build_direct_snapshot(asset, hermes_response, direct_obs, derivation_method="direct_pyth")
+            return self._build_direct_snapshot(
+                asset,
+                hermes_response,
+                direct_obs,
+                derivation_method="direct_pyth",
+                data_source_label="pyth_direct",
+            )
 
         if inputs.ratio_feed_id and parsed_by_feed_id.get(inputs.ratio_feed_id) is not None:
             ratio_obs = parsed_by_feed_id[inputs.ratio_feed_id]
@@ -253,8 +401,11 @@ class PriceService:
 
         # Fallback: use ETH/USD as proxy for mETH
         return self._build_direct_snapshot(
-            asset, hermes_response, eth_obs,
+            asset,
+            hermes_response,
+            eth_obs,
             derivation_method="pyth_eth_usd_proxy",
+            data_source_label="pyth_eth_usd",
         )
 
     def _build_sepolia_mock_price(self, asset: AssetMetadata) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
@@ -356,11 +507,34 @@ class PriceService:
         )
         return [raw_snapshot], normalized
 
-    def _build_usdy_price(self, asset: AssetMetadata) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
+    def _build_usdy_price(self, asset: AssetMetadata, hermes_response, parsed_by_feed_id: dict[str, object]) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
+        if self.settings.target_chain == TargetChain.MANTLE_SEPOLIA:
+            inputs = self._price_inputs(asset)
+            direct_obs = parsed_by_feed_id.get(inputs.direct_feed_id) if inputs.direct_feed_id else None
+            if direct_obs is not None:
+                return self._build_direct_snapshot(
+                    asset,
+                    hermes_response,
+                    direct_obs,
+                    derivation_method="pyth_direct",
+                    data_source_label="pyth_direct",
+                )
+
+            if self.settings.sepolia_usdy_reference_price_usd:
+                return self._build_configured_reference_price(
+                    asset,
+                    source="configured_reference_price",
+                    price=self.settings.sepolia_usdy_reference_price_usd,
+                    reason="Sepolia USDY uses a configured mirrored reference price for testnet valuation.",
+                )
+
         oracle_read = self.ondo_usdy_adapter.read()
         if oracle_read.observation is None:
             if self.settings.target_chain.value == "mantle_sepolia" and self.settings.simulation_fallback_enabled:
-                return self._build_sepolia_stable_price(asset, f"Ondo USDY oracle: {oracle_read.status.status}, using $1 test fallback.")
+                return self._build_sepolia_stable_price(
+                    asset,
+                    f"Ondo USDY oracle: {oracle_read.status.status}, using $1 test fallback because no mirrored USDY reference feed is configured.",
+                )
             status_code = DataStatusCode.DATA_MISSING.value
             freshness_status = "unverified" if oracle_read.status.status == "selector_verification_required" else "missing"
             if oracle_read.status.status == "simulation_only":
@@ -421,7 +595,66 @@ class PriceService:
         )
         return [raw_snapshot], normalized
 
-    def _build_direct_snapshot(self, asset: AssetMetadata, hermes_response, observation, derivation_method: str) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
+    def _build_configured_reference_price(
+        self,
+        asset: AssetMetadata,
+        *,
+        source: str,
+        price: str,
+        reason: str,
+    ) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
+        now = utc_now()
+        raw_snapshot = RawPriceSnapshot(
+            snapshot_id=str(uuid4()),
+            asset_key=asset.asset_key,
+            asset_symbol=asset.symbol,
+            asset_address=asset.address,
+            chain_id=asset.chain_id,
+            feed_id=None,
+            source=source,
+            source_url=None,
+            raw_payload_json={
+                "target_chain": self.settings.target_chain.value,
+                "testnet_only": True,
+                "reason": reason,
+            },
+            fetch_timestamp=now,
+            publish_timestamp=now,
+            price_raw=price,
+            confidence_raw=None,
+            exponent=None,
+            status="simulation_only",
+            status_code=DataStatusCode.DATA_PARTIAL.value,
+            status_reason=reason,
+        )
+        normalized = NormalizedPriceSnapshot(
+            snapshot_id=str(uuid4()),
+            asset_key=asset.asset_key,
+            asset_symbol=asset.symbol,
+            asset_address=asset.address,
+            chain_id=asset.chain_id,
+            price_usd=price,
+            confidence_interval_usd=None,
+            publish_timestamp=now,
+            observed_timestamp=now,
+            age_seconds=0,
+            freshness_status="simulation_only",
+            status_code=DataStatusCode.DATA_PARTIAL.value,
+            status_reason=reason,
+            derivation_method=source,
+            data_sources_used=[source],
+            raw_snapshot_ids=[raw_snapshot.snapshot_id],
+        )
+        return [raw_snapshot], normalized
+
+    def _build_direct_snapshot(
+        self,
+        asset: AssetMetadata,
+        hermes_response,
+        observation,
+        derivation_method: str,
+        data_source_label: str = "pyth_direct",
+    ) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
         now = utc_now()
         raw_snapshot = RawPriceSnapshot(
             snapshot_id=str(uuid4()),
@@ -466,7 +699,7 @@ class PriceService:
             status_code=freshness.status_code,
             status_reason=freshness.status_reason,
             derivation_method=derivation_method,
-            data_sources_used=["pyth_eth_usd" if asset.symbol == "mETH" else "pyth_direct"],
+            data_sources_used=[data_source_label],
             raw_snapshot_ids=[raw_snapshot.snapshot_id],
         )
         return [raw_snapshot], normalized

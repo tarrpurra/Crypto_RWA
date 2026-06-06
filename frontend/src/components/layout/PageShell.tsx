@@ -49,7 +49,7 @@ export function PageHeader({
   return (
     <section
       className={cn(
-        "panel-strong border border-border/80 p-4 sm:p-5 h-full-screen",
+        "panel-strong border border-border/80 p-4 sm:p-5",
         className,
       )}
     >
@@ -109,7 +109,7 @@ export function PageTabs({
             className={cn(
               "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-all",
               active
-                ? "border-primary/30 bg-primary/12 text-primary shadow-[0_16px_36px_-24px_hsl(var(--primary)/0.9)]"
+                ? "border-primary/30 bg-primary/12 text-primary shadow-[0_16px_36px_-24px_hsl(var(--primary)/0.75)]"
                 : "border-border bg-surface-2 text-muted-foreground hover:border-accent/30 hover:bg-surface-2/80 hover:text-foreground",
             )}
           >

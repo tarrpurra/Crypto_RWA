@@ -1,25 +1,124 @@
+import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { ArrowRight, BellRing } from "lucide-react";
+import { toast } from "sonner";
 import { MetricPanel, PageScaffold, toneFromStatus } from "@/components/rwa/PageScaffold";
+import { useAuth } from "@/components/auth/AuthProvider";
 import { AISidePanel } from "@/components/dashboard/AISidePanel";
 import { PortfolioAllocationChart } from "@/components/dashboard/PortfolioAllocationChart";
 import { RiskBucketChart } from "@/components/dashboard/RiskBucketChart";
 import { WalletScopeControl } from "@/components/rwa/WalletScopeControl";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { useAllocationRecommendation } from "@/hooks/useAllocation";
+import { useInvestmentScope } from "@/hooks/useInvestmentScope";
 import { useMarketIngestionStatus } from "@/hooks/useMarket";
 import { useCurrentPortfolio, usePortfolioSnapshots } from "@/hooks/usePortfolio";
 import { useCurrentRisk } from "@/hooks/useRisk";
-import { useSystemHealth } from "@/hooks/useSystem";
+import { useSettings, useSystemHealth, useUpdateSettings } from "@/hooks/useSystem";
+import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
+
+const assetOptions = ["USDC", "USDY", "mETH", "MNT"] as const;
+const riskProfiles = ["Defensive", "Balanced", "Yield-Seeking"] as const;
 
 const Index = () => {
+  const navigate = useNavigate();
+  const { login } = useAuth();
+  const { scope, setScope, clearScope } = useInvestmentScope();
+  const [depositAsset, setDepositAsset] = useState<(typeof assetOptions)[number]>("MNT");
+  const [depositAmount, setDepositAmount] = useState("100");
+  const [riskProfile, setRiskProfile] = useState<(typeof riskProfiles)[number]>("Balanced");
   const healthQuery = useSystemHealth();
+  const settingsQuery = useSettings();
+  const updateSettings = useUpdateSettings();
   const portfolioQuery = useCurrentPortfolio();
   const riskQuery = useCurrentRisk();
+  const allocationQuery = useAllocationRecommendation();
   const marketQuery = useMarketIngestionStatus();
   const snapshotsQuery = usePortfolioSnapshots(10);
+  const { walletAddress, effectiveWalletAddress, connectedWalletAddress, isSupportedChain } = usePortfolioWallet();
 
   const health = healthQuery.data;
+  const settings = settingsQuery.data;
   const portfolio = portfolioQuery.data;
   const risk = riskQuery.data;
+  const allocation = allocationQuery.data;
   const market = marketQuery.data;
   const snapshots = snapshotsQuery.data;
+  const hasConnectedSupportedWallet = Boolean(connectedWalletAddress && isSupportedChain);
+  const aiDecisionMakerEnabled = settings?.ai_decision_maker_enabled ?? false;
+  const swapRecommendation = allocation?.decision.recommended_action === "REBALANCE" ? allocation.rebalance_actions[0] ?? null : null;
+  const lastRecommendationToastRef = useRef<string | null>(null);
+  const portfolioDetail =
+    !effectiveWalletAddress
+      ? ""
+      : portfolio?.status_reason ?? (effectiveWalletAddress ? "Reading /portfolio/current with explicit wallet scope." : "");
+  const riskDetail =
+    !effectiveWalletAddress
+      ? ""
+      : risk?.reasoning_summary ?? "";
+
+  useEffect(() => {
+    if (!scope) {
+      return;
+    }
+    if (assetOptions.includes(scope.depositAssetSymbol as (typeof assetOptions)[number])) {
+      setDepositAsset(scope.depositAssetSymbol as (typeof assetOptions)[number]);
+    }
+    setDepositAmount(String(scope.depositAmount));
+    if (riskProfiles.includes(scope.riskProfile as (typeof riskProfiles)[number])) {
+      setRiskProfile(scope.riskProfile as (typeof riskProfiles)[number]);
+    }
+  }, [scope]);
+
+  useEffect(() => {
+    if (!hasConnectedSupportedWallet || aiDecisionMakerEnabled || !swapRecommendation) {
+      lastRecommendationToastRef.current = null;
+      return;
+    }
+
+    const recommendationKey = `${swapRecommendation.asset_symbol}:${swapRecommendation.action}:${swapRecommendation.amount}`;
+    if (lastRecommendationToastRef.current === recommendationKey) {
+      return;
+    }
+
+    lastRecommendationToastRef.current = recommendationKey;
+    toast.info(
+      `Is now the right time to swap? ${swapRecommendation.asset_symbol} ${swapRecommendation.action} ${swapRecommendation.amount.toFixed(4)} is ready for review.`,
+    );
+  }, [aiDecisionMakerEnabled, hasConnectedSupportedWallet, swapRecommendation]);
+
+  useEffect(() => {
+    const parsedAmount = Number.parseFloat(depositAmount || "0");
+    if (!hasConnectedSupportedWallet || !Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      if (!hasConnectedSupportedWallet) {
+        clearScope();
+      }
+      return;
+    }
+    setScope({
+      depositAssetSymbol: depositAsset,
+      depositAmount: parsedAmount,
+      riskProfile,
+      allocationMode: "AI Suggested",
+      chainId: 5003,
+    });
+  }, [clearScope, depositAmount, depositAsset, hasConnectedSupportedWallet, riskProfile, setScope]);
+
+  const launchTradeFlow = () => {
+    const params = new URLSearchParams({
+      asset: depositAsset,
+      amount: depositAmount,
+      risk: riskProfile,
+    });
+    navigate(`/trade?${params.toString()}`);
+  };
+
+  const updateAiAccess = (enabled: boolean) => {
+    updateSettings.mutate({ ai_decision_maker_enabled: enabled });
+  };
 
   return (
     <div data-testid="overview-page" className="flex min-h-screen flex-1 flex-col">
@@ -29,6 +128,130 @@ const Index = () => {
         description="AI-powered yield optimization with real-time risk management for RWA portfolios."
       >
         <WalletScopeControl />
+        {hasConnectedSupportedWallet && (
+          <section className="terminal-panel p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+              <div>
+                <p className="terminal-label text-primary">Investment Scope</p>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Enter how much of the connected Mantle Sepolia wallet you want to deploy. Allocation and risk calls will use this scoped amount instead of the entire wallet.
+                </p>
+              </div>
+              <Button onClick={launchTradeFlow}>Open trade flow</Button>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+              <label className="grid gap-2">
+                <span className="text-xs text-muted-foreground">Deposit asset</span>
+                <Select value={depositAsset} onValueChange={(value) => setDepositAsset(value as typeof depositAsset)}>
+                  <SelectTrigger className="bg-surface-2">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {assetOptions.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {option}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+              <label className="grid gap-2">
+                <span className="text-xs text-muted-foreground">Amount to invest</span>
+                <Input type="number" min="0" step="0.01" value={depositAmount} onChange={(event) => setDepositAmount(event.target.value)} className="bg-surface-2" />
+              </label>
+              <label className="grid gap-2">
+                <span className="text-xs text-muted-foreground">Risk profile</span>
+                <Select value={riskProfile} onValueChange={(value) => setRiskProfile(value as typeof riskProfile)}>
+                  <SelectTrigger className="bg-surface-2">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {riskProfiles.map((profile) => (
+                      <SelectItem key={profile} value={profile}>
+                        {profile}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+            </div>
+          </section>
+        )}
+        {hasConnectedSupportedWallet && (
+          <section className="terminal-panel p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="terminal-label text-primary">AI access</p>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Recommendation only keeps swap review manual. Full access AI can approve linked proposals and execute the trade flow automatically.
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-muted-foreground">Recommendation only</span>
+                <Switch checked={aiDecisionMakerEnabled} disabled={updateSettings.isPending} onCheckedChange={updateAiAccess} />
+                <span className="text-xs text-muted-foreground">Full access AI</span>
+              </div>
+            </div>
+          </section>
+        )}
+        {hasConnectedSupportedWallet && swapRecommendation && (
+          <section className="terminal-panel border border-primary/35 bg-primary/5 p-4">
+            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div className="flex items-start gap-3">
+                <div className="rounded border border-primary/25 bg-primary/10 p-2 text-primary">
+                  <BellRing className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="terminal-label text-primary">Swap recommendation ready</p>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {aiDecisionMakerEnabled
+                      ? "Full access AI is active. The trade flow will auto-approve and execute linked proposals after the plan is created."
+                      : "Recommendation only is active. Review the prefilled swap details before you approve or execute anything."}
+                  </p>
+                  <div className="mt-3 grid gap-2 md:grid-cols-3">
+                    <div className="rounded border border-border bg-surface-2 px-3 py-2">
+                      <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">Swap asset</p>
+                      <p className="mt-1 font-mono text-sm text-foreground">
+                        {swapRecommendation.asset_symbol} {swapRecommendation.action === "BUY" ? "buy" : swapRecommendation.action}
+                      </p>
+                    </div>
+                    <div className="rounded border border-border bg-surface-2 px-3 py-2">
+                      <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">Suggested amount</p>
+                      <p className="mt-1 font-mono text-sm text-foreground">{swapRecommendation.amount.toFixed(4)}</p>
+                    </div>
+                    <div className="rounded border border-border bg-surface-2 px-3 py-2">
+                      <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">Confidence</p>
+                      <p className="mt-1 font-mono text-sm text-foreground">
+                        {allocation ? `${(allocation.decision.confidence * 100).toFixed(1)}%` : "-"}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    The trade page opens with the deposit asset, amount, and risk profile already filled.
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 md:justify-end">
+                <Button onClick={launchTradeFlow}>
+                  Review swap
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Button>
+                <Button variant="outline" onClick={() => navigate("/trade")}>
+                  Open trade page
+                </Button>
+              </div>
+            </div>
+          </section>
+        )}
+        {!effectiveWalletAddress && (
+          <section className="terminal-panel p-4">
+            <div className="mt-3">
+              <Button onClick={login} variant="outline">
+                Connect wallet
+              </Button>
+            </div>
+          </section>
+        )}
         {/* Top Metrics Row */}
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <MetricPanel
@@ -40,7 +263,7 @@ const Index = () => {
           <MetricPanel
             label="Portfolio"
             value={portfolio?.total_value_usd ? `$${portfolio.total_value_usd}` : portfolio?.status_label ?? "Loading"}
-            detail={portfolio?.status_reason ?? "Reading /portfolio/current with explicit missing-data handling."}
+            detail={portfolioDetail}
             tone={toneFromStatus(portfolio?.status)}
           />
           <MetricPanel
@@ -52,7 +275,7 @@ const Index = () => {
           <MetricPanel
             label="Risk"
             value={risk ? `${risk.risk_band} / ${risk.risk_score}` : "Loading"}
-            detail={risk?.reasoning_summary ?? "Reading /risk/current before displaying allocation decisions."}
+            detail={riskDetail}
             tone={risk?.hard_veto_status === "active" ? "blocked" : toneFromStatus(risk?.status)}
           />
           <MetricPanel
@@ -64,7 +287,7 @@ const Index = () => {
           <MetricPanel
             label="Snapshots"
             value={`${snapshots?.snapshots.length ?? 0} Recent`}
-            detail={snapshots?.status_reason ?? "Reading /portfolio/snapshots."}
+            detail={snapshots?.status_reason ?? (effectiveWalletAddress ? "Reading /portfolio/snapshots." : "Connect or paste a wallet to view historical snapshots.")}
             tone={toneFromStatus(snapshots?.status)}
           />
         </div>

@@ -86,7 +86,7 @@ export function AIDecisionFeed() {
           <p className="terminal-label text-primary">AI Decision</p>
           <h3 className="mt-0.5 text-sm font-semibold text-foreground">Latest recommendation</h3>
         </div>
-        <span className="rounded border border-primary/20 bg-primary/8 px-2 py-0.5 font-mono text-[0.6rem] font-semibold uppercase text-primary">
+        <span className="rounded border border-primary/20 bg-primary/10 px-2 py-0.5 font-mono text-[0.6rem] font-semibold uppercase text-primary">
           Live
         </span>
       </div>
@@ -99,7 +99,7 @@ export function AIDecisionFeed() {
       ) : (
         <>
           {/* Current action banner */}
-          <div className={cn("mt-4 flex items-center gap-3 border px-3 py-2.5", action === "PAUSE" ? "border-destructive/30 bg-destructive/10" : "border-primary/20 bg-primary/8")}>
+          <div className={cn("mt-4 flex items-center gap-3 border px-3 py-2.5", action === "PAUSE" ? "border-destructive/30 bg-destructive/10" : "border-primary/20 bg-primary/10")}>
             <Icon className={cn("h-5 w-5", config.color)} />
             <div className="min-w-0">
               <p className={cn("text-sm font-semibold", config.color)}>{config.label}</p>

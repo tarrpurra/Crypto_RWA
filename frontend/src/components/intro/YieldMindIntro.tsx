@@ -65,8 +65,8 @@ export default function YieldMindIntro({
           y: -104,
           width: 168,
           height: 168,
-          rotate: 0,
-        };
+        rotate: 0,
+      };
 
   return (
     <motion.div
@@ -82,9 +82,7 @@ export default function YieldMindIntro({
       className="fixed inset-0 z-[60] overflow-hidden bg-[#030303]"
       aria-hidden={isLaunching}
     >
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(214,184,63,0.16),transparent_38%),linear-gradient(rgba(214,184,63,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(214,184,63,0.08)_1px,transparent_1px)] bg-[size:auto,56px_56px,56px_56px] opacity-50" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,232,167,0.08),transparent_46%)]" />
-      <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(3,3,3,0.2),rgba(3,3,3,0.82))]" />
+      <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(3,3,3,0.06),rgba(3,3,3,0.66))]" />
 
       <motion.div
         initial={false}
@@ -123,7 +121,7 @@ export default function YieldMindIntro({
           filter: isLaunching ? "blur(6px)" : "blur(0px)",
         }}
         transition={{ duration: 0.56, ease: easeOut }}
-        className="absolute left-1/2 top-1/2 z-10 flex w-full max-w-sm -translate-x-1/2 translate-y-16 flex-col items-center px-6 text-center"
+        className="absolute left-1/2 top-1/2 z-10 flex w-full max-w-sm -translate-x-1/2 translate-y-20 flex-col items-center px-6 text-center"
       >
         <p className="font-display text-sm font-medium uppercase tracking-[0.28em] text-[#F1D86A]">
           Enter YieldMind

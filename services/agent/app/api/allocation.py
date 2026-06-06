@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from fastapi import APIRouter, HTTPException
+from services.agent.app.api.investment_scope import InvestmentScopeInput, build_scoped_allocation_response
 from services.agent.app.api.portfolio import current_portfolio
 from services.agent.app.schemas.allocation import AllocationDecisionResponse, AllocationDecision, RebalanceAction, UpdateProfileRequest
 from services.agent.modules.market_data.balances import internal_snapshot_from_response
@@ -50,7 +51,23 @@ def _active_profile_name() -> str:
 
 
 @router.get("/recommendation", response_model=AllocationDecisionResponse)
-async def get_allocation_recommendation(wallet_address: str | None = None) -> AllocationDecisionResponse:
+async def get_allocation_recommendation(
+    wallet_address: str | None = None,
+    deposit_asset_symbol: str | None = None,
+    deposit_amount: float | None = None,
+    risk_profile: str | None = None,
+    allocation_mode: str | None = None,
+) -> AllocationDecisionResponse:
+    if deposit_asset_symbol and deposit_amount and risk_profile:
+        return build_scoped_allocation_response(
+            InvestmentScopeInput(
+                wallet_address=wallet_address,
+                deposit_asset_symbol=deposit_asset_symbol,
+                deposit_amount=deposit_amount,
+                risk_profile=risk_profile,
+                allocation_mode=allocation_mode or "AI Suggested",
+            )
+        )
     portfolio_response = await current_portfolio(wallet_address=wallet_address)
     portfolio = internal_snapshot_from_response(portfolio_response)
     risk_engine = RiskScoreEngine()

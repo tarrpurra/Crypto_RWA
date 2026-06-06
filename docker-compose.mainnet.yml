@@ -2,6 +2,7 @@ services:
   backend:
     env_file:
       - ./services/agent/.env.docker.mainnet.test
+      - ./services/agent/.env
     environment:
       PYTHONPATH: /workspace
       DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/aixrwa

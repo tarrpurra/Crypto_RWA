@@ -4,7 +4,7 @@ import json
 import logging
 import httpx
 from services.agent.app.core.settings import get_settings
-from services.agent.app.core.runtime_config import AI_DECISION_MAKER_ENABLED
+from services.agent.app.core import runtime_config
 from services.agent.app.schemas.portfolio import PortfolioSnapshot
 from services.agent.app.schemas.risk import RiskSnapshot
 from services.agent.app.schemas.allocation import AllocationDecision, RebalanceAction
@@ -13,6 +13,21 @@ from services.agent.strategies.decision_templates.prompt_builder import build_re
 from services.agent.strategies.decision_templates.fallback_rules import generate_deterministic_explanation
 
 logger = logging.getLogger("services.agent.strategies.ai_parser")
+
+
+def _extract_json_payload(text: str) -> dict:
+    candidate = text.strip()
+    if candidate.startswith("```"):
+        candidate = candidate.strip("`")
+        candidate = candidate.removeprefix("json").strip()
+    start = candidate.find("{")
+    end = candidate.rfind("}")
+    if start >= 0 and end > start:
+        candidate = candidate[start : end + 1]
+    parsed = json.loads(candidate)
+    if not isinstance(parsed, dict):
+        raise ValueError("Ollama response JSON was not an object.")
+    return parsed
 
 
 def _override_with_ai_decision(
@@ -46,7 +61,7 @@ async def generate_recommendation_reasoning(
     rebalance_actions: list[RebalanceAction]
 ) -> RecommendationResponse:
     settings = get_settings()
-    ai_decision_maker = AI_DECISION_MAKER_ENABLED
+    ai_decision_maker = runtime_config.AI_DECISION_MAKER_ENABLED
     prompt = build_reasoning_prompt(portfolio, risk, decision, rebalance_actions, ai_decision_maker=ai_decision_maker)
 
     explanation = None
@@ -83,8 +98,8 @@ async def generate_recommendation_reasoning(
                     raw_response_text = result_json.get("response", "").strip()
                     logger.debug("Ollama raw response: %s", raw_response_text)
 
-                    parsed = json.loads(raw_response_text)
-                    parsed_response = parsed if isinstance(parsed, dict) else {}
+                    parsed = _extract_json_payload(raw_response_text)
+                    parsed_response = parsed
                     if ai_decision_maker:
                         if "recommended_action" in parsed:
                             effective_decision = _override_with_ai_decision(decision, parsed)
@@ -102,9 +117,19 @@ async def generate_recommendation_reasoning(
                             }
                     if explanation is None:
                         fallback_reason = "AI response did not contain the expected reasoning fields."
+                else:
+                    raw_response_text = res.text.strip() or None
+                    fallback_reason = f"Ollama returned HTTP {res.status_code}."
+                    logger.warning(
+                        "Ollama generate returned non-200 response at %s/api/generate: status=%s body=%s",
+                        ollama_url,
+                        res.status_code,
+                        raw_response_text,
+                    )
         except Exception as exc:
             logger.warning("AI model query failed or output was invalid: %s. Falling back.", exc)
             fallback_reason = str(exc)
+            raw_response_text = raw_response_text or None
 
     if explanation is None:
         explanation = generate_deterministic_explanation(portfolio, risk, decision, rebalance_actions)
@@ -115,7 +140,8 @@ async def generate_recommendation_reasoning(
     else:
         metadata = {
             "ai_reasoning_enabled": True,
-            "mode": f"ollama:{settings.ai_reasoning_model}",
+            "mode": "ai_decision_maker" if ai_decision_maker else "ai_recommender",
+            "ai_model": f"ollama:{settings.ai_reasoning_model}",
             "ai_decision_maker": ai_decision_maker,
             "ai_overrode_deterministic": ai_decision_maker and effective_decision.recommended_action != decision.recommended_action,
         }

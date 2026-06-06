@@ -1,13 +1,29 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { riskApi } from "@/lib/api/risk";
+import { useInvestmentScope } from "@/hooks/useInvestmentScope";
 import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 
-export function useCurrentRisk() {
-  const { walletAddress } = usePortfolioWallet();
+export function useCurrentRisk(options?: { allowEnvFallback?: boolean }) {
+  const { effectiveWalletAddress } = usePortfolioWallet();
+  const { scope } = useInvestmentScope();
+  const allowEnvFallback = options?.allowEnvFallback ?? false;
   return useQuery({
-    queryKey: ["risk", "current", walletAddress],
-    queryFn: () => riskApi.current(walletAddress),
+    queryKey: ["risk", "current", effectiveWalletAddress, scope, allowEnvFallback],
+    queryFn: () =>
+      riskApi.current(
+        effectiveWalletAddress,
+        scope
+          ? {
+              deposit_asset_symbol: scope.depositAssetSymbol,
+              deposit_amount: scope.depositAmount,
+              risk_profile: scope.riskProfile,
+              allocation_mode: scope.allocationMode,
+            }
+          : null,
+        allowEnvFallback,
+      ),
+    enabled: Boolean(effectiveWalletAddress) || allowEnvFallback,
     refetchInterval: 30_000,
   });
 }

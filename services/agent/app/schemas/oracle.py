@@ -12,6 +12,19 @@ class HermesFetchResponse(BaseModel):
     payload: dict
 
 
+class HermesConnectivityProbe(BaseModel):
+    base_url: str
+    host: str
+    resolved_ips: list[str] = Field(default_factory=list)
+    dns_ok: bool
+    tcp_ok: bool
+    tls_ok: bool
+    http_ok: bool
+    http_status: int | None = None
+    error: str | None = None
+    checked_at: datetime
+
+
 class PythPricePoint(BaseModel):
     feed_id: str
     publish_time: datetime

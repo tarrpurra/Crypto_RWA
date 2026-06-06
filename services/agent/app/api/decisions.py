@@ -4,6 +4,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
+from services.agent.app.api.investment_scope import InvestmentScopeInput, build_scoped_decision_response
 from services.agent.app.api.portfolio import current_portfolio
 from services.agent.app.core.settings import get_settings
 from services.agent.app.schemas.proposals import (
@@ -67,8 +68,24 @@ def _save_proposal_record(proposal: TradeProposal, calldata: str) -> None:
 
 
 @router.get("/decisions", response_model=RecommendationResponse)
-async def get_latest_decisions(wallet_address: str | None = None) -> RecommendationResponse:
-    portfolio = fetch_portfolio_snapshot(wallet_address=wallet_address)
+async def get_latest_decisions(
+    wallet_address: str | None = None,
+    deposit_asset_symbol: str | None = None,
+    deposit_amount: float | None = None,
+    risk_profile: str | None = None,
+    allocation_mode: str | None = None,
+) -> RecommendationResponse:
+    if deposit_asset_symbol and deposit_amount and risk_profile:
+        return await build_scoped_decision_response(
+            InvestmentScopeInput(
+                wallet_address=wallet_address,
+                deposit_asset_symbol=deposit_asset_symbol,
+                deposit_amount=deposit_amount,
+                risk_profile=risk_profile,
+                allocation_mode=allocation_mode or "AI Suggested",
+            )
+        )
+    portfolio = fetch_portfolio_snapshot(wallet_address=wallet_address, allow_env_fallback=False)
     risk = RiskScoreEngine().compute_risk_snapshot(portfolio)
     profile_name = profiles.ACTIVE_PROFILE_NAME or get_settings().allocation_profile_name
     decision, actions = compute_rebalance(portfolio, risk, normalize_profile_name(profile_name))

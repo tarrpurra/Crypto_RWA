@@ -11,11 +11,11 @@ const riskBuckets = [
 ];
 
 const actionBands = [
-  { range: "0-25", label: "Normal", color: "bg-emerald-500" },
-  { range: "25-45", label: "Clipped", color: "bg-yellow-500" },
-  { range: "45-65", label: "Rebalance only", color: "bg-orange-500" },
-  { range: "65-80", label: "Human approval", color: "bg-red-500" },
-  { range: ">80", label: "Pause / Emergency", color: "bg-red-800" },
+  { range: "0-25", label: "Normal", color: "bg-success" },
+  { range: "25-45", label: "Clipped", color: "bg-warning" },
+  { range: "45-65", label: "Rebalance only", color: "bg-lp-gold" },
+  { range: "65-80", label: "Human approval", color: "bg-danger" },
+  { range: ">80", label: "Pause / Emergency", color: "bg-danger/70" },
 ];
 
 export function PerformanceChart() {
@@ -57,7 +57,7 @@ export function PerformanceChart() {
 
             <div className="lg:col-span-3">
               <div className="border border-lp-border-muted bg-lp-surface p-6 border-l-4 border-lp-gold">
-                <p className="text-[10px] font-medium uppercase tracking-[1.5px] text-lp-gold mb-4">
+                <p className="mb-4 text-[10px] font-medium uppercase tracking-[1.5px] text-lp-gold">
                   Action Bands
                 </p>
                 <div className="space-y-3">

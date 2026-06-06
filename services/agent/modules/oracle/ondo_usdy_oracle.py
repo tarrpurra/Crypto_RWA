@@ -18,13 +18,19 @@ class OndoUsdyOracleRead:
 class OndoUsdyOracleAdapter:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
-        self.client = OndoOracleClient(self.settings.effective_http_rpc_url)
+
+    def _client_for_read(self) -> OndoOracleClient:
+        if self.settings.target_chain == TargetChain.MANTLE_MAINNET:
+            return OndoOracleClient(self.settings.effective_http_rpc_url)
+        if self.settings.ondo_usdy_reference_rpc_url:
+            return OndoOracleClient(self.settings.ondo_usdy_reference_rpc_url)
+        return OndoOracleClient(self.settings.effective_http_rpc_url)
 
     def read(self) -> OndoUsdyOracleRead:
         ingested_at = utc_now()
         address = self.settings.ondo_usdy_oracle_address or ""
 
-        if self.settings.target_chain != TargetChain.MANTLE_MAINNET:
+        if self.settings.target_chain != TargetChain.MANTLE_MAINNET and not self.settings.ondo_usdy_reference_rpc_url:
             return OndoUsdyOracleRead(
                 observation=None,
                 status=OndoUsdyOracleStatus(
@@ -68,7 +74,7 @@ class OndoUsdyOracleAdapter:
             )
 
         try:
-            observation = self.client.fetch_redemption_price(
+            observation = self._client_for_read().fetch_redemption_price(
                 oracle_address=address,
                 method_selector=selector,
                 decimals=self.settings.ondo_usdy_oracle_decimals,
@@ -96,6 +102,8 @@ class OndoUsdyOracleAdapter:
             source_label="Ondo USDY redemption oracle",
         )
         status = "live" if freshness.status == "ok" else "stale"
+        if self.settings.target_chain != TargetChain.MANTLE_MAINNET:
+            status = "live_reference" if freshness.status == "ok" else "stale_reference"
         return OndoUsdyOracleRead(
             observation=observation,
             status=OndoUsdyOracleStatus(

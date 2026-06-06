@@ -28,7 +28,7 @@ export function SwapPanel() {
       {/* Panel backdrop — click to close */}
       {open && (
         <div
-          className="fixed inset-0 z-30 bg-black/40"
+          className="fixed inset-0 z-30 bg-lp-bg/40"
           onClick={() => setOpen(false)}
         />
       )}

@@ -10,6 +10,7 @@ from services.agent.app.api import (
     decisions_router,
     health_router,
     market_router,
+    reports_router,
     portfolio_router,
     risk_router,
     settings_router,
@@ -35,6 +36,7 @@ app.include_router(health_router)
 app.include_router(chain_router)
 app.include_router(contracts_router)
 app.include_router(market_router)
+app.include_router(reports_router)
 app.include_router(portfolio_router)
 app.include_router(risk_router)
 app.include_router(allocation_router)

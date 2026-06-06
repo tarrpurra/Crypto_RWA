@@ -6,6 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Index from "@/pages/Index";
 import { createTestQueryClient } from "@/test/queryClient";
 
+vi.mock("@/components/auth/AuthProvider", () => ({
+  useAuth: () => ({ login: vi.fn(), logout: vi.fn(), ready: true, user: null }),
+}));
+
 vi.mock("@/hooks/usePortfolioWallet", () => ({
   usePortfolioWallet: () => ({ walletAddress: "", storedWallet: "", connectedWalletAddress: "", setWalletAddress: () => {} }),
 }));
@@ -153,6 +157,21 @@ beforeEach(() => {
       );
     }
 
+    if (url.endsWith("/settings")) {
+      return Promise.resolve(
+        jsonResponse({
+          ai_decision_maker_enabled: false,
+          chain_id: 5003,
+          native_mnt_enabled: true,
+          sepolia_usdy_address: "0x1",
+          sepolia_meth_address: "0x2",
+          sepolia_meth_is_test_token: true,
+          sepolia_meth_price_mode: "manual_mirror",
+          sepolia_wmnt_address: "0x3",
+        }),
+      );
+    }
+
     if (url.includes("/portfolio/snapshots")) {
       return Promise.resolve(
         jsonResponse({
@@ -174,16 +193,16 @@ afterEach(() => {
 });
 
 describe("Index", () => {
-  it("renders the AIYield dashboard with live degraded states", async () => {
+  it("renders the AIYield dashboard with wallet-required states when disconnected", async () => {
     renderPage();
 
     expect(screen.getByText("Dashboard")).toBeInTheDocument();
     expect(screen.getByText("AI-powered yield optimization with real-time risk management for RWA portfolios.")).toBeInTheDocument();
+    expect(screen.getAllByText("Connect wallet").length).toBeGreaterThan(0);
 
     await waitFor(() => {
       expect(screen.getByText("monitor_only")).toBeInTheDocument();
-      expect(screen.getAllByText("DATA_MISSING").length).toBeGreaterThan(0);
-      expect(screen.getAllByText("RISK_VETO / 100").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Loading").length).toBeGreaterThan(0);
     });
   });
 });

@@ -65,10 +65,15 @@ class Settings(BaseSettings):
     sepolia_mock_token_a_price_usd: str = "1"
     sepolia_mock_token_b_price_usd: str = "1"
     sepolia_meth_address: str | None = None
+    sepolia_meth_is_test_token: bool = False
+    sepolia_meth_price_mode: str = "eth_proxy"
     sepolia_usdy_address: str | None = None
+    sepolia_usdy_reference_price_usd: str | None = None
     sepolia_usdc_address: str | None = None
     sepolia_wmnt_address: str | None = None
     native_mnt_enabled: bool = False
+    require_live_prices: bool = False
+    meth_manual_price_usd: str | None = None
 
     pyth_hermes_url: str = "https://hermes.pyth.network"
     pyth_hermes_latest_price_path: str = "/v2/updates/price/latest"
@@ -90,6 +95,7 @@ class Settings(BaseSettings):
     ondo_usdy_oracle_address: str | None = "0xA96abbe61AfEdEB0D14a20440Ae7100D9aB4882f"
     ondo_usdy_oracle_method_selector: str | None = None
     ondo_usdy_oracle_decimals: int = 18
+    ondo_usdy_reference_rpc_url: str | None = None
     ondo_usdy_blocklist_address: str | None = "0xdBd7a7d8807f0C98c9A58f7732f2799c8587e5c6"
 
     pyth_mainnet_contract: str | None = "0xA2aa501b19aff244D90cc15a4Cf739D2725B5729"
@@ -121,9 +127,10 @@ class Settings(BaseSettings):
     weth_mainnet_address: str | None = "0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111"
 
     eth_usd_pyth_feed_id: str | None = "0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace"
-    usdy_pyth_feed_id: str | None = None
-    meth_usd_pyth_feed_id: str | None = None
-    meth_eth_ratio_feed_id: str | None = None
+    usdy_pyth_feed_id: str | None = "0xe393449f6aff8a4b6d3e1165a7c9ebec103685f3b41e60db4277b5b6d10e7326"
+    meth_usd_pyth_feed_id: str | None = "0xfbc9c3a716650b6e24ab22ab85b1c0ef4141b18f4590cc0b986e2f9064cf73d6"
+    meth_eth_ratio_feed_id: str | None = "0xee279eeb2fec830e3f535ad4d6524eb35eb1c6890cb1afc0b64554d08c88727e"
+    mnt_pyth_feed_id: str | None = "0x4e3037c822d852d79af3ac80e35eb420ee3b870dca49f9344a38ef4773fb0585"
 
     pyth_eth_usd_fresh_limit_seconds: int = 120
     pyth_eth_usd_warn_seconds: int = 120
@@ -215,6 +222,10 @@ class Settings(BaseSettings):
     @property
     def effective_sepolia_meth_address(self) -> str | None:
         return self.sepolia_meth_address or self.meth_sepolia_address
+
+    @property
+    def effective_sepolia_meth_price_mode(self) -> str:
+        return self.sepolia_meth_price_mode.strip().lower()
 
     @property
     def parsed_agni_fee_tiers(self) -> list[int]:
@@ -312,10 +323,10 @@ class Settings(BaseSettings):
                 "chain_id": self.mantle_sepolia_chain_id,
                 "address": self.sepolia_wmnt_address,
                 "price_strategy": "route_helper",
-                "primary_reference_source": "dex_quote_only",
+                "primary_reference_source": "pyth_direct",
                 "dex_quote_required": True,
                 "verified": bool(self.sepolia_wmnt_address),
-                "pyth_feed_id": None,
+                "pyth_feed_id": self.mnt_pyth_feed_id,
                 "ratio_feed_id": None,
                 "ondo_oracle_address": None,
                 "decimals": 18,
@@ -368,10 +379,10 @@ class Settings(BaseSettings):
                 "chain_id": self.mantle_mainnet_chain_id,
                 "address": self.wmnt_mainnet_address,
                 "price_strategy": "route_helper",
-                "primary_reference_source": "dex_quote_only",
+                "primary_reference_source": "pyth_direct",
                 "dex_quote_required": True,
                 "verified": bool(self.wmnt_mainnet_address),
-                "pyth_feed_id": None,
+                "pyth_feed_id": self.mnt_pyth_feed_id,
                 "ratio_feed_id": None,
                 "ondo_oracle_address": None,
                 "decimals": 18,
@@ -384,7 +395,7 @@ class Settings(BaseSettings):
         for asset_key, asset in self.asset_registry.items():
             if int(asset["chain_id"]) != self.effective_chain_id:
                 continue
-            if asset.get("price_strategy") == "route_helper":
+            if asset.get("price_strategy") == "route_helper" and asset.get("symbol") != "WMNT":
                 continue
             if asset.get("price_strategy") == "sepolia_mock_fixed" and not self.sepolia_mock_prices_enabled:
                 continue

@@ -95,9 +95,16 @@ def get_default_mock_snapshot() -> PortfolioSnapshot:
     return _missing_internal_snapshot("Mock portfolio fallback is disabled; no portfolio snapshot is available.")
 
 
-def fetch_portfolio_snapshot(wallet_address: str | None = None) -> PortfolioSnapshot:
+def fetch_portfolio_snapshot(wallet_address: str | None = None, *, allow_env_fallback: bool = False) -> PortfolioSnapshot:
     settings = get_settings()
-    portfolio_address = wallet_address or settings.portfolio_wallet_address or settings.executor_vault_address
+    portfolio_address = wallet_address
+    if not portfolio_address and allow_env_fallback:
+        portfolio_address = settings.portfolio_wallet_address or settings.executor_vault_address
+    if not portfolio_address:
+        return _missing_internal_snapshot(
+            "No wallet_address was provided for portfolio snapshot lookup.",
+            wallet_or_vault="UNCONFIGURED",
+        )
     try:
         snapshot = PortfolioSnapshotRepository().latest_snapshot(portfolio_address=portfolio_address)
     except Exception as exc:
@@ -241,6 +248,7 @@ class PortfolioSnapshotEngine:
         all_valued = True
         data_sources: set[str] = set()
         parsed_targets = self._parse_target_weights(target_weights or {})
+        quote_validation_status = self._quote_validation_status()
 
         for balance in balances:
             position, value = self._position_from_balance(balance, price_by_key, price_by_symbol)
@@ -282,9 +290,45 @@ class PortfolioSnapshotEngine:
                 "balance_count": len(balances),
                 "all_positions_valued": all_valued,
                 "target_weights_configured": bool(parsed_targets),
-                "route_depth_status": "pending_phase_1b_quote_validation",
+                "route_depth_status": quote_validation_status,
             },
         )
+
+    def _quote_validation_status(self) -> str:
+        try:
+            from services.agent.modules.quotes import get_quote_service
+
+            quote_service = get_quote_service()
+            routes = quote_service.discover_routes()
+            if not routes:
+                from services.agent.repositories.db.market_repository import MarketDataRepository
+
+                persisted_quotes = MarketDataRepository().latest_normalized_quotes()
+                return "live_quote_ok" if persisted_quotes else "no_routes"
+            attempts = [quote_service.best_quote_attempt_for_pair(route.token_in, route.token_out) for route in routes]
+            attempts = [attempt for attempt in attempts if attempt is not None]
+            if not attempts:
+                from services.agent.repositories.db.market_repository import MarketDataRepository
+
+                persisted_quotes = MarketDataRepository().latest_normalized_quotes()
+                return "live_quote_ok" if persisted_quotes else "pending_phase_1b_quote_validation"
+            if any(attempt.normalized_snapshot.amount_out is None for attempt in attempts):
+                from services.agent.repositories.db.market_repository import MarketDataRepository
+
+                persisted_quotes = MarketDataRepository().latest_normalized_quotes()
+                return "live_quote_ok" if persisted_quotes else "quote_failed"
+            return "live_quote_ok"
+        except Exception as exc:
+            logger.warning("Route-depth validation failed: %s", exc)
+            try:
+                from services.agent.repositories.db.market_repository import MarketDataRepository
+
+                persisted_quotes = MarketDataRepository().latest_normalized_quotes()
+                if persisted_quotes:
+                    return "live_quote_ok"
+            except Exception:
+                pass
+            return "pending_phase_1b_quote_validation"
 
     def _with_weight_and_drift(
         self,
@@ -336,13 +380,22 @@ class PortfolioSnapshotEngine:
         price_value = _decimal_or_none(price.price_usd) if price else None
         price_is_usable = _price_is_usable(price, price_value)
 
-        value = amount * price_value if amount is not None and price_value is not None and price_is_usable else None
+        zero_balance = amount is not None and amount == 0
+        if zero_balance:
+            value = Decimal("0")
+        elif amount is not None and price_value is not None and price_is_usable:
+            value = amount * price_value
+        else:
+            value = None
+
         status_code = "DATA_FRESH" if value is not None and balance.status_code == "DATA_FRESH" else "DATA_MISSING"
         status_reason = "Position valued from balance and price snapshots."
         if balance.status_code != "DATA_FRESH":
             status_reason = balance.status_reason
         elif amount is None:
             status_reason = "Balance amount is not parseable."
+        elif zero_balance:
+            status_reason = "Zero-balance position valued at 0 without requiring a price snapshot."
         elif not price:
             status_reason = "No price snapshot is available for this position."
         elif not price_is_usable:

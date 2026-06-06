@@ -38,7 +38,7 @@ export function WaitlistModal({ open, onClose }: WaitlistModalProps) {
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
           onClick={onClose}
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-6 backdrop-blur-xl dark:bg-black/70"
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-lp-bg/62 p-6 backdrop-blur-xl"
         >
           <motion.div
             initial={{ opacity: 0, scale: 0.95, y: 10 }}
