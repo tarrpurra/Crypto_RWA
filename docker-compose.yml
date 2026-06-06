@@ -76,6 +76,7 @@ services:
       - 0.0.0.0
       - --port
       - "8000"
+      - --reload
 
   frontend:
     build:
@@ -90,6 +91,9 @@ services:
       VITE_API_BASE_URL: http://localhost:8000
     ports:
       - "8080:8080"
+    volumes:
+      - ./:/workspace
+      - /workspace/frontend/node_modules
     command:
       - npm
       - run
