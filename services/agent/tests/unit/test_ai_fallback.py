@@ -78,6 +78,26 @@ class AiFallbackTests(unittest.TestCase):
         self.assertEqual(response.metadata["ai_reasoning_enabled"], False)
         self.assertEqual(response.metadata["mode"], "fallback_deterministic")
 
+    def test_recommendation_parser_focuses_asset_field_on_actionable_legs(self) -> None:
+        import asyncio
+
+        rebalance_actions = [
+            RebalanceAction(asset_symbol="USDC", action="BUY", amount=37.5, route_id="route-usdc"),
+            RebalanceAction(asset_symbol="USDY", action="BUY", amount=0.0, route_id="route-usdy"),
+            RebalanceAction(asset_symbol="mETH", action="HOLD", amount=12.0, route_id=None),
+        ]
+
+        response = asyncio.run(
+            generate_recommendation_reasoning(
+                self.portfolio,
+                self.risk,
+                self.decision,
+                rebalance_actions,
+            )
+        )
+
+        self.assertEqual(response.asset, "USDC")
+
     def test_prompt_builder_decision_maker_mode_includes_action_field(self) -> None:
         prompt = build_reasoning_prompt(self.portfolio, self.risk, self.decision, [], ai_decision_maker=True)
         self.assertIn("recommended_action", prompt)

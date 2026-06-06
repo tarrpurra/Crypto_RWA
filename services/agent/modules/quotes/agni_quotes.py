@@ -54,6 +54,12 @@ class AgniQuoteService:
                 return int(entry.get("decimals", 18))
         return 18
 
+    @staticmethod
+    def _is_expected_quote_revert(exc: Exception) -> bool:
+        message = " ".join(str(part) for part in getattr(exc, "args", ()) if part is not None) or str(exc)
+        lowered = message.lower()
+        return "execution reverted" in lowered or lowered.strip() == "0x"
+
     def quote_route(self, route: RouteDescriptor, amount_in: Decimal) -> AgniQuoteAttempt:
         now = utc_now()
         quoter_address = self.settings.effective_agni_quoter_v2_address
@@ -163,7 +169,11 @@ class AgniQuoteService:
             freshness_status = "fresh"
 
         except Exception as exc:
-            logger.warning("AGNI quote_route RPC error for %s->%s: %s", route.token_in, route.token_out, exc)
+            expected_revert = self._is_expected_quote_revert(exc)
+            if expected_revert:
+                logger.info("AGNI quote_route reverted for %s->%s: %s", route.token_in, route.token_out, exc)
+            else:
+                logger.warning("AGNI quote_route RPC error for %s->%s: %s", route.token_in, route.token_out, exc)
             amount_out = Decimal(0)
             amount_out_raw = None
             quoted_price = None
@@ -173,10 +183,14 @@ class AgniQuoteService:
             gas_estimate = None
             sqrt_price_x96_after = None
 
-            status = "rpc_error"
+            status = "quote_failed" if expected_revert else "rpc_error"
             status_code = DataStatusCode.LIQUIDITY_UNKNOWN.value
-            status_reason = f"AGNI QuoterV2 call failed: {exc}"
-            freshness_status = "rpc_error"
+            status_reason = (
+                f"AGNI QuoterV2 reverted for route {route.token_in}->{route.token_out}: {exc}"
+                if expected_revert
+                else f"AGNI QuoterV2 call failed: {exc}"
+            )
+            freshness_status = "quote_failed" if expected_revert else "rpc_error"
 
         raw_snapshot = RawQuoteSnapshot(
             snapshot_id=str(uuid4()),

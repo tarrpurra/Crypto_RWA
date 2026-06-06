@@ -17,6 +17,36 @@ For each entry, record:
 
 ## Change Log
 
+### 2026-06-06
+
+Type:
+Feature | Deployment | Docs
+
+Summary:
+
+- added a dedicated `MockMETH` ERC-20 contract with owner-controlled minting and canonical demo metadata (`Mantle Staked ETH`, `mETH`, `18` decimals)
+- added a focused Foundry deployment script for the Sepolia demo `mETH` token
+- added a focused Foundry bootstrap script for creating and seeding a Sepolia AGNI `WMNT/mETH` pool using the known AGNI Sepolia position manager
+- expanded the contracts env template with the Sepolia demo-token and pool-bootstrap parameters needed for the live hackathon flow
+
+Affected scope:
+
+- `contracts/src/mocks/MockMETH.sol`
+- `contracts/script/DeploySepoliaMockMETH.s.sol`
+- `contracts/script/BootstrapSepoliaWmntMethPool.s.sol`
+- `contracts/.env.example`
+
+Impact:
+
+- frontend: no direct UI code changed here, but these scripts provide the on-chain assets and liquidity the frontend needs for a real Sepolia swap demo
+- AI/data analytics: the agent can now be wired against an explicitly application-owned Sepolia `mETH` demo asset instead of the stale `MCK` mock address
+- deployment: Foundry now has a direct path to deploy the Sepolia demo token and seed the AGNI pool required by the route-discovery flow
+
+Assumptions / unresolved verification items:
+
+- the scripts expect a funded deployer key, the AGNI Sepolia position manager at `0x71959543c31EC4d68D9D6C492Bf69A1C174bb394`, and caller-supplied initial price / liquidity amounts
+- the deployment and liquidity commands were not run in this turn, so no live Sepolia address was written back into the repo
+
 ### 2026-05-12
 
 Type:

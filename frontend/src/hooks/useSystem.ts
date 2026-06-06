@@ -18,6 +18,14 @@ export function useServiceStatus() {
   });
 }
 
+export function useSystemReadiness() {
+  return useQuery({
+    queryKey: ["system", "readiness"],
+    queryFn: systemApi.readiness,
+    refetchInterval: 30_000,
+  });
+}
+
 export function useChainStatus() {
   return useQuery({
     queryKey: ["chain", "status"],
@@ -41,6 +49,10 @@ export function useUpdateSettings() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["system", "settings"] });
       queryClient.invalidateQueries({ queryKey: ["system", "status"] });
+      queryClient.invalidateQueries({ queryKey: ["decisions"] });
+      queryClient.invalidateQueries({ queryKey: ["risk"] });
+      queryClient.invalidateQueries({ queryKey: ["allocation"] });
+      queryClient.invalidateQueries({ queryKey: ["reports", "investment"] });
     },
   });
 }

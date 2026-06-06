@@ -24,6 +24,16 @@ FACTORY_ABI = [
     }
 ]
 
+POOL_ABI = [
+    {
+        "inputs": [],
+        "name": "liquidity",
+        "outputs": [{"internalType": "uint128", "name": "", "type": "uint128"}],
+        "stateMutability": "view",
+        "type": "function",
+    }
+]
+
 
 @dataclass(frozen=True)
 class AgniPoolCandidate:
@@ -92,9 +102,31 @@ class AgniDiscoveryService:
                 metadata={},
             )
 
+        try:
+            pool_contract = self.web3.eth.contract(
+                address=self.web3.to_checksum_address(pool),
+                abi=POOL_ABI,
+            )
+            liquidity = int(pool_contract.functions.liquidity().call())
+        except Exception as exc:
+            return AgniPoolCandidate(
+                fee_tier=fee_tier,
+                pool_address=None,
+                status="rpc_error",
+                metadata={"error": str(exc)},
+            )
+
+        if liquidity <= 0:
+            return AgniPoolCandidate(
+                fee_tier=fee_tier,
+                pool_address=None,
+                status="no_liquidity",
+                metadata={"liquidity": liquidity},
+            )
+
         return AgniPoolCandidate(
             fee_tier=fee_tier,
             pool_address=pool,
             status="discovered",
-            metadata={},
+            metadata={"liquidity": liquidity},
         )

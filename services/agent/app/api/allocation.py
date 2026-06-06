@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from fastapi import APIRouter, HTTPException
+from services.agent.app.api.investment_scope import InvestmentScopeInput, build_scoped_allocation_response
 from services.agent.app.api.portfolio import current_portfolio
 from services.agent.app.schemas.allocation import AllocationDecisionResponse, AllocationDecision, RebalanceAction, UpdateProfileRequest
 from services.agent.modules.market_data.balances import internal_snapshot_from_response
@@ -12,7 +13,7 @@ from services.agent.strategies.allocation.profiles import normalize_profile_name
 from services.agent.repositories.db.models import AllocationDecisionRecord
 from services.agent.repositories.db.session import create_session, init_db
 from services.agent.modules.oracle.freshness import utc_now
-from services.agent.app.core.settings import get_settings
+from services.agent.app.core.settings import TargetChain, get_settings
 
 logger = logging.getLogger("services.agent.allocation.api")
 router = APIRouter(prefix="/allocation", tags=["allocation"])
@@ -42,7 +43,10 @@ def _save_allocation_decision(decision: AllocationDecision) -> None:
 
 
 def _active_profile_name() -> str:
-    configured_name = profiles.ACTIVE_PROFILE_NAME or get_settings().allocation_profile_name
+    settings = get_settings()
+    configured_name = profiles.ACTIVE_PROFILE_NAME or settings.allocation_profile_name
+    if settings.target_chain == TargetChain.MANTLE_SEPOLIA:
+        configured_name = "Sepolia Test"
     try:
         return normalize_profile_name(configured_name)
     except ValueError as exc:
@@ -50,7 +54,23 @@ def _active_profile_name() -> str:
 
 
 @router.get("/recommendation", response_model=AllocationDecisionResponse)
-async def get_allocation_recommendation(wallet_address: str | None = None) -> AllocationDecisionResponse:
+async def get_allocation_recommendation(
+    wallet_address: str | None = None,
+    deposit_asset_symbol: str | None = None,
+    deposit_amount: float | None = None,
+    risk_profile: str | None = None,
+    allocation_mode: str | None = None,
+) -> AllocationDecisionResponse:
+    if deposit_asset_symbol and deposit_amount and risk_profile:
+        return build_scoped_allocation_response(
+            InvestmentScopeInput(
+                wallet_address=wallet_address,
+                deposit_asset_symbol=deposit_asset_symbol,
+                deposit_amount=deposit_amount,
+                risk_profile=risk_profile,
+                allocation_mode=allocation_mode or "AI Suggested",
+            )
+        )
     portfolio_response = await current_portfolio(wallet_address=wallet_address)
     portfolio = internal_snapshot_from_response(portfolio_response)
     risk_engine = RiskScoreEngine()
@@ -76,10 +96,14 @@ async def get_allocation_recommendation(wallet_address: str | None = None) -> Al
 
 @router.post("/profile", response_model=dict[str, str])
 async def update_active_profile(request: UpdateProfileRequest) -> dict[str, str]:
+    settings = get_settings()
     try:
         canonical_name = normalize_profile_name(request.profile_name)
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid profile name: {request.profile_name}. Approved: {list(profiles.ALLOCATION_PROFILES.keys())}")
+
+    if settings.target_chain == TargetChain.MANTLE_SEPOLIA:
+        canonical_name = "Sepolia Test"
 
     profiles.ACTIVE_PROFILE_NAME = canonical_name
     return {"status": "ok", "message": f"Active allocation profile set to {canonical_name}"}

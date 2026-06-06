@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from services.agent.app.core.status_codes import RiskStatusCode
 from services.agent.app.schemas.portfolio import PortfolioSnapshot
 from services.agent.app.schemas.risk import RiskSnapshot
 from services.agent.app.schemas.allocation import AllocationDecision, RebalanceAction
@@ -96,6 +97,8 @@ def compute_rebalance(
         # We need to rebalance
         recommended_action = "REBALANCE"
         rebalance_notes: list[str] = []
+        blocked_by_pricing = False
+        blocked_by_risk = False
         
         # Sort drifts so we execute sales (negative drift we buy, positive drift we sell)
         # It's usually safer to execute sales first to free up capital, but in our backend recommendation
@@ -107,6 +110,7 @@ def compute_rebalance(
             
             if price == 0.0:
                 logger.warning("Skipping %s rebalance action because the position price is unavailable.", asset)
+                blocked_by_pricing = True
                 continue
                 
             delta_val_usd = -drift * portfolio.total_value_usd  # Positive means we need to buy, negative means sell
@@ -115,11 +119,13 @@ def compute_rebalance(
             if risk.risk_band == "RISK_REDUCE_ONLY" and delta_val_usd > 0 and asset in ("mETH", "USDY"):
                 # Cannot buy mETH or USDY in reduce-only
                 logger.info("Blocking buy action for %s due to RISK_REDUCE_ONLY", asset)
+                blocked_by_risk = True
                 continue
                 
             if risk.risk_band == "RISK_REBALANCE_ONLY" and delta_val_usd > 0 and asset == "mETH":
                 # Cannot buy volatile assets in rebalance-only
                 logger.info("Blocking buy action for mETH due to RISK_REBALANCE_ONLY")
+                blocked_by_risk = True
                 continue
 
             # Clip trade sizes
@@ -144,8 +150,22 @@ def compute_rebalance(
             reasoning = f"Proposed rebalance actions for {profile_name} profile: " + ", ".join(rebalance_notes)
         else:
             recommended_action = "HOLD"
-            reasoning = f"Significant drifts detected, but rebalance actions were filtered out by risk engine rules ({risk.risk_band})."
-            
+            if blocked_by_pricing and blocked_by_risk:
+                reasoning = (
+                    f"Significant drifts detected, but rebalance actions were blocked by missing pricing and risk engine rules ({risk.risk_band})."
+                )
+            elif blocked_by_pricing:
+                reasoning = "Significant drifts detected, but rebalance actions could not be sized because one or more position prices are unavailable."
+            else:
+                reasoning = f"Significant drifts detected, but rebalance actions were filtered out by risk engine rules ({risk.risk_band})."
+
+    if rebalance_actions:
+        status_code = "PROPOSAL_DRAFT"
+    elif significant_drifts:
+        status_code = risk.status_code if risk.status_code != RiskStatusCode.RISK_NORMAL.value else RiskStatusCode.RISK_REBALANCE_ONLY.value
+    else:
+        status_code = RiskStatusCode.RISK_NORMAL.value
+
     decision = AllocationDecision(
         decision_id=decision_id,
         wallet_or_vault=portfolio.wallet_or_vault,
@@ -156,7 +176,7 @@ def compute_rebalance(
         confidence=confidence,
         reasoning=reasoning,
         risk_snapshot_id=risk.snapshot_id,
-        status_code="RISK_NORMAL" if recommended_action == "HOLD" else "PROPOSAL_DRAFT",
+        status_code=status_code,
         created_at=now,
     )
     return decision, rebalance_actions

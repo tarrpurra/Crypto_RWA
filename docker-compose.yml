@@ -25,6 +25,9 @@ services:
       target: foundry
     container_name: rwa-foundry
     working_dir: /workspace/contracts
+    env_file:
+      - ./contracts/.env
+      - ./services/agent/.env
     volumes:
       - ./:/workspace
     tty: true
@@ -61,6 +64,7 @@ services:
         condition: service_healthy
     env_file:
       - ./services/agent/.env.docker.test
+      - ./services/agent/.env
     environment:
       PYTHONPATH: /workspace
       DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/aixrwa

@@ -10,6 +10,10 @@ vi.mock("@/components/layout/TopBar", () => ({
   TopBar: () => <div>Top bar</div>,
 }));
 
+vi.mock("@/components/swap/SwapPanel", () => ({
+  SwapPanel: () => <div>Swap panel</div>,
+}));
+
 describe("DashboardLayout", () => {
   function renderLayout(pathname: string, children: React.ReactNode) {
     const client = createTestQueryClient();

@@ -25,6 +25,11 @@ export function AIDecisionFeed() {
   const action = decisions?.recommended_action ?? "MONITOR"
   const config = actionConfig[action] ?? actionConfig.MONITOR
   const Icon = config.icon
+  const riskBand = risk?.risk_band ?? "UNKNOWN"
+  const riskBandColor =
+    riskBand === "RISK_NORMAL" ? "text-success" :
+    riskBand === "RISK_CAUTION" || riskBand === "RISK_REBALANCE_ONLY" ? "text-warning" :
+    riskBand === "RISK_REDUCE_ONLY" || riskBand === "RISK_PAUSE_REQUIRED" || riskBand === "RISK_VETO" ? "text-destructive" : "text-muted-foreground"
 
   const decisionItems: Array<{
     key: string
@@ -42,7 +47,7 @@ export function AIDecisionFeed() {
       label: "Risk Score",
       value: `${risk.risk_score}`,
       detail: risk.risk_band ?? "N/A",
-      status: risk.risk_band === "NORMAL" ? "ok" : risk.risk_band === "CAUTION" ? "warn" : "info",
+      status: risk.risk_band === "RISK_NORMAL" ? "ok" : "warn",
     })
   }
 
@@ -86,7 +91,7 @@ export function AIDecisionFeed() {
           <p className="terminal-label text-primary">AI Decision</p>
           <h3 className="mt-0.5 text-sm font-semibold text-foreground">Latest recommendation</h3>
         </div>
-        <span className="rounded border border-primary/20 bg-primary/8 px-2 py-0.5 font-mono text-[0.6rem] font-semibold uppercase text-primary">
+        <span className="rounded border border-primary/20 bg-primary/10 px-2 py-0.5 font-mono text-[0.6rem] font-semibold uppercase text-primary">
           Live
         </span>
       </div>
@@ -99,7 +104,7 @@ export function AIDecisionFeed() {
       ) : (
         <>
           {/* Current action banner */}
-          <div className={cn("mt-4 flex items-center gap-3 border px-3 py-2.5", action === "PAUSE" ? "border-destructive/30 bg-destructive/10" : "border-primary/20 bg-primary/8")}>
+          <div className={cn("mt-4 flex items-center gap-3 border px-3 py-2.5", action === "PAUSE" ? "border-destructive/30 bg-destructive/10" : "border-primary/20 bg-primary/10")}>
             <Icon className={cn("h-5 w-5", config.color)} />
             <div className="min-w-0">
               <p className={cn("text-sm font-semibold", config.color)}>{config.label}</p>
@@ -138,7 +143,7 @@ export function AIDecisionFeed() {
                 ) : (
                   <AlertTriangle className="h-3.5 w-3.5 text-warning" />
                 )}
-                <span className="text-[0.65rem] text-muted-foreground">{decisions.status_reason}</span>
+                <span className={cn("text-[0.65rem]", decisions.status === "ok" ? "text-muted-foreground" : riskBandColor)}>{decisions.status_reason}</span>
               </div>
             </div>
           )}

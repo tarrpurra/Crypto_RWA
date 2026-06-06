@@ -64,9 +64,9 @@ export function FeatureGrid() {
           <motion.div
             key={f.title}
             variants={itemAnim}
-            className="group border border-lp-border-muted bg-lp-surface p-8 border-l-4 border-lp-gold shadow-hard transition-all duration-300 hover:-translate-y-1 hover:border-l-[#FFD766] hover:shadow-[8px_8px_0px_hsl(var(--lp-gold))]"
+            className="group border border-lp-border-muted bg-lp-surface p-8 border-l-4 border-lp-gold shadow-hard transition-all duration-300 hover:-translate-y-1 hover:border-l-[#ffdca0] hover:shadow-[0_22px_48px_-28px_hsl(var(--lp-gold)/0.72)]"
           >
-            <div className="mb-8 flex h-12 w-12 items-center justify-center bg-lp-surface-2 text-lp-gold">
+            <div className="mb-8 flex h-12 w-12 items-center justify-center border border-lp-border-muted bg-lp-surface-2 text-lp-gold">
               {f.icon}
             </div>
             <h3 className="font-display text-2xl font-semibold tracking-tight text-lp-fg">
@@ -110,7 +110,7 @@ export function FeatureGrid() {
         >
           <div className="flex h-full flex-col justify-between">
             <div>
-              <div className="mb-4 flex h-12 w-12 items-center justify-center bg-lp-surface-2 text-lp-gold">
+              <div className="mb-4 flex h-12 w-12 items-center justify-center border border-lp-border-muted bg-lp-surface-2 text-lp-gold">
                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
                 </svg>

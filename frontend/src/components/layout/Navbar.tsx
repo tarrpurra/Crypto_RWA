@@ -19,7 +19,7 @@ const Navbar = ({ hasEntered }: { hasEntered: boolean }) => {
 
   return (
     <nav
-      className="fixed top-0 left-0 right-0 z-40 flex h-16 items-center justify-between px-6 py-3 bg-black/80 backdrop-blur-md border-b border-black/30"
+      className="fixed left-0 right-0 top-0 z-40 flex h-16 items-center justify-between border-b border-lp-border-muted bg-lp-bg/82 px-6 py-3 backdrop-blur-md"
     >
       <div className="flex items-center gap-3">
         {/* Conditional logo rendering based on intro state */}
@@ -45,7 +45,7 @@ const Navbar = ({ hasEntered }: { hasEntered: boolean }) => {
               initial={{ opacity: 0, x: -8 }}
               animate={{ opacity: hasEntered ? 1 : 0, x: hasEntered ? 0 : -8 }}
               transition={{ delay: 0.8, duration: 0.6, ease: "easeOut" }}
-              className="text-xl font-semibold tracking-tight text-white"
+              className="text-xl font-semibold tracking-tight text-lp-fg"
             >
               YieldMind
             </motion.span>
@@ -61,8 +61,8 @@ const Navbar = ({ hasEntered }: { hasEntered: boolean }) => {
             className={`
               flex items-center gap-2 px-3 py-1.5 rounded-md
               ${pathname === link.href
-                ? "bg-black/60 text-white"
-                : "text-gray-400 hover:text-white transition-colors duration-200"
+                ? "bg-lp-surface-2 text-lp-fg"
+                : "text-lp-fg-muted hover:text-lp-fg transition-colors duration-200"
               }
             `}
           >

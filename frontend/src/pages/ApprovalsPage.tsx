@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { useCurrentRisk } from "@/hooks/useRisk";
 import { useProposalActivity } from "@/hooks/useProposalActivity";
 import { useApproveProposal, useExecuteProposal, useProposalDetail, useProposals, useRejectProposal } from "@/hooks/useSwap";
+import { useSettings } from "@/hooks/useSystem";
 
 function ProposalActionCard({
   proposal,
@@ -19,6 +20,7 @@ function ProposalActionCard({
   onReject,
   onExecute,
   onInspect,
+  aiDecisionMakerEnabled,
 }: {
   proposal: {
     proposal_id: string;
@@ -38,6 +40,7 @@ function ProposalActionCard({
   onReject: (id: string) => void;
   onExecute: (id: string) => void;
   onInspect: (proposalId: string) => void;
+  aiDecisionMakerEnabled: boolean;
 }) {
   const isPending = proposal.status_code === "PROPOSAL_PENDING_APPROVAL";
   const isApproved = proposal.status_code === "PROPOSAL_APPROVED";
@@ -74,7 +77,7 @@ function ProposalActionCard({
             <Eye className="mr-2 h-3.5 w-3.5" />
             Review
           </Button>
-          {isPending && (
+          {!aiDecisionMakerEnabled && isPending && (
             <>
               <Button size="sm" onClick={() => onApprove(proposal.proposal_id)} disabled={working}>
                 Approve
@@ -84,10 +87,15 @@ function ProposalActionCard({
               </Button>
             </>
           )}
-          {isApproved && (
+          {!aiDecisionMakerEnabled && isApproved && (
             <Button size="sm" onClick={() => onExecute(proposal.proposal_id)} disabled={working}>
               Execute
             </Button>
+          )}
+          {aiDecisionMakerEnabled && (
+            <div className="rounded border border-success/40 bg-success/10 px-2 py-1 text-xs text-success">
+              Full access AI is handling approval and execution automatically.
+            </div>
           )}
         </div>
       </div>
@@ -98,11 +106,13 @@ function ProposalActionCard({
 export default function ApprovalsPage() {
   const proposalsQuery = useProposals();
   const riskQuery = useCurrentRisk();
+  const settingsQuery = useSettings();
   const approveMutation = useApproveProposal();
   const rejectMutation = useRejectProposal();
   const executeMutation = useExecuteProposal();
   const { appendEntry, getEntriesForProposal } = useProposalActivity();
   const proposals = useMemo(() => proposalsQuery.data?.proposals ?? [], [proposalsQuery.data?.proposals]);
+  const aiDecisionMakerEnabled = settingsQuery.data?.ai_decision_maker_enabled ?? false;
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
   const [showRiskDialog, setShowRiskDialog] = useState(false);
   const proposalDetailQuery = useProposalDetail(selectedProposalId);
@@ -118,6 +128,9 @@ export default function ApprovalsPage() {
   const executedCount = proposals.filter((p) => p.status_code === "PROPOSAL_EXECUTED").length;
   const working = approveMutation.isPending || rejectMutation.isPending || executeMutation.isPending;
   const proposalActivity = getEntriesForProposal(selectedProposalId);
+  const pageDescription = aiDecisionMakerEnabled
+    ? "Review proposal timelines and inspect execution details while full access AI handles approvals and swaps automatically."
+    : "Review proposal timelines, inspect execution details, approve intent, and submit qualified swaps onchain.";
 
   const handleApprove = (id: string) => {
     approveMutation.mutate(id, {
@@ -170,7 +183,7 @@ export default function ApprovalsPage() {
     <PageScaffold
       eyebrow="Trade Approval"
       title="Approvals"
-      description="Review proposal timelines, inspect execution details, approve intent, and submit qualified swaps onchain."
+      description={pageDescription}
     >
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <MetricPanel
@@ -182,13 +195,13 @@ export default function ApprovalsPage() {
         <MetricPanel
           label="Pending"
           value={`${pendingCount}`}
-          detail="Proposals waiting for a human approval decision."
+          detail={aiDecisionMakerEnabled ? "Proposals are handled automatically by full access AI." : "Proposals waiting for a human approval decision."}
           tone={pendingCount > 0 ? "degraded" : "neutral"}
         />
         <MetricPanel
           label="Approved"
           value={`${approvedCount}`}
-          detail="Proposals that can be executed through the connected wallet."
+          detail={aiDecisionMakerEnabled ? "Proposals are auto-approved and auto-executed by the current AI mode." : "Proposals that can be executed through the connected wallet."}
           tone={approvedCount > 0 ? "ready" : "neutral"}
         />
         <MetricPanel
@@ -203,7 +216,7 @@ export default function ApprovalsPage() {
         <div className="flex items-center justify-between gap-3">
           <p className="terminal-label text-primary">Approval Queue</p>
           <Badge variant="outline" className="border-border text-muted-foreground">
-            Human approval required
+            {aiDecisionMakerEnabled ? "AI-managed queue" : "Human approval required"}
           </Badge>
         </div>
         <div className="mt-3 space-y-3">
@@ -213,7 +226,7 @@ export default function ApprovalsPage() {
             </p>
           )}
           {proposals.map((proposal) => (
-            <ProposalActionCard
+              <ProposalActionCard
               key={proposal.proposal_id}
               proposal={proposal}
               working={working}
@@ -221,6 +234,7 @@ export default function ApprovalsPage() {
               onReject={handleReject}
               onExecute={handleExecute}
               onInspect={setSelectedProposalId}
+              aiDecisionMakerEnabled={aiDecisionMakerEnabled}
             />
           ))}
         </div>
@@ -231,7 +245,9 @@ export default function ApprovalsPage() {
           <DialogHeader>
             <DialogTitle>Proposal review</DialogTitle>
             <DialogDescription>
-              Inspect the execution payload, then approve or reject with the current wallet context.
+              {aiDecisionMakerEnabled
+                ? "Inspect the execution payload and risk state; full access AI handles approval and execution automatically."
+                : "Inspect the execution payload, then approve or reject with the current wallet context."}
             </DialogDescription>
           </DialogHeader>
 
@@ -297,7 +313,7 @@ export default function ApprovalsPage() {
                             Step {step.step_index}: {step.step_type}
                           </p>
                           <span className="text-xs text-muted-foreground">
-                            {step.requires_user_action ? "user action" : "informational"}
+                            {aiDecisionMakerEnabled ? "AI managed" : step.requires_user_action ? "user action" : "informational"}
                           </span>
                         </div>
                         <p className="mt-1 text-xs text-muted-foreground">{step.description}</p>
@@ -317,32 +333,38 @@ export default function ApprovalsPage() {
               <div className="grid gap-2 rounded border border-border bg-surface-2 p-3">
                 <p className="font-medium text-foreground">Approval guidance</p>
                 <p className="text-muted-foreground">
-                  Approve only after checking the pair, amount bounds, guard checks, and whether the proposal is still pending.
+                  {aiDecisionMakerEnabled
+                    ? "Full access AI is handling approval and execution automatically. Use this dialog to inspect the payload and risk state."
+                    : "Approve only after checking the pair, amount bounds, guard checks, and whether the proposal is still pending."}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" onClick={() => setShowRiskDialog(true)} disabled={!proposalDetail?.risk_assessment && !riskQuery.data}>
                   View risk details
                 </Button>
-                <Button
-                  onClick={() => handleApprove(selectedProposal.proposal_id)}
-                  disabled={working || selectedProposal.status_code !== "PROPOSAL_PENDING_APPROVAL"}
-                >
-                  Approve
-                </Button>
-                <Button
-                  variant="destructive"
-                  onClick={() => handleReject(selectedProposal.proposal_id)}
-                  disabled={working || selectedProposal.status_code !== "PROPOSAL_PENDING_APPROVAL"}
-                >
-                  Reject
-                </Button>
-                <Button
-                  onClick={() => handleExecute(selectedProposal.proposal_id)}
-                  disabled={working || selectedProposal.status_code !== "PROPOSAL_APPROVED"}
-                >
-                  Execute
-                </Button>
+                {!aiDecisionMakerEnabled && (
+                  <>
+                    <Button
+                      onClick={() => handleApprove(selectedProposal.proposal_id)}
+                      disabled={working || selectedProposal.status_code !== "PROPOSAL_PENDING_APPROVAL"}
+                    >
+                      Approve
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      onClick={() => handleReject(selectedProposal.proposal_id)}
+                      disabled={working || selectedProposal.status_code !== "PROPOSAL_PENDING_APPROVAL"}
+                    >
+                      Reject
+                    </Button>
+                    <Button
+                      onClick={() => handleExecute(selectedProposal.proposal_id)}
+                      disabled={working || selectedProposal.status_code !== "PROPOSAL_APPROVED"}
+                    >
+                      Execute
+                    </Button>
+                  </>
+                )}
               </div>
               <TransactionStatus
                 entries={proposalActivity}

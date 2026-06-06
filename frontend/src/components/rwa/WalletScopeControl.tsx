@@ -4,8 +4,17 @@ import { Button } from "@/components/ui/button";
 import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 
 export function WalletScopeControl() {
-  const { connectedWalletAddress, storedWallet, walletAddress, setWalletAddress } = usePortfolioWallet();
+  const {
+    connectedWalletAddress,
+    connectedChainId,
+    isSupportedChain,
+    storedWallet,
+    walletAddress,
+    effectiveWalletAddress,
+    setWalletAddress,
+  } = usePortfolioWallet();
   const editable = !connectedWalletAddress;
+  const hasWallet = Boolean(effectiveWalletAddress);
 
   return (
     <section className="terminal-panel p-4">
@@ -16,7 +25,7 @@ export function WalletScopeControl() {
             <p className="terminal-label text-primary">Wallet Scope</p>
           </div>
           <p className="mt-2 break-all font-mono text-sm text-foreground">
-            {walletAddress || "Using backend env fallback"}
+            {connectedWalletAddress || "No wallet connected"}
           </p>
         </div>
         <div className="flex w-full flex-col gap-2 md:max-w-[460px] md:flex-row">
@@ -38,6 +47,16 @@ export function WalletScopeControl() {
           </Button>
         </div>
       </div>
+      {!hasWallet && (
+        <p className="mt-3 text-sm text-warning">
+          Connect a wallet on Mantle Sepolia (chain `5003`) or paste a wallet address to load portfolio, risk, and allocation data. Backend env fallback is disabled in the UI.
+        </p>
+      )}
+      {connectedWalletAddress && !isSupportedChain && (
+        <p className="mt-3 text-sm text-warning">
+          Connected wallet is on chain {connectedChainId ?? "unknown"}. Portfolio and investment scope only activate on Mantle Sepolia (`5003`).
+        </p>
+      )}
     </section>
   );
 }

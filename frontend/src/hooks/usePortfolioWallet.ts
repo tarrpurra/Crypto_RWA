@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useAccount } from "wagmi";
+import { useAccount, useChainId } from "wagmi";
+import { mantleSepoliaTestnet } from "wagmi/chains";
 
 const STORAGE_KEY = "aixrwa_portfolio_wallet_address";
 const WALLET_EVENT = "aixrwa-portfolio-wallet-change";
@@ -13,7 +14,9 @@ function readStoredWallet(): string {
 
 export function usePortfolioWallet() {
   const { address } = useAccount();
+  const chainId = useChainId();
   const [storedWallet, setStoredWallet] = useState(readStoredWallet);
+  const isSupportedChain = chainId === mantleSepoliaTestnet.id;
 
   useEffect(() => {
     const sync = () => setStoredWallet(readStoredWallet());
@@ -24,6 +27,18 @@ export function usePortfolioWallet() {
       window.removeEventListener("storage", sync);
     };
   }, []);
+
+  useEffect(() => {
+    if (!address || !isSupportedChain) {
+      return;
+    }
+    const normalized = address.trim();
+    if (normalized && normalized !== storedWallet) {
+      window.localStorage.setItem(STORAGE_KEY, normalized);
+      setStoredWallet(normalized);
+      window.dispatchEvent(new Event(WALLET_EVENT));
+    }
+  }, [address, isSupportedChain, storedWallet]);
 
   const setWalletAddress = useCallback((address: string) => {
     const normalized = address.trim();
@@ -36,15 +51,19 @@ export function usePortfolioWallet() {
     window.dispatchEvent(new Event(WALLET_EVENT));
   }, []);
 
-  const walletAddress = address ?? storedWallet;
+  const walletAddress = address ? (isSupportedChain ? address : "") : "";
+  const effectiveWalletAddress = walletAddress || storedWallet.trim();
 
   return useMemo(
     () => ({
       walletAddress,
+      effectiveWalletAddress,
       storedWallet,
       connectedWalletAddress: address ?? "",
+      connectedChainId: chainId,
+      isSupportedChain,
       setWalletAddress,
     }),
-    [address, setWalletAddress, storedWallet],
+    [address, chainId, effectiveWalletAddress, isSupportedChain, setWalletAddress, storedWallet, walletAddress],
   );
 }

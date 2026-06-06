@@ -1,13 +1,27 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { allocationApi } from "@/lib/api/allocation";
+import { useInvestmentScope } from "@/hooks/useInvestmentScope";
 import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 
 export function useAllocationRecommendation() {
-  const { walletAddress } = usePortfolioWallet();
+  const { effectiveWalletAddress } = usePortfolioWallet();
+  const { scope } = useInvestmentScope();
   return useQuery({
-    queryKey: ["allocation", "recommendation", walletAddress],
-    queryFn: () => allocationApi.recommendation(walletAddress),
+    queryKey: ["allocation", "recommendation", effectiveWalletAddress, scope],
+    queryFn: () =>
+      allocationApi.recommendation(
+        effectiveWalletAddress,
+        scope
+          ? {
+              deposit_asset_symbol: scope.depositAssetSymbol,
+              deposit_amount: scope.depositAmount,
+              risk_profile: scope.riskProfile,
+              allocation_mode: scope.allocationMode,
+            }
+          : null,
+      ),
+    enabled: Boolean(effectiveWalletAddress),
     refetchInterval: 45_000,
   });
 }

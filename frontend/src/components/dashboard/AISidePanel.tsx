@@ -4,6 +4,7 @@ import { Switch } from "@/components/ui/switch"
 import { useDecisions } from "@/hooks/useDecisions"
 import { useCurrentRisk } from "@/hooks/useRisk"
 import { useAllocationRecommendation } from "@/hooks/useAllocation"
+import { usePortfolioWallet } from "@/hooks/usePortfolioWallet"
 import { useSettings, useUpdateSettings } from "@/hooks/useSystem"
 import { cn } from "@/lib/utils"
 
@@ -24,6 +25,7 @@ const pipelineLayers = [
 
 export function AISidePanel() {
   const [collapsed, setCollapsed] = useState(true)
+  const { effectiveWalletAddress } = usePortfolioWallet()
 
   const decisionsQuery = useDecisions()
   const riskQuery = useCurrentRisk()
@@ -36,14 +38,15 @@ export function AISidePanel() {
   const allocation = allocationQuery.data
   const settings = settingsQuery.data
 
-  const isLoading = decisionsQuery.isLoading || riskQuery.isLoading
+  const hasWalletScope = Boolean(effectiveWalletAddress)
+  const isLoading = hasWalletScope && (decisionsQuery.isLoading || riskQuery.isLoading)
   const aiDecisionMakerOn = settings?.ai_decision_maker_enabled ?? false
 
   const riskBand = risk?.risk_band ?? "UNKNOWN"
   const riskBandColor =
-    riskBand === "NORMAL" ? "text-success" :
-    riskBand === "CAUTION" ? "text-warning" :
-    riskBand === "RISK_VETO" ? "text-destructive" : "text-muted-foreground"
+    riskBand === "RISK_NORMAL" ? "text-success" :
+    riskBand === "RISK_CAUTION" || riskBand === "RISK_REBALANCE_ONLY" ? "text-warning" :
+    riskBand === "RISK_REDUCE_ONLY" || riskBand === "RISK_PAUSE_REQUIRED" || riskBand === "RISK_VETO" ? "text-destructive" : "text-muted-foreground"
 
   const action = decisions?.recommended_action ?? "MONITOR"
   const config = actionConfig[action] ?? actionConfig.MONITOR
@@ -51,8 +54,8 @@ export function AISidePanel() {
 
   const activeLayers: Record<string, boolean> = {
     ingestion: decisions?.data_sources_used?.length ? true : false,
-    brain: decisions?.confidence ? true : false,
-    risk: risk?.risk_score ? true : false,
+    brain: decisions?.confidence != null,
+    risk: risk?.risk_score != null,
     allocation: allocation?.status === "ok",
     execution: decisions?.status === "ok",
   }
@@ -90,7 +93,7 @@ export function AISidePanel() {
       label: "Risk Score",
       value: `${risk.risk_score}`,
       detail: risk.risk_band ?? "N/A",
-      status: risk.risk_band === "NORMAL" ? "ok" : risk.risk_band === "CAUTION" ? "warn" : "info",
+      status: risk.risk_band === "RISK_NORMAL" ? "ok" : "warn",
     })
   }
 
@@ -149,7 +152,7 @@ export function AISidePanel() {
 
   return (
     <div
-      className="fixed right-0 top-11 z-20 flex w-80 flex-col border-l-2 border-border bg-card panel-inverted"
+      className="fixed right-0 top-11 z-20 flex w-80 flex-col border-l border-border bg-card panel-inverted"
       style={{ height: "calc(100vh - 2.75rem)" }}
     >
       {/* Header */}
@@ -181,16 +184,23 @@ export function AISidePanel() {
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
         {/* Decision Feed */}
         <div>
-          <p className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Decision</p>
+          <p className="mb-2 text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">Recommendation</p>
 
-          {isLoading ? (
+          {!hasWalletScope ? (
+            <div className="border border-border/60 bg-surface-2 px-3 py-4">
+              <p className="text-xs font-medium text-foreground">Connect or paste a wallet to load AI recommendations.</p>
+              <p className="mt-1 text-[0.7rem] leading-4 text-muted-foreground">
+                Portfolio, risk, allocation, and AI decision queries stay disabled until a Mantle Sepolia wallet is connected or pasted.
+              </p>
+            </div>
+          ) : isLoading ? (
             <div className="flex items-center justify-center py-6">
               <div className="h-4 w-4 animate-pulse rounded-full border border-primary/30 bg-primary/10" />
               <span className="ml-2 text-xs text-muted-foreground">Loading...</span>
             </div>
           ) : (
             <>
-              <div className={cn("flex items-center gap-2 border-2 px-3 py-2", action === "PAUSE" ? "border-destructive/30 bg-destructive/10" : "border-primary/20 bg-primary/8")}>
+              <div className={cn("flex items-center gap-2 border px-3 py-2", action === "PAUSE" ? "border-destructive/30 bg-destructive/10" : "border-primary/20 bg-primary/10")}>
                 <Icon className={cn("h-4 w-4 shrink-0", config.color)} />
                 <div className="min-w-0">
                   <p className={cn("text-xs font-semibold", config.color)}>{config.label}</p>
@@ -200,9 +210,27 @@ export function AISidePanel() {
                 </div>
               </div>
 
+              <div className="flex items-center justify-between gap-3 border border-border/60 bg-surface-2 px-3 py-2">
+                <div className="min-w-0">
+                  <p className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">AI Mode</p>
+                  <p className="mt-0.5 text-xs text-foreground">
+                    {aiDecisionMakerOn ? "Full access AI" : "Recommendation only"}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[0.7rem] text-muted-foreground">Recommendation only</span>
+                  <Switch
+                    checked={aiDecisionMakerOn}
+                    disabled={updateSettings.isPending}
+                    onCheckedChange={(checked) => updateSettings.mutate({ ai_decision_maker_enabled: checked })}
+                  />
+                  <span className="text-[0.7rem] text-muted-foreground">Full access AI</span>
+                </div>
+              </div>
+
               <div className="mt-2 space-y-1">
                 {decisionItems.map((item) => (
-                  <div key={item.key} className="flex items-center justify-between border-2 border-border/60 bg-surface-2 px-2.5 py-1.5">
+                  <div key={item.key} className="flex items-center justify-between border border-border/60 bg-surface-2 px-2.5 py-1.5">
                     <div className="flex items-center gap-1.5 min-w-0">
                       <item.icon className="h-3 w-3 shrink-0 text-primary" />
                       <span className="text-[0.7rem] text-muted-foreground">{item.label}</span>
@@ -316,6 +344,25 @@ export function AISidePanel() {
               </p>
             </div>
           </div>
+
+          {allocation?.decision?.target_weights && (
+            <div className="mt-2 rounded border border-border/60 bg-surface-2 p-2">
+              <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">AI Allocation</p>
+              <div className="mt-1 space-y-1">
+                {Object.entries(allocation.decision.target_weights).map(([symbol, weight]) => {
+                  const matched = allocation.rebalance_actions.find((actionItem) => actionItem.asset_symbol === symbol)
+                  return (
+                    <div key={symbol} className="flex items-center justify-between text-[0.7rem]">
+                      <span className="text-muted-foreground">{symbol}</span>
+                      <span className="font-mono text-foreground">
+                        {(weight * 100).toFixed(1)}%{matched ? ` · ${matched.action}` : ""}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Constraints */}
           {constraints.length > 0 && (

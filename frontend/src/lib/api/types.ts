@@ -204,6 +204,13 @@ export interface RecommendationResponse {
   metadata: Record<string, unknown>;
 }
 
+export interface InvestmentScopeRequest {
+  deposit_asset_symbol: string;
+  deposit_amount: number;
+  risk_profile: string;
+  allocation_mode?: string;
+}
+
 export interface OndoUsdyOracleStatus {
   asset: string;
   source: string;
@@ -264,6 +271,63 @@ export interface LatestQuotesResponse extends StatusEnvelope {
 
 export interface SettingsResponse {
   ai_decision_maker_enabled: boolean;
+  chain_id: number;
+  native_mnt_enabled: boolean;
+  sepolia_usdy_address: string | null;
+  sepolia_meth_address: string | null;
+  sepolia_meth_is_test_token: boolean;
+  sepolia_meth_price_mode: string;
+  sepolia_wmnt_address: string | null;
+}
+
+export interface TokenReadiness {
+  address: string | null;
+  code_exists: boolean;
+  symbol: string | null;
+  symbol_ok: boolean;
+  decimals: number | null;
+  deposit_supported: boolean | null;
+  test_token: boolean | null;
+}
+
+export interface SystemReadinessResponse {
+  chain_id: number;
+  native_mnt_enabled: boolean;
+  tokens: Record<string, TokenReadiness>;
+  pricing: Record<string, string>;
+  routes: Record<string, string>;
+  execution: {
+    mode: string;
+    guarded_executor_enabled: boolean;
+  };
+}
+
+export interface ReportField {
+  label: string;
+  value: string;
+  detail?: string | null;
+}
+
+export interface ReportSection {
+  key: string;
+  title: string;
+  status: string;
+  summary: string;
+  fields: ReportField[];
+  notes: string[];
+}
+
+export interface InvestmentReportResponse extends StatusEnvelope {
+  generated_at: string;
+  report_id: string;
+  download_name: string;
+  wallet_address: string | null;
+  ai_decision_maker_enabled: boolean;
+  ai_mode: string;
+  sections: ReportSection[];
+  data_gaps: string[];
+  markdown: string;
+  metadata: Record<string, unknown>;
 }
 
 export interface CreateProposalPayload {

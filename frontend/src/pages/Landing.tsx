@@ -10,12 +10,14 @@ import { FeatureGrid } from "@/components/landing/FeatureGrid";
 import { PerformanceChart } from "@/components/landing/PerformanceChart";
 import { FinalCta } from "@/components/landing/FinalCta";
 import { Footer } from "@/components/landing/Footer";
+import { DitheringShader } from "@/components/ui/dithering-shader";
 
 type LandingPhase = "intro" | "launching" | "entered";
 
 const INTRO_STORAGE_KEY = "yieldmind-intro-seen";
 const INTRO_DURATION_MS = 2850;
 const easeOut = [0.23, 1, 0.32, 1] as const;
+const activationOrigin = "50% 50%";
 const revealItems = [
   { key: "hero", node: <HeroSection /> },
   { key: "metrics", node: <MetricsBar /> },
@@ -73,8 +75,39 @@ const Landing = () => {
   const isSettled = phase === "entered";
 
   return (
-    <div className="relative min-h-[100dvh] overflow-x-hidden bg-zinc-950 text-white">
-      <LandingNav isVisible={isVisible} isSettled={isSettled} isLaunching={phase === "launching"} />
+    <div className="relative min-h-[100dvh] overflow-x-hidden bg-background text-foreground">
+      <motion.div
+        initial={reduceMotion ? false : { opacity: 0.12, clipPath: `circle(6.5rem at ${activationOrigin})`, scale: 0.96 }}
+        animate={{
+          opacity: isVisible ? 0.34 : 0.12,
+          clipPath: isVisible ? `circle(160vmax at ${activationOrigin})` : `circle(6.5rem at ${activationOrigin})`,
+          scale: isVisible ? 1 : 0.96,
+        }}
+        transition={{
+          duration: phase === "launching" ? 1.9 : 0.28,
+          ease: easeOut,
+        }}
+        style={{ transformOrigin: activationOrigin }}
+        className="pointer-events-none absolute inset-0 z-0 overflow-hidden"
+      >
+        <div className="absolute inset-0 opacity-80">
+          <DitheringShader
+            className="h-full w-full scale-[1.16]"
+            shape="ripple"
+            type="4x4"
+            colorBack="#050403"
+            colorFront="#D6B83F"
+            pxSize={4}
+            speed={0.3}
+            width={1600}
+            height={1200}
+          />
+        </div>
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(214,184,63,0.09),transparent_34%),linear-gradient(rgba(214,184,63,0.025)_1px,transparent_1px),linear-gradient(90deg,rgba(214,184,63,0.025)_1px,transparent_1px)] bg-[size:auto,56px_56px,56px_56px]" />
+      </motion.div>
+      <div className="absolute inset-0 z-0 bg-[radial-gradient(circle_at_top,rgba(214,184,63,0.08),transparent_40%),linear-gradient(to_bottom,rgba(3,3,3,0.04),rgba(3,3,3,0.34))]" />
+      <div className="relative z-10">
+        <LandingNav isVisible={isVisible} isSettled={isSettled} isLaunching={phase === "launching"} />
 
       {phase !== "entered" ? (
         <YieldMindIntro isLaunching={phase === "launching"} onEnter={handleEnter} />
@@ -138,6 +171,7 @@ const Landing = () => {
           ))}
         </motion.div>
       ) : null}
+      </div>
     </div>
   );
 };

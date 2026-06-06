@@ -22,19 +22,19 @@ export function TopBar() {
     : "REMOTE";
 
   return (
-    <header className="sticky top-0 z-30 border-b-2 border-border bg-card">
+    <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur-xl">
       <div className="grid min-h-12 grid-cols-[auto_1fr_auto] items-stretch">
         <Link
-           to="/dashboard"
-           className="flex items-center gap-2 border-r-2 border-border px-4 text-foreground transition-colors hover:text-primary"
-         >
-           <span className="terminal-wordmark text-[18px] font-semibold leading-none">
-             AIYield
-           </span>
-           <span className="hidden text-[11px] font-semibold text-primary sm:inline">
-             Portfolio
-           </span>
-         </Link>
+          to="/dashboard"
+          className="flex items-center gap-2 border-r border-border px-4 text-foreground transition-colors hover:text-primary"
+        >
+          <span className="terminal-wordmark text-[18px] font-semibold leading-none">
+            AIYield
+          </span>
+          <span className="hidden text-[11px] font-semibold text-primary sm:inline">
+            Portfolio
+          </span>
+        </Link>
 
         <nav
           data-testid="topbar-nav"
@@ -57,9 +57,9 @@ export function TopBar() {
           ))}
         </nav>
 
-        <div className="flex items-center gap-2 border-l-2 border-border px-3">
+        <div className="flex items-center gap-2 border-l border-border px-3">
           <ThemeToggle />
-          <div className="hidden items-center gap-2 border-2 border-border bg-surface-2 px-2 py-1 md:inline-flex">
+          <div className="hidden items-center gap-2 border border-border bg-surface-2 px-2 py-1 md:inline-flex">
             <span className="h-1.5 w-1.5 bg-warning" />
             <span className="font-mono text-[11px] text-muted-foreground">{environmentLabel}</span>
           </div>
@@ -67,7 +67,7 @@ export function TopBar() {
           <Link
             to="/settings"
             title="Settings"
-            className="flex h-8 w-8 items-center justify-center border-2 border-border text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+            className="flex h-8 w-8 items-center justify-center border border-border text-muted-foreground transition-colors hover:border-primary hover:text-primary"
           >
             <Settings2 className="h-4 w-4" />
             <span className="sr-only">Settings</span>

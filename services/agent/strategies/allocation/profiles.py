@@ -46,3 +46,16 @@ def normalize_profile_name(profile_name: str) -> str:
 def get_allocation_profile(profile_name: str) -> tuple[str, AllocationProfile]:
     canonical = normalize_profile_name(profile_name)
     return canonical, ALLOCATION_PROFILES[canonical]
+
+
+def get_allocation_profile_for_chain(profile_name: str, target_chain: str | None = None) -> tuple[str, AllocationProfile]:
+    canonical = normalize_profile_name(profile_name)
+    profile = dict(ALLOCATION_PROFILES[canonical])
+
+    if target_chain and target_chain.lower() == "mantle_sepolia":
+        filtered_profile = {asset: weight for asset, weight in profile.items() if asset.upper() != "USDC"}
+        total_weight = sum(filtered_profile.values())
+        if total_weight > 0:
+            profile = {asset: weight / total_weight for asset, weight in filtered_profile.items()}
+
+    return canonical, profile

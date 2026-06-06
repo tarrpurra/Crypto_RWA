@@ -36,3 +36,27 @@ class ServiceStatusResponse(BaseModel):
     freshness_thresholds: dict[str, FreshnessThreshold]
     simulation_fallback_enabled: bool
     ai_decision_maker_enabled: bool
+
+
+class TokenReadiness(BaseModel):
+    address: str | None
+    code_exists: bool
+    symbol: str | None = None
+    symbol_ok: bool
+    decimals: int | None = None
+    deposit_supported: bool | None = None
+    test_token: bool | None = None
+
+
+class ExecutionReadiness(BaseModel):
+    mode: str
+    guarded_executor_enabled: bool
+
+
+class SystemReadinessResponse(BaseModel):
+    chain_id: int
+    native_mnt_enabled: bool
+    tokens: dict[str, TokenReadiness]
+    pricing: dict[str, str]
+    routes: dict[str, str]
+    execution: ExecutionReadiness

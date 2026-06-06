@@ -73,9 +73,9 @@ Decision rules:
 
 Please generate a JSON object matching this schema:
 {{
-  "recommended_action": "HOLD", // or "REBALANCE" or "PAUSE"
+  "recommended_action": "HOLD",
   "reasoning_summary": "A concise paragraph explaining your decision, including which factors you weighed most heavily.",
-  "confidence": 0.0, // float between 0.0 and 1.0 representing your confidence in this decision
+  "confidence": 0.0,
   "notes": [
     "Note 1: key risk observation",
     "Note 2: market condition note",
@@ -95,7 +95,7 @@ Context:
 Please generate a JSON object matching this schema:
 {{
   "reasoning_summary": "A concise paragraph explaining why this rebalance action (or HOLD/PAUSE) is recommended, discussing the active profile, current drifts, and how active risk conditions (like depeg, oracle freshness, or slippage) were taken into account.",
-  "confidence": 0.0, // float between 0.0 and 1.0 representing your confidence in this decision
+  "confidence": 0.0,
   "notes": [
     "Note 1: e.g., concentration cap constraint details",
     "Note 2: e.g., warning about slippage or oracle age",

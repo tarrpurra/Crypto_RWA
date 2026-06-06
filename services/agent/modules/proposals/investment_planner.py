@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from web3 import Web3
 
 from services.agent.app.core.settings import Settings
-from services.agent.app.core.status_codes import DataStatusCode, ExecutionStatusCode, ProposalStatusCode, RuntimeMode
+from services.agent.app.core.status_codes import DataStatusCode, ExecutionStatusCode, ProposalStatusCode, RuntimeMode, TargetChain
 from services.agent.app.schemas.portfolio import PortfolioSnapshotResponse
 from services.agent.app.schemas.proposals import (
     AllocationTargetItem,
@@ -30,7 +30,7 @@ from services.agent.modules.oracle import get_ondo_usdy_oracle_adapter
 from services.agent.modules.oracle.freshness import utc_now
 from services.agent.modules.quotes import get_quote_service
 from services.agent.repositories.db.market_repository import MarketDataRepository
-from services.agent.strategies.allocation.profiles import get_allocation_profile, normalize_profile_name
+from services.agent.strategies.allocation.profiles import get_allocation_profile, get_allocation_profile_for_chain, normalize_profile_name
 
 
 PROPOSAL_DETAIL_CACHE: dict[str, InvestmentPlanResponse] = {}
@@ -52,8 +52,11 @@ def _execution_input_symbol(deposit_asset_symbol: str) -> str:
 
 
 def _normalize_weights(request: InvestmentPlanRequest, settings: Settings) -> tuple[dict[str, float], dict[str, float], list[str]]:
-    profile_name, ai_weights = get_allocation_profile(request.risk_profile)
+    original_profile_name, original_weights = get_allocation_profile(request.risk_profile)
+    profile_name, ai_weights = get_allocation_profile_for_chain(request.risk_profile, settings.target_chain.value)
     warnings: list[str] = []
+    if settings.target_chain == TargetChain.MANTLE_SEPOLIA and "USDC" in {asset.upper() for asset in original_weights}:
+        warnings.append("USDC is excluded on Mantle Sepolia; the selected profile is renormalized across the remaining sleeves.")
     if request.allocation_mode.lower().startswith("manual"):
         if not request.manual_target_weights:
             raise HTTPException(status_code=400, detail="Manual allocation mode requires manual_target_weights.")
@@ -67,7 +70,7 @@ def _normalize_weights(request: InvestmentPlanRequest, settings: Settings) -> tu
         }
     else:
         selected_weights = dict(ai_weights)
-        if profile_name != request.risk_profile:
+        if profile_name != original_profile_name:
             warnings.append(f"Risk profile alias normalized to {profile_name}.")
     return ai_weights, selected_weights, warnings
 
@@ -126,14 +129,14 @@ def _build_target_allocations(
     source: str,
     prices: dict[str, Decimal],
 ) -> list[AllocationTargetItem]:
-    deposit_value_usd = deposit_amount * deposit_price_usd
+    deposit_value_usd = deposit_amount * deposit_price_usd if deposit_price_usd > 0 else None
     allocations: list[AllocationTargetItem] = []
     for asset_symbol, weight in target_weights.items():
-        allocation_value_usd = deposit_value_usd * Decimal(str(weight))
+        allocation_value_usd = deposit_value_usd * Decimal(str(weight)) if deposit_value_usd is not None else None
         target_price = prices.get(asset_symbol.upper())
         if asset_symbol.upper() == deposit_asset_symbol.upper():
             amount = deposit_amount * Decimal(str(weight))
-        elif target_price and target_price > 0:
+        elif allocation_value_usd is not None and target_price and target_price > 0:
             amount = allocation_value_usd / target_price
         else:
             amount = Decimal("0")
@@ -142,7 +145,7 @@ def _build_target_allocations(
                 asset_symbol=asset_symbol,
                 percentage=round(weight, 6),
                 amount=float(round(amount, 8)),
-                value_usd=float(round(allocation_value_usd, 8)),
+                value_usd=float(round(allocation_value_usd, 8)) if allocation_value_usd is not None else 0.0,
                 source=source,
             )
         )
@@ -166,6 +169,7 @@ def _build_planned_swaps(
             continue
         attempt = quote_service.best_quote_attempt_for_pair(execution_symbol, asset_symbol)
         raw_gas_estimate = None
+        quote: NormalizedQuoteSnapshot | None = None
         if attempt is not None:
             gas_value = attempt.raw_snapshot.raw_payload_json.get("gas_estimate")
             if gas_value is not None:
@@ -173,15 +177,22 @@ def _build_planned_swaps(
                     raw_gas_estimate = Decimal(str(gas_value))
                 except Exception:
                     raw_gas_estimate = None
+            if (
+                attempt.normalized_snapshot.status_code == DataStatusCode.QUOTE_FRESH.value
+                and attempt.normalized_snapshot.amount_out is not None
+            ):
+                quote = attempt.normalized_snapshot
+        if quote is None:
+            quote = quote_service.best_quote_for_pair(execution_symbol, asset_symbol)
         swaps.append(
             PlannedSwap(
                 target_asset_symbol=asset_symbol,
                 amount_in=amount_in,
                 token_in_symbol=execution_symbol,
                 token_out_symbol=asset_symbol,
-                quote=attempt.normalized_snapshot if attempt is not None else quote_service.best_quote_for_pair(execution_symbol, asset_symbol),
+                quote=quote,
                 gas_estimate=raw_gas_estimate,
-                uses_native_value=deposit_asset_symbol.upper() == "MNT",
+                uses_native_value=False,
             )
         )
     return swaps
@@ -200,7 +211,7 @@ def _build_guard_checks(
     fresh_price_symbols = {deposit_asset_symbol.upper(), *[symbol.upper() for symbol in selected_weights.keys()]}
     usdy_oracle = get_ondo_usdy_oracle_adapter().read().status
 
-    oracle_ok = usdy_oracle.status == "ok" if "USDY" in fresh_price_symbols else True
+    oracle_ok = usdy_oracle.status in {"ok", "live", "live_reference"} if "USDY" in fresh_price_symbols else True
     quote_ok = all(swap.quote and swap.quote.status_code == DataStatusCode.QUOTE_FRESH.value for swap in swaps) if swaps else True
 
     deviation_pass = True
@@ -475,17 +486,16 @@ def build_investment_plan(
         if deposit_price is not None:
             prices["WMNT"] = deposit_price
             prices["MNT"] = deposit_price
-    if deposit_price is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"No normalized price is available for deposit asset {request.deposit_asset_symbol}.",
-        )
 
     ai_weights, selected_weights, warnings = _normalize_weights(request, settings)
+    if deposit_price is None:
+        warnings.append(
+            f"Deposit valuation for {request.deposit_asset_symbol} is unavailable, so only fetchable allocation data will be returned."
+        )
     ai_allocations = _build_target_allocations(
         deposit_amount=deposit_amount,
         deposit_asset_symbol=request.deposit_asset_symbol,
-        deposit_price_usd=deposit_price,
+        deposit_price_usd=deposit_price or Decimal("0"),
         target_weights=ai_weights,
         source="ai",
         prices=prices,
@@ -493,11 +503,21 @@ def build_investment_plan(
     selected_allocations = _build_target_allocations(
         deposit_amount=deposit_amount,
         deposit_asset_symbol=request.deposit_asset_symbol,
-        deposit_price_usd=deposit_price,
+        deposit_price_usd=deposit_price or Decimal("0"),
         target_weights=selected_weights,
         source="selected",
         prices=prices,
     )
+    ai_allocations = [
+        item
+        for item in ai_allocations
+        if item.asset_symbol.upper() == request.deposit_asset_symbol.upper() or item.value_usd > 0
+    ]
+    selected_allocations = [
+        item
+        for item in selected_allocations
+        if item.asset_symbol.upper() == request.deposit_asset_symbol.upper() or item.value_usd > 0
+    ]
 
     missing_assets = [
         allocation.asset_symbol
@@ -530,7 +550,6 @@ def build_investment_plan(
     estimated_gas = Decimal("0")
     for swap in swaps:
         if swap.quote is None or swap.quote.amount_out is None:
-            blockers.append(f"No executable quote is available for {swap.token_in_symbol}->{swap.token_out_symbol}.")
             continue
         proposal, summary, calldata = _encode_agni_trade_proposal(
             settings=settings,
@@ -544,6 +563,19 @@ def build_investment_plan(
 
     transaction_steps: list[TransactionStep] = []
     step_index = 1
+    ai_managed_execution = settings.ai_decision_maker_enabled
+    if request.deposit_asset_symbol.upper() == "MNT":
+        transaction_steps.append(
+            TransactionStep(
+                step_index=step_index,
+                step_type="wrap",
+                description="Wrap native MNT into WMNT in the connected wallet before approvals and swaps.",
+                asset_symbol="WMNT",
+                amount=str(round(request.deposit_amount, 8)),
+                requires_user_action=not ai_managed_execution,
+            )
+        )
+        step_index += 1
     for swap in swaps:
         transaction_steps.append(
             TransactionStep(
@@ -552,7 +584,7 @@ def build_investment_plan(
                 description=f"Approve {swap.token_in_symbol} for router spend before executing {swap.token_in_symbol}->{swap.token_out_symbol}.",
                 asset_symbol=swap.token_in_symbol,
                 amount=str(round(swap.amount_in, 8)),
-                requires_user_action=True,
+                requires_user_action=not ai_managed_execution,
             )
         )
         step_index += 1
@@ -565,7 +597,7 @@ def build_investment_plan(
                 asset_symbol=swap.token_out_symbol,
                 amount=str(round(swap.amount_in, 8)),
                 proposal_id=matching_link.proposal_id if matching_link else None,
-                requires_user_action=True,
+                requires_user_action=not ai_managed_execution,
             )
         )
         step_index += 1
@@ -584,19 +616,27 @@ def build_investment_plan(
             step_index += 1
 
     execution_required = bool(linked_proposals)
-    approval_enabled = not blockers and execution_required
+    approval_enabled = not blockers and execution_required and deposit_price is not None
     if blockers:
         response_status = "degraded"
         response_status_code = ProposalStatusCode.PROPOSAL_RISK_REJECTED.value
         response_status_reason = "Investment plan is blocked until the listed issues are resolved."
-    elif execution_required:
+    elif execution_required and deposit_price is not None:
         response_status = "ok"
         response_status_code = ProposalStatusCode.PROPOSAL_PENDING_APPROVAL.value
-        response_status_reason = "Investment plan is ready for human approval."
+        response_status_reason = (
+            "Investment plan is ready for automatic execution by full access AI."
+            if settings.ai_decision_maker_enabled
+            else "Investment plan is ready for human approval."
+        )
     else:
         response_status = "ok"
         response_status_code = ExecutionStatusCode.EXECUTION_SKIPPED.value
-        response_status_reason = "No swaps are required because the requested allocation is already aligned."
+        response_status_reason = (
+            "No swaps are required because the requested allocation is already aligned."
+            if not execution_required
+            else "Allocation is available, but execution is deferred until a normalized deposit price is available."
+        )
 
     response = InvestmentPlanResponse(
         status=response_status,
