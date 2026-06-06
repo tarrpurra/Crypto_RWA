@@ -30,6 +30,11 @@ class SettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.runtime_mode, RuntimeMode.MONITOR_ONLY)
 
+    def test_allocation_profile_defaults_to_sepolia_test(self) -> None:
+        settings = Settings(_env_file=None)
+
+        self.assertEqual(settings.allocation_profile_name, "Sepolia Test")
+
     def test_subsystem_log_levels_fall_back_to_global_level(self) -> None:
         settings = Settings(log_level="WARNING", log_quotes=None)
 

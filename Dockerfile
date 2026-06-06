@@ -21,7 +21,7 @@ RUN curl -L https://foundry.paradigm.xyz | bash \
     && foundryup \
     && forge --version \
     && cast --version \
-    && anvil --version \
+    && ANVIL --version \
     && chisel --version
 
 WORKDIR /workspace/contracts

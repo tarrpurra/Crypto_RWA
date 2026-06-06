@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     portfolio_wallet_address: str | None = None
     portfolio_base_currency: str = "USD"
     portfolio_target_weights: str = ""
-    allocation_profile_name: str = "Balanced"
+    allocation_profile_name: str = "Sepolia Test"
     sepolia_mock_prices_enabled: bool = False
     sepolia_mock_routes_enabled: bool = False
     sepolia_mock_token_a_address: str | None = None

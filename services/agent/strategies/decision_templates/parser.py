@@ -149,8 +149,9 @@ async def generate_recommendation_reasoning(
         used_fallback = False
 
     asset_focus = "PORTFOLIO"
-    if rebalance_actions:
-        asset_focus = ", ".join(set(a.asset_symbol for a in rebalance_actions))
+    actionable_assets = [action.asset_symbol for action in rebalance_actions if action.action != "HOLD" and action.amount > 0]
+    if actionable_assets:
+        asset_focus = ", ".join(dict.fromkeys(actionable_assets))
 
     required_human_approval = "NOT_REQUIRED"
     if effective_decision.recommended_action == "REBALANCE" and (risk.total_score > 65.0 or risk.risk_band == "RISK_REDUCE_ONLY"):

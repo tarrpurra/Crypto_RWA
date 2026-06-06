@@ -20,6 +20,164 @@ For each entry, record:
 ### 2026-06-06
 
 Type:
+Docs / AI repair plan
+
+Author:
+Codex
+
+Summary:
+
+- added `ai_plan.md` as the active remediation plan for the current AI allocation, risk engine, proposal, and endpoint flow
+- documented the current status of Phase 3 through Phase 5, including the split between canonical `RiskEngine` behavior and older `RiskScoreEngine` consumers
+- listed canonical endpoints, deprecated snapshot endpoints, and legacy frontend API surfaces that should not be treated as part of the AI/Data Analytics backend contract
+- defined the target wallet/scope decision flow, deterministic risk gates, allocation constraints, AI orchestration boundaries, proposal guard flow, implementation sequence, acceptance criteria, and test plan
+- updated the AI docs README so the repair plan is discoverable
+
+Affected scope:
+
+- docs/ai-data-analytics/ai_plan.md
+- docs/ai-data-analytics/README.md
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract bytecode changed
+- frontend: no UI code changed, but the plan identifies deprecated and legacy API surfaces that frontend work should stop relying on
+- data quality: no data-source behavior changed, but the plan locks the intended fail-safe risk and allocation repair flow
+
+Assumptions / unresolved verification items:
+
+- Mantle Sepolia remains the default target chain for the repair pass
+- implementation and tests have not been changed yet
+
+Commands not run:
+
+- backend and frontend tests, builds, lint, and formatting were not run because this is a documentation-only update
+
+### 2026-06-06
+
+Type:
+Fix / scoped allocation, quote fallback, and risk labeling cleanup
+
+Author:
+Codex
+
+Summary:
+
+- taught the scoped allocation preview to reuse configured fallback pricing for Sepolia stable assets and mirrored test assets instead of collapsing target legs to zero when the persisted price cache is missing
+- changed planned swap building to fall back to persisted fresh quotes whenever the live quote attempt is unavailable or not actionable, so risk validation can see real quote coverage
+- filtered allocation and recommendation surfaces down to actionable positive-amount legs, which stops the dashboard from surfacing zero-sized swap suggestions
+- corrected the risk-band styling and risk-item severity mapping in the dashboard AI widgets so `RISK_REBALANCE_ONLY` and related bands no longer render as normal or unlabeled
+- added unit tests covering scoped fallback pricing, quote fallback selection, no-actionable allocation status, and actionable-asset recommendation focus
+
+Affected scope:
+
+- services/agent/app/api/investment_scope.py
+- services/agent/modules/proposals/investment_planner.py
+- services/agent/strategies/allocation/rebalance.py
+- services/agent/strategies/decision_templates/parser.py
+- services/agent/tests/unit/test_investment_scope.py
+- services/agent/tests/unit/test_investment_planner.py
+- services/agent/tests/unit/test_allocation.py
+- services/agent/tests/unit/test_ai_fallback.py
+- frontend/src/pages/Index.tsx
+- frontend/src/components/dashboard/AISidePanel.tsx
+- frontend/src/components/dashboard/AIDecisionFeed.tsx
+- frontend/src/components/dashboard/AIGlassbox.tsx
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract bytecode changed
+- frontend: the dashboard now shows only actionable swap recommendations and renders the risk state more accurately
+- data quality: scoped pricing and quote selection now reuse available fallback sources before declaring a rebalance leg unusable
+
+Assumptions / unresolved verification items:
+
+- the new unit tests were added but not executed in this turn
+
+### 2026-06-06
+
+Type:
+Fix / full-access AI auto-execution flow
+
+Author:
+Codex
+
+Summary:
+
+- removed the remaining manual review prompt from the dashboard when full access AI is enabled
+- made the dashboard auto-open the trade flow for actionable rebalance recommendations in full access mode
+- made the trade page auto-create the investment plan once the scoped route is ready, so linked proposals can be approved and executed without a human swap review step
+- marked the generated transaction steps as AI-managed in full access mode so the approval queue and report surfaces stop describing them as manual user actions
+- made the approvals queue read-only in full access mode so approval and execution buttons are hidden while AI handles the swap flow
+- retained the risk-details modal for inspection while hiding the manual plan/approval actions in full access mode
+- added regression tests covering the dashboard auto-launch path and the full-access planner step labels
+
+Affected scope:
+
+- frontend/src/pages/Index.tsx
+- frontend/src/pages/Trade.tsx
+- frontend/src/pages/ApprovalsPage.tsx
+- frontend/src/pages/Index.test.tsx
+- services/agent/modules/proposals/investment_planner.py
+- services/agent/tests/unit/test_investment_planner.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- frontend: full access AI now drives the swap flow automatically from dashboard recommendation to trade execution
+- backend: the generated plan payload now marks swap steps as AI-managed when full access AI is enabled
+- data quality: no change to data sources; the behavior change is orchestration only
+
+Assumptions / unresolved verification items:
+
+- the new frontend and backend tests were added but not executed in this turn
+- the fallback pricing path depends on the existing Sepolia simulation flags and configured reference prices
+
+Commands not run:
+
+- backend and frontend test suites, builds, lint, and formatting were not run in this turn
+
+### 2026-06-06
+
+Type:
+Fix / report missing-data list instead of partial warning
+
+Author:
+Codex
+
+Summary:
+
+- replaced the report card's generic partial-data warning with a neutral list of the data sources that could not be fetched
+- stopped truncating the report missing-data list so the Settings page now shows every gap returned by the backend
+- updated the downloadable investment report markdown to use a `Missing Data` section instead of `Data Gaps`
+- changed the report status text so it describes missing sources without calling the report partial
+
+Affected scope:
+
+- services/agent/modules/reports/builder.py
+- frontend/src/pages/SettingsPage.tsx
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract behavior changed
+- frontend: the Settings report card no longer presents the report as a warning state; it now enumerates every missing fetch directly
+- data quality: the report output is clearer about which inputs were unavailable, without implying that the user only received a partial summary
+
+Assumptions / unresolved verification items:
+
+- the report status code remains `DATA_PARTIAL` when inputs are missing, but the user-facing wording now stays neutral
+- backend and frontend tests, builds, lint, and formatting were not fully rerun after the copy update
+
+Commands not run:
+
+- full backend and frontend test suites, builds, lint, and formatting were not run in this turn
+
+### 2026-06-06
+
+Type:
 Config / verified Pyth feed-id refresh for USDY, mETH, and WMNT
 
 Author:
@@ -1359,3 +1517,44 @@ Impact:
 - frontend:
 - data quality:
 ```
+
+### 2026-06-06
+
+Type:
+Feature
+
+Summary:
+
+- changed the dashboard and trade flow to deploy the connected wallet balance instead of seeding a fixed `100` amount
+- blocked AI auto-launch until a positive wallet balance is known, so the UI no longer acts on stale scope data
+- switched the default allocation profile on Sepolia to `Sepolia Test` and made Sepolia scoped planners strip `USDC` from risk-profile baskets before renormalizing
+
+Affected scope:
+
+- frontend/src/pages/Index.tsx
+- frontend/src/pages/Trade.tsx
+- services/agent/app/core/settings.py
+- services/agent/app/api/allocation.py
+- services/agent/app/api/decisions.py
+- services/agent/app/api/investment_scope.py
+- services/agent/modules/proposals/investment_planner.py
+- services/agent/strategies/allocation/profiles.py
+- services/agent/tests/unit/test_settings.py
+- services/agent/tests/unit/test_allocation.py
+- frontend/src/pages/Index.test.tsx
+
+Impact:
+
+- frontend: the amount fields now resolve from the wallet/portfolio snapshot instead of prompting for more MNT
+- allocation: the default target basket on Sepolia is USDY/mETH only, and scoped risk profiles on Sepolia are renormalized to remove USDC entirely
+- data quality: the AI scope stays empty until the wallet balance is known, which prevents stale 100-sized scopes from being used
+
+Assumptions / unresolved verification items:
+
+- I did not run the frontend or Python test suites in this turn
+- if you want a different Sepolia allocation basket, change `allocation_profile_name` explicitly in the environment instead of relying on the new default
+
+Commands the user still needs to run:
+
+- run the frontend test file for the dashboard flow
+- run the Python unit tests for the settings and allocation paths

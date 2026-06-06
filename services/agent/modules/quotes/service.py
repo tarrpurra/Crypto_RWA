@@ -16,6 +16,7 @@ from services.agent.modules.quotes.agni_quotes import AgniQuoteService
 from services.agent.modules.quotes.merchant_moe_discovery import MerchantMoeDiscoveryService
 from services.agent.modules.quotes.merchant_moe_quotes import MerchantMoeQuoteService
 from services.agent.modules.quotes.route_ranker import rank_quotes
+from services.agent.repositories.db.market_repository import MarketDataRepository
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,17 @@ class QuoteService:
 
     def best_quote_for_pair(self, token_in: str, token_out: str) -> NormalizedQuoteSnapshot | None:
         quotes = self.latest_quotes_for_pair(token_in, token_out)
+        if quotes:
+            best_live = quotes[0]
+            if best_live.status_code == DataStatusCode.QUOTE_FRESH.value:
+                return best_live
+
+        try:
+            persisted = MarketDataRepository().latest_best_quote_for_pair(token_in, token_out)
+        except Exception:
+            persisted = None
+        if persisted is not None:
+            return persisted
         return quotes[0] if quotes else None
 
     def best_quote_attempt_for_pair(self, token_in: str, token_out: str):

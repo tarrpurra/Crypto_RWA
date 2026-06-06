@@ -92,7 +92,7 @@ export default function Trade() {
   const [searchParams] = useSearchParams();
   const { isConnected } = useAccount();
   const { walletAddress, effectiveWalletAddress, isSupportedChain } = usePortfolioWallet();
-  const { setScope, clearScope } = useInvestmentScope();
+  const { scope, setScope, clearScope } = useInvestmentScope();
   const portfolioQuery = useCurrentPortfolio();
   const riskQuery = useCurrentRisk();
   const marketQuery = useMarketIngestionStatus();
@@ -113,23 +113,35 @@ export default function Trade() {
   const risk = riskQuery.data;
   const market = marketQuery.data;
   const prices = pricesQuery.data;
-    const oracle = oracleQuery.data;
-    const routes = routesQuery.data;
-    const settings = settingsQuery.data;
-    const proposals = useMemo(() => proposalsQuery.data?.proposals ?? [], [proposalsQuery.data?.proposals]);
-    const aiDecisionMakerEnabled = settings?.ai_decision_maker_enabled ?? false;
-    const autoExecutionPlanIdRef = useRef<string | null>(null);
+  const oracle = oracleQuery.data;
+  const routes = routesQuery.data;
+  const settings = settingsQuery.data;
+  const proposals = useMemo(() => proposalsQuery.data?.proposals ?? [], [proposalsQuery.data?.proposals]);
+  const aiDecisionMakerEnabled = settings?.ai_decision_maker_enabled ?? false;
+  const routeHasInvestmentParams = searchParams.has("asset") || searchParams.has("amount") || searchParams.has("risk");
+  const autoExecutionPlanIdRef = useRef<string | null>(null);
+  const autoCreatePlanRef = useRef<string | null>(null);
+  const amountTouchedRef = useRef(false);
 
-    const [assetSymbol, setAssetSymbol] = useState<(typeof assetOptions)[number]>("MNT");
-    const [amount, setAmount] = useState("100");
-  const [riskProfile, setRiskProfile] = useState<(typeof riskProfiles)[number]>("Balanced");
+  const initialAssetSymbol = searchParams.get("asset");
+  const initialAmount = searchParams.get("amount");
+  const initialRiskProfile = searchParams.get("risk");
+  const [assetSymbol, setAssetSymbol] = useState<(typeof assetOptions)[number]>(
+    assetOptions.includes(initialAssetSymbol as (typeof assetOptions)[number]) ? (initialAssetSymbol as (typeof assetOptions)[number]) : "MNT",
+  );
+  const [amount, setAmount] = useState(initialAmount ?? "");
+  const [riskProfile, setRiskProfile] = useState<(typeof riskProfiles)[number]>(
+    riskProfiles.includes(initialRiskProfile as (typeof riskProfiles)[number])
+      ? (initialRiskProfile as (typeof riskProfiles)[number])
+      : "Balanced",
+  );
   const [allocationMode, setAllocationMode] = useState<(typeof allocationModes)[number]>("AI Suggested");
   const [manualAllocation, setManualAllocation] = useState("70/30");
   const [activeProposalId, setActiveProposalId] = useState<string | null>(null);
-    const [showRiskDialog, setShowRiskDialog] = useState(false);
-    const [plan, setPlan] = useState<InvestmentPlanResponse | null>(null);
-    const [autoExecutionPlanId, setAutoExecutionPlanId] = useState<string | null>(null);
-    const proposalDetailQuery = useProposalDetail(activeProposalId);
+  const [showRiskDialog, setShowRiskDialog] = useState(false);
+  const [plan, setPlan] = useState<InvestmentPlanResponse | null>(null);
+  const [autoExecutionPlanId, setAutoExecutionPlanId] = useState<string | null>(null);
+  const proposalDetailQuery = useProposalDetail(activeProposalId);
   const selectedAssetIngestion = useMemo(
     () => market?.assets?.find((item) => item.asset_symbol === assetSymbol) ?? null,
     [assetSymbol, market?.assets],
@@ -140,17 +152,27 @@ export default function Trade() {
     query: { enabled: Boolean(effectiveWalletAddress) },
   });
   const nativeMntBalance = nativeBalanceQuery.data ? Number.parseFloat(nativeBalanceQuery.data.formatted) : NaN;
-
-  const availableBalance = useMemo(() => {
-    if (assetSymbol === "MNT") {
-      return Number.isFinite(nativeMntBalance) ? nativeMntBalance : null;
-    }
+  const selectedPortfolioBalance = useMemo(() => {
     const position = portfolio?.positions?.find((item) => item.asset_symbol === assetSymbol);
-    const parsed = position?.balance ? Number.parseFloat(position.balance) : NaN;
+    return position?.balance?.trim() ?? "";
+  }, [assetSymbol, portfolio?.positions]);
+  const selectedPortfolioBalanceValue = Number.parseFloat(selectedPortfolioBalance || "0");
+  const nativeWalletBalanceValue = Number.isFinite(nativeMntBalance) ? nativeMntBalance : Number.parseFloat(nativeBalanceQuery.data?.formatted || "0");
+  const walletBalanceAmount =
+    Number.isFinite(selectedPortfolioBalanceValue) && selectedPortfolioBalanceValue > 0
+      ? selectedPortfolioBalance
+      : Number.isFinite(nativeWalletBalanceValue) && nativeWalletBalanceValue > 0 && assetSymbol === "MNT"
+        ? nativeBalanceQuery.data?.formatted || ""
+        : "";
+  const availableBalance = useMemo(() => {
+    if (!walletBalanceAmount) {
+      return null;
+    }
+    const parsed = Number.parseFloat(walletBalanceAmount);
     return Number.isFinite(parsed) ? parsed : null;
-  }, [assetSymbol, nativeMntBalance, portfolio?.positions]);
-
-  const numericAmount = Number.parseFloat(amount || "0");
+  }, [walletBalanceAmount]);
+  const resolvedAmount = walletBalanceAmount || amount;
+  const numericAmount = Number.parseFloat(resolvedAmount || "0");
   const manualWeights = allocationMode === "Manual" ? parseManualWeights(manualAllocation) : null;
   const mntWrapConfigured = Boolean(settings?.native_mnt_enabled && settings?.sepolia_wmnt_address);
   const localWarnings = useMemo(() => {
@@ -165,7 +187,7 @@ export default function Trade() {
       warnings.push("No wallet address is available for portfolio reads.");
     }
     if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-      warnings.push("Enter a valid deposit amount.");
+      warnings.push("Enter a valid wallet balance to deploy.");
     }
     if (allocationMode === "Manual" && !manualWeights) {
       warnings.push("Manual allocation must be provided as USDY/mETH, for example 70/30.");
@@ -187,12 +209,12 @@ export default function Trade() {
       return null;
     }
     return proposals.find((proposal) => proposal.proposal_id === activeProposalId) ?? null;
-    }, [activeProposalId, proposals]);
-    const resolvedPlan = proposalDetailQuery.data ?? plan;
-    const executionRequired = Boolean((resolvedPlan?.linked_proposals ?? plan?.linked_proposals ?? []).length);
-    const autoExecutionActive = autoExecutionPlanId === plan?.plan_id;
+  }, [activeProposalId, proposals]);
+  const resolvedPlan = proposalDetailQuery.data ?? plan;
+  const executionRequired = Boolean((resolvedPlan?.linked_proposals ?? plan?.linked_proposals ?? []).length);
+  const autoExecutionActive = autoExecutionPlanId === plan?.plan_id;
 
-    const proposalActivity = getEntriesForProposal(activeProposalId);
+  const proposalActivity = getEntriesForProposal(activeProposalId);
 
   useEffect(() => {
     if (!plan?.linked_proposals.length) {
@@ -200,6 +222,17 @@ export default function Trade() {
     }
     setActiveProposalId(plan.linked_proposals[0].proposal_id);
   }, [plan]);
+
+  useEffect(() => {
+    amountTouchedRef.current = false;
+  }, [assetSymbol]);
+
+  useEffect(() => {
+    if (amountTouchedRef.current) {
+      return;
+    }
+    setAmount(walletBalanceAmount);
+  }, [walletBalanceAmount]);
 
   useEffect(() => {
     if (!aiDecisionMakerEnabled || !plan?.linked_proposals.length || !plan.approval_enabled) {
@@ -259,6 +292,10 @@ export default function Trade() {
   }, [searchParams]);
 
   useEffect(() => {
+    if (isConnected && aiDecisionMakerEnabled && !walletBalanceAmount) {
+      clearScope();
+      return;
+    }
     if (!isSupportedChain || !Number.isFinite(numericAmount) || numericAmount <= 0) {
       clearScope();
       return;
@@ -270,7 +307,7 @@ export default function Trade() {
       allocationMode,
       chainId: mantleSepoliaTestnet.id,
     });
-  }, [allocationMode, assetSymbol, clearScope, isSupportedChain, numericAmount, riskProfile, setScope]);
+  }, [allocationMode, assetSymbol, aiDecisionMakerEnabled, clearScope, isConnected, isSupportedChain, numericAmount, riskProfile, setScope, walletBalanceAmount]);
 
   const handleCreatePlan = async () => {
     if (localWarnings.length > 0) {
@@ -289,7 +326,7 @@ export default function Trade() {
       try {
         await wrapMnt.mutateAsync({
           wmntAddress: settings.sepolia_wmnt_address as `0x${string}`,
-          amount,
+          amount: resolvedAmount,
         });
       } catch {
         return;
@@ -324,6 +361,42 @@ export default function Trade() {
       },
     );
   };
+
+  useEffect(() => {
+    if (!aiDecisionMakerEnabled || !routeHasInvestmentParams || !scope || plan?.plan_id || createPlan.isPending || wrapMnt.isPending || autoExecutionActive) {
+      if (!aiDecisionMakerEnabled || !routeHasInvestmentParams || plan?.plan_id) {
+        autoCreatePlanRef.current = null;
+      }
+      return;
+    }
+    if (aiDecisionMakerEnabled && !walletBalanceAmount) {
+      return;
+    }
+    if (!walletAddress || localWarnings.length > 0) {
+      return;
+    }
+
+    const scopeKey = `${scope.depositAssetSymbol}:${scope.depositAmount}:${scope.riskProfile}:${scope.allocationMode}`;
+    if (autoCreatePlanRef.current === scopeKey) {
+      return;
+    }
+
+    autoCreatePlanRef.current = scopeKey;
+    toast.info("Full access AI is creating the investment plan and executing it automatically.");
+    void handleCreatePlan();
+  }, [
+    aiDecisionMakerEnabled,
+    autoExecutionActive,
+    createPlan.isPending,
+    handleCreatePlan,
+    localWarnings.length,
+    plan?.plan_id,
+    routeHasInvestmentParams,
+    scope,
+    walletAddress,
+    wrapMnt.isPending,
+    walletBalanceAmount,
+  ]);
 
   const handleApprove = () => {
     if (!activeProposalId) {
@@ -394,7 +467,7 @@ export default function Trade() {
     <PageScaffold
       eyebrow="Investment flow"
       title="Trade"
-      description="Create a deposit-aware investment plan, inspect real backend guard checks, approve linked swap proposals, then execute through the connected wallet."
+      description="Create an AI-managed investment plan from the connected wallet balance, inspect real backend guard checks, approve linked swap proposals, then execute through the connected wallet."
     >
       <NetworkGuard aiDecisionMakerEnabled={aiDecisionMakerEnabled} />
       <WalletScopeControl />
@@ -453,8 +526,19 @@ export default function Trade() {
                 </Select>
               </label>
               <label className="grid gap-2">
-                <span className="text-xs text-muted-foreground">Deposit amount</span>
-                <Input type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} className="bg-surface-2" />
+                <span className="text-xs text-muted-foreground">Wallet balance to deploy</span>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={amount}
+                  readOnly={aiDecisionMakerEnabled}
+                  onChange={(event) => {
+                    amountTouchedRef.current = true;
+                    setAmount(event.target.value);
+                  }}
+                  className="bg-surface-2"
+                />
               </label>
             </div>
 
@@ -513,11 +597,11 @@ export default function Trade() {
               </div>
             </div>
 
-            {assetSymbol === "MNT" && (
-              <div className="rounded border border-primary/30 bg-primary/10 p-3 text-sm text-foreground">
-                Native MNT deposits wrap to WMNT in your connected wallet before the investment plan is created. The downstream quote and swap path continues on WMNT.
-              </div>
-            )}
+              {assetSymbol === "MNT" && (
+                <div className="rounded border border-primary/30 bg-primary/10 p-3 text-sm text-foreground">
+                  Native MNT deposits wrap to WMNT in your connected wallet before the investment plan is created. The AI uses the connected wallet balance instead of asking for more funds.
+                </div>
+              )}
 
             {settings?.sepolia_meth_is_test_token && (
               <div className="rounded border border-border bg-surface-2 p-3 text-sm text-muted-foreground">
@@ -525,14 +609,25 @@ export default function Trade() {
               </div>
             )}
 
-            <div className="flex flex-wrap gap-2">
-              <Button onClick={handleCreatePlan} disabled={working || localWarnings.length > 0}>
-                {wrapMnt.isPending ? "Wrapping MNT..." : createPlan.isPending ? "Creating plan..." : "Create investment plan"}
-              </Button>
-              <Button variant="outline" onClick={() => setShowRiskDialog(true)} disabled={!resolvedPlan?.risk_assessment && !risk}>
-                View risk details
-              </Button>
-            </div>
+            {!aiDecisionMakerEnabled ? (
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={handleCreatePlan} disabled={working || localWarnings.length > 0}>
+                  {wrapMnt.isPending ? "Wrapping MNT..." : createPlan.isPending ? "Creating plan..." : "Create investment plan"}
+                </Button>
+                <Button variant="outline" onClick={() => setShowRiskDialog(true)} disabled={!resolvedPlan?.risk_assessment && !risk}>
+                  View risk details
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="rounded border border-success/40 bg-success/10 p-3 text-sm text-success">
+                  Full access AI is preparing the plan, approving linked proposals, and executing the swap automatically when the scoped wallet balance is ready.
+                </div>
+                <Button variant="outline" onClick={() => setShowRiskDialog(true)} disabled={!resolvedPlan?.risk_assessment && !risk}>
+                  View risk details
+                </Button>
+              </div>
+            )}
 
             {localWarnings.length > 0 && (
               <div className="space-y-2 rounded border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
@@ -572,9 +667,11 @@ export default function Trade() {
                             ? "border-warning/40 bg-warning/10 text-warning"
                             : "border-border text-muted-foreground"
                       }
-                    >
+                      >
                       {(resolvedPlan?.approval_enabled ?? plan.approval_enabled)
-                        ? "approval ready"
+                        ? aiDecisionMakerEnabled
+                          ? "auto-execution ready"
+                          : "approval ready"
                         : executionRequired
                           ? "blocked"
                           : "no swap required"}
@@ -635,7 +732,9 @@ export default function Trade() {
                   <p className="font-medium text-foreground">
                     Step {step.step_index}: {step.step_type}
                   </p>
-                  <span className="text-xs text-muted-foreground">{step.requires_user_action ? "user action" : "informational"}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {aiDecisionMakerEnabled ? "AI managed" : step.requires_user_action ? "user action" : "informational"}
+                  </span>
                 </div>
                 <p className="mt-1 text-muted-foreground">{step.description}</p>
               </div>
@@ -692,17 +791,23 @@ export default function Trade() {
                 Full access AI is currently approving and executing the linked proposals.
               </div>
             )}
-            <div className="flex flex-wrap gap-2">
-              <Button onClick={handleApprove} disabled={!activeProposalId || working || autoExecutionActive || !(resolvedPlan?.approval_enabled ?? plan?.approval_enabled)}>
-                {approveProposal.isPending ? "Approving..." : "Approve investment plan"}
-              </Button>
-              <Button variant="outline" onClick={handleReject} disabled={!activeProposalId || working || autoExecutionActive}>
-                Reject plan
-              </Button>
-              <Button onClick={handleExecute} disabled={!activeProposalId || working || autoExecutionActive || selectedPlanProposal?.status_code !== "PROPOSAL_APPROVED"}>
-                {executeProposal.isPending ? "Executing..." : "Execute selected proposal"}
-              </Button>
-            </div>
+            {!aiDecisionMakerEnabled ? (
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={handleApprove} disabled={!activeProposalId || working || autoExecutionActive || !(resolvedPlan?.approval_enabled ?? plan?.approval_enabled)}>
+                  {approveProposal.isPending ? "Approving..." : "Approve investment plan"}
+                </Button>
+                <Button variant="outline" onClick={handleReject} disabled={!activeProposalId || working || autoExecutionActive}>
+                  Reject plan
+                </Button>
+                <Button onClick={handleExecute} disabled={!activeProposalId || working || autoExecutionActive || selectedPlanProposal?.status_code !== "PROPOSAL_APPROVED"}>
+                  {executeProposal.isPending ? "Executing..." : "Execute selected proposal"}
+                </Button>
+              </div>
+            ) : (
+              <div className="rounded border border-success/40 bg-success/10 px-3 py-2 text-sm text-success">
+                Linked proposals are being approved and executed automatically by full access AI.
+              </div>
+            )}
           </div>
         </div>
       </section>

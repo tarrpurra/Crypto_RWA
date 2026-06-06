@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from services.agent.app.api.investment_scope import InvestmentScopeInput, build_scoped_decision_response
 from services.agent.app.api.portfolio import current_portfolio
-from services.agent.app.core.settings import get_settings
+from services.agent.app.core.settings import TargetChain, get_settings
 from services.agent.app.schemas.proposals import (
     InvestmentPlanRequest,
     InvestmentPlanResponse,
@@ -87,7 +87,10 @@ async def get_latest_decisions(
         )
     portfolio = fetch_portfolio_snapshot(wallet_address=wallet_address, allow_env_fallback=False)
     risk = RiskScoreEngine().compute_risk_snapshot(portfolio)
-    profile_name = profiles.ACTIVE_PROFILE_NAME or get_settings().allocation_profile_name
+    settings = get_settings()
+    profile_name = profiles.ACTIVE_PROFILE_NAME or settings.allocation_profile_name
+    if settings.target_chain == TargetChain.MANTLE_SEPOLIA:
+        profile_name = "Sepolia Test"
     decision, actions = compute_rebalance(portfolio, risk, normalize_profile_name(profile_name))
     return await generate_recommendation_reasoning(portfolio, risk, decision, actions)
 

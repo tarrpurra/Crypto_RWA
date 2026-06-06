@@ -17,6 +17,34 @@ For each entry, record:
 
 ## Change Log
 
+### 2026-06-06
+
+Type:
+Docs / Planning
+
+Summary:
+
+- added `frontend_plan.md` as the current demo-readiness cleanup plan for the active Vite React frontend
+- documented the required safety correction away from full-access auto-execution and back to explicit user approval
+- mapped the existing endpoint surface and identified the missing execution-result persistence endpoint
+- updated the frontend-product README so the plan is discoverable
+
+Affected scope:
+
+- docs/frontend-product/frontend_plan.md
+- docs/frontend-product/README.md
+- docs/frontend-product/Changes.md
+
+Impact:
+
+- AI/data analytics: clarifies which existing API surfaces the frontend should use for the demo path
+- contracts: no contract change
+- UX: establishes the cleanup direction for reducing clutter, hiding debug internals, and making guard blockers primary
+
+Verification:
+
+- docs-only change; no build or test command required
+
 ### 2026-05-29
 
 Type:

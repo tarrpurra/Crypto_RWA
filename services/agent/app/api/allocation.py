@@ -13,7 +13,7 @@ from services.agent.strategies.allocation.profiles import normalize_profile_name
 from services.agent.repositories.db.models import AllocationDecisionRecord
 from services.agent.repositories.db.session import create_session, init_db
 from services.agent.modules.oracle.freshness import utc_now
-from services.agent.app.core.settings import get_settings
+from services.agent.app.core.settings import TargetChain, get_settings
 
 logger = logging.getLogger("services.agent.allocation.api")
 router = APIRouter(prefix="/allocation", tags=["allocation"])
@@ -43,7 +43,10 @@ def _save_allocation_decision(decision: AllocationDecision) -> None:
 
 
 def _active_profile_name() -> str:
-    configured_name = profiles.ACTIVE_PROFILE_NAME or get_settings().allocation_profile_name
+    settings = get_settings()
+    configured_name = profiles.ACTIVE_PROFILE_NAME or settings.allocation_profile_name
+    if settings.target_chain == TargetChain.MANTLE_SEPOLIA:
+        configured_name = "Sepolia Test"
     try:
         return normalize_profile_name(configured_name)
     except ValueError as exc:
@@ -93,10 +96,14 @@ async def get_allocation_recommendation(
 
 @router.post("/profile", response_model=dict[str, str])
 async def update_active_profile(request: UpdateProfileRequest) -> dict[str, str]:
+    settings = get_settings()
     try:
         canonical_name = normalize_profile_name(request.profile_name)
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid profile name: {request.profile_name}. Approved: {list(profiles.ALLOCATION_PROFILES.keys())}")
+
+    if settings.target_chain == TargetChain.MANTLE_SEPOLIA:
+        canonical_name = "Sepolia Test"
 
     profiles.ACTIVE_PROFILE_NAME = canonical_name
     return {"status": "ok", "message": f"Active allocation profile set to {canonical_name}"}

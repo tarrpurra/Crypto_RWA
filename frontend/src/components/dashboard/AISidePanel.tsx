@@ -25,7 +25,7 @@ const pipelineLayers = [
 
 export function AISidePanel() {
   const [collapsed, setCollapsed] = useState(true)
-  const { effectiveWalletAddress, walletAddress } = usePortfolioWallet()
+  const { effectiveWalletAddress } = usePortfolioWallet()
 
   const decisionsQuery = useDecisions()
   const riskQuery = useCurrentRisk()
@@ -44,9 +44,9 @@ export function AISidePanel() {
 
   const riskBand = risk?.risk_band ?? "UNKNOWN"
   const riskBandColor =
-    riskBand === "NORMAL" ? "text-success" :
-    riskBand === "CAUTION" ? "text-warning" :
-    riskBand === "RISK_VETO" ? "text-destructive" : "text-muted-foreground"
+    riskBand === "RISK_NORMAL" ? "text-success" :
+    riskBand === "RISK_CAUTION" || riskBand === "RISK_REBALANCE_ONLY" ? "text-warning" :
+    riskBand === "RISK_REDUCE_ONLY" || riskBand === "RISK_PAUSE_REQUIRED" || riskBand === "RISK_VETO" ? "text-destructive" : "text-muted-foreground"
 
   const action = decisions?.recommended_action ?? "MONITOR"
   const config = actionConfig[action] ?? actionConfig.MONITOR
@@ -54,8 +54,8 @@ export function AISidePanel() {
 
   const activeLayers: Record<string, boolean> = {
     ingestion: decisions?.data_sources_used?.length ? true : false,
-    brain: decisions?.confidence ? true : false,
-    risk: risk?.risk_score ? true : false,
+    brain: decisions?.confidence != null,
+    risk: risk?.risk_score != null,
     allocation: allocation?.status === "ok",
     execution: decisions?.status === "ok",
   }
@@ -93,7 +93,7 @@ export function AISidePanel() {
       label: "Risk Score",
       value: `${risk.risk_score}`,
       detail: risk.risk_band ?? "N/A",
-      status: risk.risk_band === "NORMAL" ? "ok" : risk.risk_band === "CAUTION" ? "warn" : "info",
+      status: risk.risk_band === "RISK_NORMAL" ? "ok" : "warn",
     })
   }
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowRight, BellRing } from "lucide-react";
 import { toast } from "sonner";
@@ -28,7 +28,7 @@ const Index = () => {
   const { login } = useAuth();
   const { scope, setScope, clearScope } = useInvestmentScope();
   const [depositAsset, setDepositAsset] = useState<(typeof assetOptions)[number]>("MNT");
-  const [depositAmount, setDepositAmount] = useState("100");
+  const [depositAmount, setDepositAmount] = useState("");
   const [riskProfile, setRiskProfile] = useState<(typeof riskProfiles)[number]>("Balanced");
   const healthQuery = useSystemHealth();
   const settingsQuery = useSettings();
@@ -38,7 +38,7 @@ const Index = () => {
   const allocationQuery = useAllocationRecommendation();
   const marketQuery = useMarketIngestionStatus();
   const snapshotsQuery = usePortfolioSnapshots(10);
-  const { walletAddress, effectiveWalletAddress, connectedWalletAddress, isSupportedChain } = usePortfolioWallet();
+  const { effectiveWalletAddress, connectedWalletAddress, isSupportedChain } = usePortfolioWallet();
 
   const health = healthQuery.data;
   const settings = settingsQuery.data;
@@ -49,8 +49,21 @@ const Index = () => {
   const snapshots = snapshotsQuery.data;
   const hasConnectedSupportedWallet = Boolean(connectedWalletAddress && isSupportedChain);
   const aiDecisionMakerEnabled = settings?.ai_decision_maker_enabled ?? false;
-  const swapRecommendation = allocation?.decision.recommended_action === "REBALANCE" ? allocation.rebalance_actions[0] ?? null : null;
+  const swapRecommendation =
+    allocation?.decision.recommended_action === "REBALANCE"
+      ? allocation.rebalance_actions.find((action) => action.action !== "HOLD" && action.amount > 0) ?? null
+      : null;
   const lastRecommendationToastRef = useRef<string | null>(null);
+  const autoLaunchTradeFlowRef = useRef<string | null>(null);
+  const amountTouchedRef = useRef(false);
+  const selectedPortfolioBalance = useMemo(() => {
+    const position = portfolio?.positions?.find((item) => item.asset_symbol === depositAsset);
+    return position?.balance?.trim() ?? "";
+  }, [depositAsset, portfolio?.positions]);
+  const selectedPortfolioBalanceValue = Number.parseFloat(selectedPortfolioBalance || "0");
+  const walletBalanceAmount = Number.isFinite(selectedPortfolioBalanceValue) && selectedPortfolioBalanceValue > 0 ? selectedPortfolioBalance : "";
+  const resolvedDepositAmount = walletBalanceAmount || depositAmount;
+  const walletBalanceReady = !hasConnectedSupportedWallet || Boolean(walletBalanceAmount);
   const portfolioDetail =
     !effectiveWalletAddress
       ? ""
@@ -60,6 +73,15 @@ const Index = () => {
       ? ""
       : risk?.reasoning_summary ?? "";
 
+  const launchTradeFlow = () => {
+    const params = new URLSearchParams({
+      asset: depositAsset,
+      amount: resolvedDepositAmount,
+      risk: riskProfile,
+    });
+    navigate(`/trade?${params.toString()}`);
+  };
+
   useEffect(() => {
     if (!scope) {
       return;
@@ -67,11 +89,21 @@ const Index = () => {
     if (assetOptions.includes(scope.depositAssetSymbol as (typeof assetOptions)[number])) {
       setDepositAsset(scope.depositAssetSymbol as (typeof assetOptions)[number]);
     }
-    setDepositAmount(String(scope.depositAmount));
     if (riskProfiles.includes(scope.riskProfile as (typeof riskProfiles)[number])) {
       setRiskProfile(scope.riskProfile as (typeof riskProfiles)[number]);
     }
   }, [scope]);
+
+  useEffect(() => {
+    amountTouchedRef.current = false;
+  }, [depositAsset]);
+
+  useEffect(() => {
+    if (amountTouchedRef.current) {
+      return;
+    }
+    setDepositAmount(walletBalanceAmount);
+  }, [walletBalanceAmount]);
 
   useEffect(() => {
     if (!hasConnectedSupportedWallet || aiDecisionMakerEnabled || !swapRecommendation) {
@@ -91,7 +123,32 @@ const Index = () => {
   }, [aiDecisionMakerEnabled, hasConnectedSupportedWallet, swapRecommendation]);
 
   useEffect(() => {
-    const parsedAmount = Number.parseFloat(depositAmount || "0");
+    if (!hasConnectedSupportedWallet || !aiDecisionMakerEnabled || !swapRecommendation) {
+      autoLaunchTradeFlowRef.current = null;
+      return;
+    }
+    if (!walletBalanceAmount) {
+      return;
+    }
+
+    const autoLaunchKey = `${swapRecommendation.asset_symbol}:${swapRecommendation.action}:${swapRecommendation.amount}`;
+    if (autoLaunchTradeFlowRef.current === autoLaunchKey) {
+      return;
+    }
+
+    autoLaunchTradeFlowRef.current = autoLaunchKey;
+    toast.info(
+      `Full access AI is opening the trade flow and will execute ${swapRecommendation.asset_symbol} ${swapRecommendation.action === "BUY" ? "buy" : swapRecommendation.action} automatically.`,
+    );
+    launchTradeFlow();
+  }, [aiDecisionMakerEnabled, hasConnectedSupportedWallet, launchTradeFlow, swapRecommendation, walletBalanceAmount]);
+
+  useEffect(() => {
+    if (hasConnectedSupportedWallet && !walletBalanceAmount) {
+      clearScope();
+      return;
+    }
+    const parsedAmount = Number.parseFloat(resolvedDepositAmount || "0");
     if (!hasConnectedSupportedWallet || !Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       if (!hasConnectedSupportedWallet) {
         clearScope();
@@ -105,16 +162,7 @@ const Index = () => {
       allocationMode: "AI Suggested",
       chainId: 5003,
     });
-  }, [clearScope, depositAmount, depositAsset, hasConnectedSupportedWallet, riskProfile, setScope]);
-
-  const launchTradeFlow = () => {
-    const params = new URLSearchParams({
-      asset: depositAsset,
-      amount: depositAmount,
-      risk: riskProfile,
-    });
-    navigate(`/trade?${params.toString()}`);
-  };
+  }, [clearScope, depositAsset, hasConnectedSupportedWallet, resolvedDepositAmount, riskProfile, setScope, walletBalanceAmount]);
 
   const updateAiAccess = (enabled: boolean) => {
     updateSettings.mutate({ ai_decision_maker_enabled: enabled });
@@ -134,10 +182,12 @@ const Index = () => {
               <div>
                 <p className="terminal-label text-primary">Investment Scope</p>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  Enter how much of the connected Mantle Sepolia wallet you want to deploy. Allocation and risk calls will use this scoped amount instead of the entire wallet.
+                  The scope now defaults to the connected wallet balance. Allocation and risk calls use that wallet balance instead of asking for extra funds.
                 </p>
               </div>
-              <Button onClick={launchTradeFlow}>Open trade flow</Button>
+              <Button onClick={launchTradeFlow} disabled={!walletBalanceReady}>
+                Open trade flow
+              </Button>
             </div>
             <div className="mt-4 grid gap-3 md:grid-cols-3">
               <label className="grid gap-2">
@@ -156,8 +206,18 @@ const Index = () => {
                 </Select>
               </label>
               <label className="grid gap-2">
-                <span className="text-xs text-muted-foreground">Amount to invest</span>
-                <Input type="number" min="0" step="0.01" value={depositAmount} onChange={(event) => setDepositAmount(event.target.value)} className="bg-surface-2" />
+                <span className="text-xs text-muted-foreground">Wallet balance to deploy</span>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={depositAmount}
+                  onChange={(event) => {
+                    amountTouchedRef.current = true;
+                    setDepositAmount(event.target.value);
+                  }}
+                  className="bg-surface-2"
+                />
               </label>
               <label className="grid gap-2">
                 <span className="text-xs text-muted-foreground">Risk profile</span>
@@ -227,19 +287,25 @@ const Index = () => {
                     </div>
                   </div>
                   <p className="mt-3 text-xs text-muted-foreground">
-                    The trade page opens with the deposit asset, amount, and risk profile already filled.
+                    The trade page opens with the deposit asset, wallet balance, and risk profile already filled.
                   </p>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2 md:justify-end">
-                <Button onClick={launchTradeFlow}>
-                  Review swap
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
-                <Button variant="outline" onClick={() => navigate("/trade")}>
-                  Open trade page
-                </Button>
-              </div>
+              {!aiDecisionMakerEnabled ? (
+                <div className="flex flex-wrap gap-2 md:justify-end">
+                  <Button onClick={launchTradeFlow} disabled={!walletBalanceReady}>
+                    Review swap
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Button>
+                  <Button variant="outline" onClick={() => navigate("/trade")} disabled={!walletBalanceReady}>
+                    Open trade page
+                  </Button>
+                </div>
+              ) : (
+                <div className="rounded border border-success/40 bg-success/10 px-3 py-2 text-sm text-success md:max-w-sm md:justify-end">
+                  Full access AI is opening the trade flow and executing the scoped swap automatically. No manual review is required in this mode.
+                </div>
+              )}
             </div>
           </section>
         )}

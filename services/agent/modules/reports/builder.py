@@ -608,7 +608,7 @@ async def build_investment_report(
     overall_status_code = DataStatusCode.DATA_FRESH.value if not data_gaps else DataStatusCode.DATA_PARTIAL.value
     overall_reason = "Detailed investment report generated successfully."
     if data_gaps:
-        overall_reason = f"Detailed investment report generated with {len(data_gaps)} data gaps."
+        overall_reason = "Detailed investment report generated. Missing data sources are listed below."
 
     markdown_sections = [
         "# AIxRWA Investment Report",
@@ -626,7 +626,7 @@ async def build_investment_report(
     if data_gaps:
         markdown_sections.extend(
             [
-                "## Data Gaps",
+                "## Missing Data",
                 *[f"- {gap}" for gap in data_gaps],
             ]
         )

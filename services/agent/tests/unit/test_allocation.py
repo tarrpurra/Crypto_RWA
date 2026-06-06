@@ -6,6 +6,7 @@ from services.agent.app.schemas.portfolio import PortfolioSnapshot, AssetBalance
 from services.agent.app.schemas.risk import RiskSnapshot
 from services.agent.strategies.allocation.rebalance import compute_rebalance
 from services.agent.strategies.allocation.clip_sizing import clip_trade_amount
+from services.agent.strategies.allocation.profiles import get_allocation_profile_for_chain
 from services.agent.modules.oracle.freshness import utc_now
 
 
@@ -128,6 +129,28 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual(decision.recommended_action, "HOLD")
         self.assertEqual(len(actions), 0)
 
+    def test_missing_position_pricing_does_not_look_normal(self) -> None:
+        balances = [
+            AssetBalance(asset_symbol="USDC", balance=1.0, value_usd=0.0, weight=0.0),
+            AssetBalance(asset_symbol="USDY", balance=1.0, value_usd=0.0, weight=0.0),
+            AssetBalance(asset_symbol="mETH", balance=1.0, value_usd=0.0, weight=0.0),
+        ]
+        portfolio = PortfolioSnapshot(
+            snapshot_id="port_test_missing_prices",
+            wallet_or_vault="0xvault",
+            total_value_usd=1000000.0,
+            balances=balances,
+            weights={"USDC": 0.0, "USDY": 0.0, "mETH": 0.0},
+            status_code="DATA_FRESH",
+            status_reason="",
+            created_at=self.now
+        )
+
+        decision, actions = compute_rebalance(portfolio, self.risk_normal, "Balanced")
+        self.assertEqual(actions, [])
+        self.assertEqual(decision.recommended_action, "HOLD")
+        self.assertEqual(decision.status_code, "RISK_REBALANCE_ONLY")
+
     def test_clip_sizing_rules(self) -> None:
         total_port_value = 1000000.0  # $1M
         # mETH limit: 10% of portfolio ($100k) or $30k -> should clip to $30k
@@ -141,6 +164,15 @@ class AllocationTests(unittest.TestCase):
         # USDC limit: 20% of portfolio ($200k) or $75k -> should clip to $75k
         clipped_usdc = clip_trade_amount("USDC", 90000.0, total_port_value)
         self.assertEqual(clipped_usdc, 75000.0)
+
+    def test_sepolia_chain_profiles_strip_usdc(self) -> None:
+        profile_name, weights = get_allocation_profile_for_chain("Balanced", "mantle_sepolia")
+
+        self.assertEqual(profile_name, "Balanced")
+        self.assertNotIn("USDC", weights)
+        self.assertAlmostEqual(weights["USDY"], 0.6)
+        self.assertAlmostEqual(weights["mETH"], 0.4)
+        self.assertAlmostEqual(sum(weights.values()), 1.0)
 
 
 if __name__ == "__main__":

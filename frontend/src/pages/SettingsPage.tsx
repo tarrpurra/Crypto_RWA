@@ -136,13 +136,18 @@ export default function SettingsPage() {
               Download a markdown report that summarizes the wallet snapshot, risk view, allocation recommendation, market health, and execution queue.
             </p>
             <p className="mt-2 text-xs text-muted-foreground">
-              {report?.status_reason ?? "The report refreshes on demand and is generated from the live backend state."}
+              The report refreshes on demand and is generated from the live backend state.
             </p>
             {report?.data_gaps?.length ? (
-              <div className="mt-3 space-y-1 rounded border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
-                {report.data_gaps.slice(0, 4).map((gap) => (
-                  <p key={gap}>{gap}</p>
-                ))}
+              <div className="mt-3 rounded border border-border bg-surface-2 p-3 text-sm text-muted-foreground">
+                <p className="font-medium text-foreground">Missing data we could not fetch</p>
+                <ul className="mt-2 space-y-1">
+                  {report.data_gaps.map((gap) => (
+                    <li key={gap} className="break-words">
+                      {gap}
+                    </li>
+                  ))}
+                </ul>
               </div>
             ) : (
               <p className="mt-3 text-sm text-success">No report data gaps are currently flagged.</p>

@@ -6,15 +6,89 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Index from "@/pages/Index";
 import { createTestQueryClient } from "@/test/queryClient";
 
+const navigateMock = vi.hoisted(() => vi.fn());
+const walletState = vi.hoisted(() => ({
+  walletAddress: "",
+  storedWallet: "",
+  connectedWalletAddress: "",
+  connectedChainId: null as number | null,
+  effectiveWalletAddress: "",
+  isSupportedChain: false,
+  setWalletAddress: vi.fn(),
+}));
+
 vi.mock("@/components/auth/AuthProvider", () => ({
   useAuth: () => ({ login: vi.fn(), logout: vi.fn(), ready: true, user: null }),
 }));
 
 vi.mock("@/hooks/usePortfolioWallet", () => ({
-  usePortfolioWallet: () => ({ walletAddress: "", storedWallet: "", connectedWalletAddress: "", setWalletAddress: () => {} }),
+  usePortfolioWallet: () => walletState,
 }));
 
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+  };
+});
+
 const fetchMock = vi.fn();
+let settingsResponse = {
+  ai_decision_maker_enabled: false,
+  chain_id: 5003,
+  native_mnt_enabled: true,
+  sepolia_usdy_address: "0x1",
+  sepolia_meth_address: "0x2",
+  sepolia_meth_is_test_token: true,
+  sepolia_meth_price_mode: "manual_mirror",
+  sepolia_wmnt_address: "0x3",
+};
+
+let allocationResponse = {
+  status: "ok",
+  status_code: "DATA_MISSING",
+  status_label: "DATA_MISSING",
+  status_reason: "Portfolio data is missing.",
+  generated_at: "2026-05-27T00:00:00Z",
+  decision: {
+    decision_id: "mock-001",
+    wallet_or_vault: "",
+    profile_name: "default",
+    current_weights: {},
+    target_weights: {},
+    recommended_action: "PAUSE",
+    confidence: 1,
+    reasoning: "Missing portfolio data.",
+    risk_snapshot_id: null,
+    status_code: "DATA_MISSING",
+    created_at: "2026-05-27T00:00:00Z",
+  },
+  rebalance_actions: [],
+};
+
+let riskResponse = {
+  asset: "portfolio",
+  recommended_action: "PAUSE",
+  risk_score: 100,
+  risk_band: "RISK_VETO",
+  confidence: 1,
+  reasoning_summary: "Missing portfolio data activates hard veto.",
+  data_sources_used: ["portfolio"],
+  hard_veto_status: "active",
+  required_human_approval_status: "required",
+  status: "degraded",
+  status_code: "DATA_MISSING",
+  status_label: "DATA_MISSING",
+  status_reason: "Portfolio data is missing.",
+  generated_at: "2026-05-27T00:00:00Z",
+  runtime_mode: "monitor_only",
+  target_chain: "mantle_sepolia",
+  freshness_status: "missing",
+  buckets: [],
+  notes: [],
+  metadata: {},
+};
 
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -35,6 +109,67 @@ function renderPage() {
 }
 
 beforeEach(() => {
+  navigateMock.mockReset();
+  walletState.walletAddress = "";
+  walletState.storedWallet = "";
+  walletState.connectedWalletAddress = "";
+  walletState.connectedChainId = null;
+  walletState.effectiveWalletAddress = "";
+  walletState.isSupportedChain = false;
+  walletState.setWalletAddress.mockReset();
+  settingsResponse = {
+    ai_decision_maker_enabled: false,
+    chain_id: 5003,
+    native_mnt_enabled: true,
+    sepolia_usdy_address: "0x1",
+    sepolia_meth_address: "0x2",
+    sepolia_meth_is_test_token: true,
+    sepolia_meth_price_mode: "manual_mirror",
+    sepolia_wmnt_address: "0x3",
+  };
+  allocationResponse = {
+    status: "ok",
+    status_code: "DATA_MISSING",
+    status_label: "DATA_MISSING",
+    status_reason: "Portfolio data is missing.",
+    generated_at: "2026-05-27T00:00:00Z",
+    decision: {
+      decision_id: "mock-001",
+      wallet_or_vault: "",
+      profile_name: "default",
+      current_weights: {},
+      target_weights: {},
+      recommended_action: "PAUSE",
+      confidence: 1,
+      reasoning: "Missing portfolio data.",
+      risk_snapshot_id: null,
+      status_code: "DATA_MISSING",
+      created_at: "2026-05-27T00:00:00Z",
+    },
+    rebalance_actions: [],
+  };
+  riskResponse = {
+    asset: "portfolio",
+    recommended_action: "PAUSE",
+    risk_score: 100,
+    risk_band: "RISK_VETO",
+    confidence: 1,
+    reasoning_summary: "Missing portfolio data activates hard veto.",
+    data_sources_used: ["portfolio"],
+    hard_veto_status: "active",
+    required_human_approval_status: "required",
+    status: "degraded",
+    status_code: "DATA_MISSING",
+    status_label: "DATA_MISSING",
+    status_reason: "Portfolio data is missing.",
+    generated_at: "2026-05-27T00:00:00Z",
+    runtime_mode: "monitor_only",
+    target_chain: "mantle_sepolia",
+    freshness_status: "missing",
+    buckets: [],
+    notes: [],
+    metadata: {},
+  };
   vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
   fetchMock.mockReset();
   fetchMock.mockImplementation((input: RequestInfo | URL) => {
@@ -76,72 +211,49 @@ beforeEach(() => {
         jsonResponse({
           snapshot_id: "portfolio-1",
           generated_at: "2026-05-27T00:00:00Z",
-          portfolio_address: null,
+          portfolio_address: walletState.effectiveWalletAddress || walletState.walletAddress || null,
           chain_id: 5003,
           base_currency: "USD",
-          total_value_usd: null,
-          positions: [],
-          data_sources_used: [],
-          status: "degraded",
-          status_code: "DATA_MISSING",
-          status_label: "DATA_MISSING",
-          status_reason: "No portfolio wallet or executor vault address is configured for balance reads.",
+          total_value_usd: "103.266794",
+          positions: [
+            {
+              asset_key: "MNT",
+              asset_symbol: "MNT",
+              asset_address: null,
+              chain_id: 5003,
+              balance: "103.266794",
+              balance_source: "portfolio_snapshot",
+              price_usd: "1",
+              value_usd: "103.266794",
+              weight: "1",
+              target_weight: "1",
+              weight_drift: "0",
+              drift_status: "within_target",
+              route_depth_usd: null,
+              slippage_impact_bps: null,
+              valuation_status: "valued",
+              status_code: "DATA_FRESH",
+              status_reason: "Portfolio snapshot valued successfully.",
+              data_sources_used: ["portfolio"],
+              metadata: {},
+            },
+          ],
+          data_sources_used: ["portfolio"],
+          status: "ok",
+          status_code: "DATA_FRESH",
+          status_label: "DATA_FRESH",
+          status_reason: "Portfolio snapshot valued successfully.",
           metadata: {},
         }),
       );
     }
 
     if (url.endsWith("/risk/current")) {
-      return Promise.resolve(
-        jsonResponse({
-          asset: "portfolio",
-          recommended_action: "PAUSE",
-          risk_score: 100,
-          risk_band: "RISK_VETO",
-          confidence: 1,
-          reasoning_summary: "Missing portfolio data activates hard veto.",
-          data_sources_used: ["portfolio"],
-          hard_veto_status: "active",
-          required_human_approval_status: "required",
-          status: "degraded",
-          status_code: "DATA_MISSING",
-          status_label: "DATA_MISSING",
-          status_reason: "Portfolio data is missing.",
-          generated_at: "2026-05-27T00:00:00Z",
-          runtime_mode: "monitor_only",
-          target_chain: "mantle_sepolia",
-          freshness_status: "missing",
-          buckets: [],
-          notes: [],
-          metadata: {},
-        }),
-      );
+      return Promise.resolve(jsonResponse(riskResponse));
     }
 
     if (url.endsWith("/allocation/recommendation")) {
-      return Promise.resolve(
-        jsonResponse({
-          status: "ok",
-          status_code: "DATA_MISSING",
-          status_label: "DATA_MISSING",
-          status_reason: "Portfolio data is missing.",
-          generated_at: "2026-05-27T00:00:00Z",
-          decision: {
-            decision_id: "mock-001",
-            wallet_or_vault: "",
-            profile_name: "default",
-            current_weights: {},
-            target_weights: {},
-            recommended_action: "PAUSE",
-            confidence: 1,
-            reasoning: "Missing portfolio data.",
-            risk_snapshot_id: null,
-            status_code: "DATA_MISSING",
-            created_at: "2026-05-27T00:00:00Z",
-          },
-          rebalance_actions: [],
-        }),
-      );
+      return Promise.resolve(jsonResponse(allocationResponse));
     }
 
     if (url.endsWith("/market/ingestion/status")) {
@@ -158,18 +270,7 @@ beforeEach(() => {
     }
 
     if (url.endsWith("/settings")) {
-      return Promise.resolve(
-        jsonResponse({
-          ai_decision_maker_enabled: false,
-          chain_id: 5003,
-          native_mnt_enabled: true,
-          sepolia_usdy_address: "0x1",
-          sepolia_meth_address: "0x2",
-          sepolia_meth_is_test_token: true,
-          sepolia_meth_price_mode: "manual_mirror",
-          sepolia_wmnt_address: "0x3",
-        }),
-      );
+      return Promise.resolve(jsonResponse(settingsResponse));
     }
 
     if (url.includes("/portfolio/snapshots")) {
@@ -204,5 +305,67 @@ describe("Index", () => {
       expect(screen.getByText("monitor_only")).toBeInTheDocument();
       expect(screen.getAllByText("Loading").length).toBeGreaterThan(0);
     });
+  });
+
+  it("auto launches the trade flow when full access AI is enabled", async () => {
+    walletState.walletAddress = "0x1234567890abcdef1234567890abcdef12345678";
+    walletState.storedWallet = walletState.walletAddress;
+    walletState.connectedWalletAddress = walletState.walletAddress;
+    walletState.connectedChainId = 5003;
+    walletState.effectiveWalletAddress = walletState.walletAddress;
+    walletState.isSupportedChain = true;
+    settingsResponse.ai_decision_maker_enabled = true;
+    riskResponse = {
+      ...riskResponse,
+      recommended_action: "REBALANCE",
+      risk_score: 27.5,
+      risk_band: "RISK_REBALANCE_ONLY",
+      confidence: 0.9,
+      reasoning_summary: "Rebalance is recommended for the scoped portfolio.",
+      data_sources_used: ["portfolio", "allocation"],
+      hard_veto_status: "inactive",
+      required_human_approval_status: "not_required",
+      status: "ok",
+      status_code: "DATA_FRESH",
+      status_label: "DATA_FRESH",
+      status_reason: "Risk engine permits rebalance.",
+      freshness_status: "fresh",
+    };
+    allocationResponse = {
+      status: "ok",
+      status_code: "DATA_FRESH",
+      status_label: "DATA_FRESH",
+      status_reason: "Rebalance recommendation available.",
+      generated_at: "2026-05-27T00:00:00Z",
+      decision: {
+        decision_id: "mock-002",
+        wallet_or_vault: walletState.walletAddress,
+        profile_name: "balanced",
+        current_weights: { MNT: 1 },
+        target_weights: { USDC: 0.5, mETH: 0.3, USDY: 0.2 },
+        recommended_action: "REBALANCE",
+        confidence: 0.9,
+        reasoning: "Portfolio should be rebalanced.",
+        risk_snapshot_id: null,
+        status_code: "DATA_FRESH",
+        created_at: "2026-05-27T00:00:00Z",
+      },
+      rebalance_actions: [
+        { asset_symbol: "USDC", action: "BUY", amount: 50, route_id: "agni:usdc" },
+      ],
+    };
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalled();
+    });
+    const navigationTarget = String(navigateMock.mock.calls[0][0]);
+    expect(navigationTarget.startsWith("/trade?")).toBe(true);
+    expect(navigationTarget).toContain("asset=MNT");
+    expect(navigationTarget).toContain("amount=103.266794");
+    expect(navigationTarget).toContain("risk=Balanced");
+    expect(screen.queryByRole("button", { name: /review swap/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/full access ai is opening the trade flow/i)).toBeInTheDocument();
   });
 });

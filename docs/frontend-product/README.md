@@ -19,10 +19,12 @@ This folder contains the working documentation for the Frontend + Product servic
 
 - [setup.md](./setup.md)
 - [ImplementationPlan.md](./ImplementationPlan.md)
+- [frontend_plan.md](./frontend_plan.md)
 - [Changes.md](./Changes.md)
 
 ## Usage
 
 - start with `setup.md` to prepare the frontend environment
 - use `ImplementationPlan.md` as the product and implementation guide
+- use `frontend_plan.md` for the current demo-readiness cleanup plan
 - update `Changes.md` whenever UX, API integration, or screen behavior changes

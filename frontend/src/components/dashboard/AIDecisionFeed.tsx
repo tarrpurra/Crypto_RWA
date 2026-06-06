@@ -25,6 +25,11 @@ export function AIDecisionFeed() {
   const action = decisions?.recommended_action ?? "MONITOR"
   const config = actionConfig[action] ?? actionConfig.MONITOR
   const Icon = config.icon
+  const riskBand = risk?.risk_band ?? "UNKNOWN"
+  const riskBandColor =
+    riskBand === "RISK_NORMAL" ? "text-success" :
+    riskBand === "RISK_CAUTION" || riskBand === "RISK_REBALANCE_ONLY" ? "text-warning" :
+    riskBand === "RISK_REDUCE_ONLY" || riskBand === "RISK_PAUSE_REQUIRED" || riskBand === "RISK_VETO" ? "text-destructive" : "text-muted-foreground"
 
   const decisionItems: Array<{
     key: string
@@ -42,7 +47,7 @@ export function AIDecisionFeed() {
       label: "Risk Score",
       value: `${risk.risk_score}`,
       detail: risk.risk_band ?? "N/A",
-      status: risk.risk_band === "NORMAL" ? "ok" : risk.risk_band === "CAUTION" ? "warn" : "info",
+      status: risk.risk_band === "RISK_NORMAL" ? "ok" : "warn",
     })
   }
 
@@ -138,7 +143,7 @@ export function AIDecisionFeed() {
                 ) : (
                   <AlertTriangle className="h-3.5 w-3.5 text-warning" />
                 )}
-                <span className="text-[0.65rem] text-muted-foreground">{decisions.status_reason}</span>
+                <span className={cn("text-[0.65rem]", decisions.status === "ok" ? "text-muted-foreground" : riskBandColor)}>{decisions.status_reason}</span>
               </div>
             </div>
           )}

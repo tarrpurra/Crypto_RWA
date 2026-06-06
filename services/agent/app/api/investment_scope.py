@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
-from services.agent.app.core.settings import Settings, get_settings
+from services.agent.app.core.settings import Settings, TargetChain, get_settings
 from services.agent.app.core.status_codes import DataStatusCode
 from services.agent.app.schemas.allocation import AllocationDecision, AllocationDecisionResponse, RebalanceAction
 from services.agent.app.schemas.portfolio import AssetBalance, PortfolioPosition, PortfolioSnapshot, PortfolioSnapshotResponse
@@ -19,7 +19,7 @@ from services.agent.modules.proposals.investment_planner import (
 )
 from services.agent.risk.engine import RiskEngine
 from services.agent.risk.scoring.score_engine import RiskScoreEngine
-from services.agent.strategies.allocation.profiles import get_allocation_profile, normalize_profile_name
+from services.agent.strategies.allocation.profiles import get_allocation_profile_for_chain, normalize_profile_name
 from services.agent.strategies.decision_templates.parser import generate_recommendation_reasoning
 
 
@@ -38,7 +38,7 @@ def _ensure_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-def _resolve_price(symbol: str, prices: dict[str, Decimal]) -> Decimal:
+def _resolve_price(symbol: str, prices: dict[str, Decimal], settings: Settings | None = None) -> Decimal:
     upper = symbol.upper()
     if upper in prices:
         return prices[upper]
@@ -46,13 +46,47 @@ def _resolve_price(symbol: str, prices: dict[str, Decimal]) -> Decimal:
         return prices["WMNT"]
     if upper == "WMNT" and "MNT" in prices:
         return prices["MNT"]
-    if upper in {"USDC", "USDC.E", "USDY"}:
-        return Decimal("1")
+    if settings is not None:
+        if upper in {"USDC", "USDC.E"} and settings.target_chain == TargetChain.MANTLE_SEPOLIA and settings.simulation_fallback_enabled:
+            return Decimal("1")
+        if upper == "USDY" and settings.target_chain == TargetChain.MANTLE_SEPOLIA:
+            if settings.sepolia_usdy_reference_price_usd:
+                try:
+                    return Decimal(str(settings.sepolia_usdy_reference_price_usd))
+                except Exception:
+                    pass
+            if settings.simulation_fallback_enabled:
+                return Decimal("1")
+        if upper == "METH" and settings.target_chain == TargetChain.MANTLE_SEPOLIA:
+            if (
+                settings.sepolia_meth_is_test_token
+                and settings.effective_sepolia_meth_price_mode == "manual_mirror"
+                and settings.meth_manual_price_usd
+            ):
+                try:
+                    return Decimal(str(settings.meth_manual_price_usd))
+                except Exception:
+                    pass
     return Decimal("0")
 
 
-def _target_weights(scope: InvestmentScopeInput) -> tuple[str, dict[str, float]]:
-    profile_name, ai_weights = get_allocation_profile(scope.risk_profile)
+def _resolved_price_map(
+    scope: InvestmentScopeInput,
+    target_weights: dict[str, float],
+    settings: Settings,
+    prices: dict[str, Decimal],
+) -> dict[str, Decimal]:
+    resolved = dict(prices)
+    symbols = {scope.deposit_asset_symbol.upper(), *[symbol.upper() for symbol in target_weights.keys()]}
+    for symbol in symbols:
+        resolved_price = _resolve_price(symbol, resolved, settings)
+        if resolved_price > 0:
+            resolved[symbol] = resolved_price
+    return resolved
+
+
+def _target_weights(scope: InvestmentScopeInput, settings: Settings) -> tuple[str, dict[str, float]]:
+    profile_name, ai_weights = get_allocation_profile_for_chain(scope.risk_profile, settings.target_chain.value)
     normalized_profile = normalize_profile_name(profile_name)
     return normalized_profile, dict(ai_weights)
 
@@ -67,9 +101,10 @@ def _quote_validation_status(swaps) -> str:
 
 def build_scoped_portfolio_response(scope: InvestmentScopeInput, settings: Settings | None = None) -> tuple[PortfolioSnapshotResponse, dict[str, float], str]:
     settings = settings or get_settings()
-    profile_name, target_weights = _target_weights(scope)
+    profile_name, target_weights = _target_weights(scope, settings)
     prices = _latest_price_map()
-    deposit_price = _resolve_price(scope.deposit_asset_symbol, prices)
+    resolved_prices = _resolved_price_map(scope, target_weights, settings, prices)
+    deposit_price = _resolve_price(scope.deposit_asset_symbol, resolved_prices, settings)
     deposit_amount = Decimal(str(scope.deposit_amount))
     total_value_usd = deposit_amount * deposit_price if deposit_price > 0 else Decimal("0")
     allocations = _build_target_allocations(
@@ -78,7 +113,7 @@ def build_scoped_portfolio_response(scope: InvestmentScopeInput, settings: Setti
         deposit_price_usd=deposit_price if deposit_price > 0 else Decimal("0"),
         target_weights=target_weights,
         source="investment_scope",
-        prices=prices,
+        prices=resolved_prices,
     )
     allocations = [
         item
@@ -95,7 +130,7 @@ def build_scoped_portfolio_response(scope: InvestmentScopeInput, settings: Setti
                 chain_id=settings.effective_chain_id,
                 balance=str(item.amount),
                 balance_source="investment_scope",
-                price_usd=str(prices.get(item.asset_symbol.upper())) if prices.get(item.asset_symbol.upper()) is not None else None,
+                price_usd=str(resolved_prices.get(item.asset_symbol.upper())) if resolved_prices.get(item.asset_symbol.upper()) is not None else None,
                 value_usd=str(item.value_usd),
                 weight=str(item.percentage),
                 target_weight=str(item.percentage),
@@ -136,8 +171,8 @@ def build_scoped_portfolio_response(scope: InvestmentScopeInput, settings: Setti
     return snapshot, target_weights, profile_name
 
 
-def build_scoped_internal_portfolio(scope: InvestmentScopeInput) -> PortfolioSnapshot:
-    snapshot, target_weights, _ = build_scoped_portfolio_response(scope)
+def build_scoped_internal_portfolio(scope: InvestmentScopeInput, settings: Settings | None = None) -> PortfolioSnapshot:
+    snapshot, target_weights, _ = build_scoped_portfolio_response(scope, settings)
     total_value = float(snapshot.total_value_usd or "0")
     balances = [
         AssetBalance(
@@ -209,11 +244,16 @@ def build_scoped_allocation_response(scope: InvestmentScopeInput, settings: Sett
                 route_id=swap.quote.route_id if swap.quote else None,
             )
         )
-    recommended_action = "REBALANCE" if swaps else "HOLD"
+    actions = [action for action in actions if action.amount > 0]
+    actionable_actions = [action for action in actions if action.action != "HOLD"]
+    actions = actionable_actions + [action for action in actions if action.action == "HOLD"]
+    recommended_action = "REBALANCE" if actionable_actions else "HOLD"
     reasoning = (
         f"Scoped allocation uses {scope.deposit_amount} {scope.deposit_asset_symbol} on chain {settings.effective_chain_id} "
         f"with the {profile_name} target profile."
     )
+    if settings.target_chain == TargetChain.MANTLE_SEPOLIA and "USDC" not in target_weights:
+        reasoning += " USDC is excluded on Mantle Sepolia and the remaining sleeves are renormalized."
     decision = AllocationDecision(
         decision_id=f"scoped_allocation_{uuid4().hex}",
         wallet_or_vault=scope.wallet_address or "investment_scope",
@@ -241,7 +281,7 @@ def build_scoped_allocation_response(scope: InvestmentScopeInput, settings: Sett
 async def build_scoped_decision_response(scope: InvestmentScopeInput, settings: Settings | None = None) -> RecommendationResponse:
     settings = settings or get_settings()
     allocation = build_scoped_allocation_response(scope, settings)
-    internal_portfolio = build_scoped_internal_portfolio(scope)
+    internal_portfolio = build_scoped_internal_portfolio(scope, settings)
     risk_snapshot = RiskScoreEngine().compute_risk_snapshot(internal_portfolio)
     return await generate_recommendation_reasoning(
         internal_portfolio,
