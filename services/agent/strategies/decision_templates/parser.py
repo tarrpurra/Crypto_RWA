@@ -190,13 +190,27 @@ async def generate_ai_allocation(
     ai_available = False
 
     try:
-        if settings.ai_reasoning_enabled and settings.ai_reasoning_provider == "ollama":
+        if not settings.ai_reasoning_enabled:
+            fallback_reason = "AI reasoning is disabled by settings."
+        elif settings.ai_reasoning_provider != "ollama":
+            fallback_reason = f"AI reasoning provider is {settings.ai_reasoning_provider}, not ollama."
+        else:
             async with httpx.AsyncClient(timeout=3.0) as client:
                 response = await client.get(f"{ollama_url}/api/tags")
                 if response.status_code == 200:
                     ai_available = True
-    except Exception:
-        logger.debug("Ollama not reachable at %s for allocation.", ollama_url)
+                    logger.info("Ollama allocation probe succeeded at %s/api/tags", ollama_url)
+                else:
+                    fallback_reason = f"Ollama probe returned HTTP {response.status_code}"
+                    logger.warning(
+                        "Ollama allocation probe failed: url=%s/api/tags status=%s body=%s",
+                        ollama_url,
+                        response.status_code,
+                        response.text[:300],
+                    )
+    except Exception as exc:
+        fallback_reason = f"Ollama not reachable at {ollama_url}: {type(exc).__name__}: {exc}"
+        logger.warning("Ollama allocation probe failed: %s", fallback_reason)
 
     if ai_available:
         try:
@@ -361,13 +375,27 @@ async def generate_recommendation_reasoning(
     ollama_url = settings.ollama_url
 
     try:
-        if settings.ai_reasoning_enabled and settings.ai_reasoning_provider == "ollama":
+        if not settings.ai_reasoning_enabled:
+            fallback_reason = "AI reasoning is disabled by settings."
+        elif settings.ai_reasoning_provider != "ollama":
+            fallback_reason = f"AI reasoning provider is {settings.ai_reasoning_provider}, not ollama."
+        else:
             async with httpx.AsyncClient(timeout=3.0) as client:
                 response = await client.get(f"{ollama_url}/api/tags")
                 if response.status_code == 200:
                     ai_disabled = False
-    except Exception:
-        logger.debug("Ollama is not reachable at %s. Falling back to deterministic reasoning.", ollama_url)
+                    logger.info("Ollama reasoning probe succeeded at %s/api/tags", ollama_url)
+                else:
+                    fallback_reason = f"Ollama probe returned HTTP {response.status_code}"
+                    logger.warning(
+                        "Ollama reasoning probe failed: url=%s/api/tags status=%s body=%s",
+                        ollama_url,
+                        response.status_code,
+                        response.text[:300],
+                    )
+    except Exception as exc:
+        fallback_reason = f"Ollama not reachable at {ollama_url}: {type(exc).__name__}: {exc}"
+        logger.warning("Ollama reasoning probe failed: %s", fallback_reason)
 
     if not ai_disabled:
         try:

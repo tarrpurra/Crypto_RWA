@@ -1,189 +1,126 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+
 from services.agent.app.core.settings import get_settings
-from services.agent.app.schemas.risk import RiskSnapshot
-from services.agent.repositories.db.market_repository import MarketDataRepository
+from services.agent.app.core.status_codes import DataStatusCode
+from services.agent.app.schemas.portfolio import PortfolioPosition, PortfolioSnapshot, PortfolioSnapshotResponse
+from services.agent.app.schemas.risk import RiskAssessmentResponse, RiskBucket, RiskSnapshot
 from services.agent.modules.oracle.freshness import utc_now
-from services.agent.app.schemas.portfolio import PortfolioSnapshot
+from services.agent.repositories.db.market_repository import MarketDataRepository
+from services.agent.risk.engine import RiskEngine
 
 logger = logging.getLogger("services.agent.risk.score_engine")
 
 
-def _as_aware_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
-
-
 class RiskScoreEngine:
+    """Deprecated compatibility adapter for the legacy /risk/snapshot shape."""
+
     def __init__(self) -> None:
         self.settings = get_settings()
         self.repo = MarketDataRepository()
 
     def compute_risk_snapshot(self, portfolio: PortfolioSnapshot) -> RiskSnapshot:
-        now = utc_now()
-        
-        # 1. Fetch latest prices & quotes
-        prices = self.repo.latest_normalized_prices()
-        quotes = self.repo.latest_normalized_quotes()
-        
+        logger.warning("RiskScoreEngine is deprecated; use RiskEngine.evaluate() directly.")
+        try:
+            prices = self.repo.latest_normalized_prices()
+            quotes = self.repo.latest_normalized_quotes()
+        except Exception as exc:
+            logger.warning("Legacy risk market context lookup failed: %s", exc)
+            prices = None
+            quotes = None
+        quote_validation_status = (
+            DataStatusCode.QUOTE_FRESH.value
+            if quotes is not None and any(quote.amount_out is not None for quote in quotes)
+            else DataStatusCode.DATA_MISSING.value
+        )
+        assessment = RiskEngine().evaluate(
+            portfolio=self._portfolio_response_from_legacy_snapshot(portfolio),
+            runtime_mode=self.settings.runtime_mode,
+            target_chain=self.settings.target_chain.value,
+            quote_validation_status=quote_validation_status,
+            prices=prices,
+            quotes=quotes,
+        )
+        return self._risk_snapshot_from_assessment(assessment)
+
+    def _portfolio_response_from_legacy_snapshot(self, portfolio: PortfolioSnapshot) -> PortfolioSnapshotResponse:
+        positions = [
+            PortfolioPosition(
+                asset_key=balance.asset_symbol.upper(),
+                asset_symbol=balance.asset_symbol,
+                asset_address=None,
+                chain_id=self.settings.effective_chain_id,
+                balance=str(balance.balance),
+                balance_source="legacy_portfolio_snapshot",
+                price_usd=str(balance.price_usd) if balance.price_usd else None,
+                value_usd=str(balance.value_usd),
+                weight=str(balance.weight),
+                target_weight=None,
+                weight_drift=None,
+                drift_status="not_configured",
+                valuation_status="valued" if balance.value_usd >= 0 else "unvalued",
+                status_code=portfolio.status_code,
+                status_reason=portfolio.status_reason or "Legacy portfolio snapshot.",
+                data_sources_used=["legacy_portfolio_snapshot"],
+            )
+            for balance in portfolio.balances
+        ]
+        return PortfolioSnapshotResponse(
+            snapshot_id=portfolio.snapshot_id,
+            generated_at=portfolio.created_at,
+            portfolio_address=portfolio.wallet_or_vault,
+            chain_id=self.settings.effective_chain_id,
+            base_currency=self.settings.portfolio_base_currency,
+            total_value_usd=str(portfolio.total_value_usd) if portfolio.total_value_usd is not None else None,
+            positions=positions,
+            data_sources_used=["legacy_portfolio_snapshot"],
+            status="ok" if portfolio.status_code == DataStatusCode.DATA_FRESH.value else "degraded",
+            status_code=portfolio.status_code,
+            status_label=portfolio.status_code,
+            status_reason=portfolio.status_reason or "Legacy portfolio snapshot.",
+        )
+
+    @staticmethod
+    def _risk_snapshot_from_assessment(assessment: RiskAssessmentResponse) -> RiskSnapshot:
         bucket_scores = {
-            "depeg": 0.0,
-            "liquidity": 0.0,
-            "oracle": 0.0,
-            "concentration": 0.0,
+            RiskScoreEngine._legacy_bucket_name(bucket.bucket): bucket.score
+            for bucket in assessment.buckets
         }
-        
         prechecks = {
-            "oracle_fresh": True,
-            "liquidity_sufficient": True,
-            "peg_stable": True,
-            "concentration_within_bounds": True,
+            "oracle_fresh": RiskScoreEngine._bucket_passed(assessment.buckets, "oracle_freshness"),
+            "liquidity_sufficient": RiskScoreEngine._bucket_passed(assessment.buckets, "liquidity_slippage"),
+            "peg_stable": RiskScoreEngine._bucket_passed(assessment.buckets, "usdy_depeg"),
+            "concentration_within_bounds": RiskScoreEngine._bucket_passed(assessment.buckets, "concentration_drift"),
         }
-        
-        notes: list[str] = []
-        
-        # --- Oracle Risk & Freshness check ---
-        max_price_age = 0.0
-        for p in prices:
-            age = (now - _as_aware_utc(p.observed_timestamp)).total_seconds()
-            if age > max_price_age:
-                max_price_age = age
-            
-            # Check thresholds from settings
-            if p.asset_symbol == "USDY":
-                if age > self.settings.ondo_usdy_oracle_hard_block_seconds:
-                    bucket_scores["oracle"] = 100.0
-                    prechecks["oracle_fresh"] = False
-                    notes.append(f"USDY oracle price is extremely stale: {age:.1f}s")
-                elif age > self.settings.ondo_usdy_oracle_warn_seconds:
-                    bucket_scores["oracle"] = max(bucket_scores["oracle"], 50.0)
-                    notes.append(f"USDY oracle price is warning-level stale: {age:.1f}s")
-            else:  # volatile/mETH
-                if age > self.settings.pyth_eth_usd_hard_block_seconds:
-                    bucket_scores["oracle"] = 100.0
-                    prechecks["oracle_fresh"] = False
-                    notes.append(f"Pyth oracle price is extremely stale: {age:.1f}s")
-                elif age > self.settings.pyth_eth_usd_warn_seconds:
-                    bucket_scores["oracle"] = max(bucket_scores["oracle"], 50.0)
-                    notes.append(f"Pyth oracle price is warning-level stale: {age:.1f}s")
-                    
-        if not prices:
-            bucket_scores["oracle"] = 100.0
-            prechecks["oracle_fresh"] = False
-            notes.append("No price snapshots found in database.")
-
-        # --- Depeg Risk ---
-        # Compare USDY oracle price against DEX price (mid price)
-        usdy_price = next((p for p in prices if p.asset_symbol == "USDY"), None)
-        # Note: check if we have any USDY quotes
-        usdy_quote = next((q for q in quotes if "USDY" in q.route_id or q.token_in_symbol == "USDY" or q.token_out_symbol == "USDY"), None)
-        
-        if usdy_price and usdy_quote and usdy_quote.quoted_price:
-            try:
-                oracle_val = float(usdy_price.price_usd)
-                dex_val = float(usdy_quote.quoted_price)
-                if oracle_val > 0:
-                    diff = abs(oracle_val - dex_val) / oracle_val
-                    if diff > 0.02:  # > 2% depeg
-                        bucket_scores["depeg"] = 100.0
-                        prechecks["peg_stable"] = False
-                        notes.append(f"Severe USDY depeg detected: Oracle ${oracle_val:.3f} vs DEX ${dex_val:.3f} ({diff*100:.1f}%)")
-                    elif diff > 0.01:  # > 1% depeg
-                        bucket_scores["depeg"] = 60.0
-                        notes.append(f"Moderate USDY depeg detected: Oracle ${oracle_val:.3f} vs DEX ${dex_val:.3f} ({diff*100:.1f}%)")
-            except Exception as exc:
-                logger.error("Error computing depeg: %s", exc)
-
-        # --- Liquidity Risk ---
-        max_slippage = 0.0
-        for q in quotes:
-            if q.estimated_slippage_bps:
-                try:
-                    slip = float(q.estimated_slippage_bps) / 100.0  # %
-                    if slip > max_slippage:
-                        max_slippage = slip
-                except ValueError:
-                    pass
-                    
-        if max_slippage > 2.0:  # > 2% slippage
-            bucket_scores["liquidity"] = 100.0
-            prechecks["liquidity_sufficient"] = False
-            notes.append(f"Critical slippage warning: best route slippage is {max_slippage:.2f}%")
-        elif max_slippage > 1.0:  # > 1% slippage
-            bucket_scores["liquidity"] = 50.0
-            notes.append(f"Moderate slippage: best route slippage is {max_slippage:.2f}%")
-            
-        if not quotes:
-            bucket_scores["liquidity"] = 50.0  # Stale or unknown route liquidity
-            notes.append("No active route quotes found.")
-
-        # --- Concentration Risk ---
-        for symbol, weight in portfolio.weights.items():
-            if symbol == "mETH" and weight > 0.40:
-                bucket_scores["concentration"] = max(bucket_scores["concentration"], 80.0)
-                prechecks["concentration_within_bounds"] = False
-                notes.append(f"mETH concentration of {weight*100:.1f}% exceeds safe limit of 40%")
-            elif symbol == "USDY" and weight > 0.60:
-                bucket_scores["concentration"] = max(bucket_scores["concentration"], 70.0)
-                prechecks["concentration_within_bounds"] = False
-                notes.append(f"USDY concentration of {weight*100:.1f}% exceeds safe limit of 60%")
-
-        # 2. Compute Weighted Score
-        weights = {
-            "depeg": 0.35,
-            "liquidity": 0.20,
-            "oracle": 0.25,
-            "concentration": 0.20,
-        }
-        
-        total_score = sum(bucket_scores[b] * weights[b] for b in bucket_scores)
-        
-        # 3. Determine Action Band
-        # 0-25   = RISK_NORMAL
-        # 25-45  = RISK_CAUTION
-        # 45-65  = RISK_REBALANCE_ONLY
-        # 65-80  = RISK_REDUCE_ONLY
-        # >80    = RISK_PAUSE_REQUIRED
-        
-        if total_score > 80.0:
-            risk_band = "RISK_PAUSE_REQUIRED"
-            status_code = "RISK_PAUSE_REQUIRED"
-        elif total_score > 65.0:
-            risk_band = "RISK_REDUCE_ONLY"
-            status_code = "RISK_REDUCE_ONLY"
-        elif total_score > 45.0:
-            risk_band = "RISK_REBALANCE_ONLY"
-            status_code = "RISK_REBALANCE_ONLY"
-        elif total_score > 25.0:
-            risk_band = "RISK_CAUTION"
-            status_code = "RISK_CAUTION"
-        else:
-            risk_band = "RISK_NORMAL"
-            status_code = "RISK_NORMAL"
-            
-        # 4. Hard Veto Check
-        # Trigger RISK_VETO if oracle is stale or severe depeg/slippage exists
-        if not prechecks["oracle_fresh"] or bucket_scores["depeg"] == 100.0 or not prechecks["liquidity_sufficient"]:
-            risk_band = "RISK_VETO"
-            status_code = "RISK_VETO"
-            total_score = 100.0
+        notes = list(assessment.notes)
+        notes.extend(bucket.reason for bucket in assessment.buckets if bucket.status != "ok")
+        if assessment.hard_veto_status == "active":
             notes.append("HARD VETO ACTIVE: Proposal execution is blocked.")
-
-        status_reason = f"Weighted risk score is {total_score:.1f}. Active band is {risk_band}."
-        if not notes:
-            notes.append("All risk systems normal.")
-
         return RiskSnapshot(
-            snapshot_id=f"risk_{int(now.timestamp())}",
-            total_score=total_score,
-            risk_band=risk_band,
-            status_code=status_code,
-            status_reason=status_reason,
+            snapshot_id=f"risk_{int(utc_now().timestamp())}",
+            total_score=assessment.risk_score,
+            risk_band=assessment.risk_band,
+            status_code=assessment.status_code,
+            status_reason=assessment.status_reason,
             bucket_scores=bucket_scores,
             prechecks=prechecks,
-            notes=notes,
-            created_at=now,
+            notes=notes or ["All risk systems normal."],
+            created_at=assessment.generated_at,
         )
+
+    @staticmethod
+    def _legacy_bucket_name(bucket_name: str) -> str:
+        return {
+            "oracle_freshness": "oracle",
+            "usdy_depeg": "depeg",
+            "liquidity_slippage": "liquidity",
+            "concentration_drift": "concentration",
+        }.get(bucket_name, bucket_name)
+
+    @staticmethod
+    def _bucket_passed(buckets: list[RiskBucket], bucket_name: str) -> bool:
+        bucket = next((item for item in buckets if item.bucket == bucket_name), None)
+        if bucket is None:
+            return True
+        return not bucket.hard_veto and bucket.status not in {"blocked", "missing"}

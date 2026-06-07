@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from services.agent.app.api.investment_scope import InvestmentScopeInput, build_scoped_allocation_response
 from services.agent.app.schemas.allocation import AllocationDecisionResponse, AllocationDecision, UpdateProfileRequest
 # circular-safe: lazy import inside endpoint function
@@ -107,8 +107,10 @@ async def get_allocation_recommendation(
     return response
 
 
-@router.post("/profile", response_model=dict[str, str])
-async def update_active_profile(request: UpdateProfileRequest) -> dict[str, str]:
+@router.post("/profile", response_model=dict[str, str], deprecated=True)
+async def update_active_profile(request: UpdateProfileRequest, response: Response) -> dict[str, str]:
+    response.headers["Deprecation"] = "true"
+    response.headers["Link"] = '</allocation/recommendation>; rel="successor-version"'
     settings = get_settings()
     try:
         canonical_name = normalize_profile_name(request.profile_name)

@@ -6,11 +6,15 @@ from uuid import uuid4
 
 from services.agent.app.api.portfolio import current_portfolio
 from services.agent.app.core.settings import Settings, TargetChain, get_settings
+from services.agent.app.core.status_codes import DataStatusCode
+from services.agent.app.schemas.market_data import NormalizedPriceSnapshot
 from services.agent.app.schemas.portfolio import AssetBalance, PortfolioPosition, PortfolioSnapshot, PortfolioSnapshotResponse
+from services.agent.app.schemas.quotes import NormalizedQuoteSnapshot
 from services.agent.app.schemas.risk import RiskAssessmentResponse, RiskSnapshot
 from services.agent.modules.market_data.balances import internal_snapshot_from_response
 from services.agent.modules.oracle.freshness import utc_now
 from services.agent.modules.proposals.investment_planner import _build_target_allocations, _latest_price_map
+from services.agent.repositories.db.market_repository import MarketDataRepository
 from services.agent.risk.engine import RiskEngine
 from services.agent.strategies.allocation import profiles
 from services.agent.strategies.allocation.profiles import get_allocation_profile_for_chain, normalize_profile_name
@@ -23,6 +27,8 @@ class DecisionContext:
     portfolio: PortfolioSnapshot
     risk_assessment: RiskAssessmentResponse
     risk_snapshot: RiskSnapshot
+    prices: list[NormalizedPriceSnapshot]
+    quotes: list[NormalizedQuoteSnapshot]
     profile_name: str
     scope_type: str = "wallet"
     scope_input: dict | None = None
@@ -58,6 +64,22 @@ def _active_profile_name(settings: Settings, requested_profile_name: str | None 
     if settings.target_chain == TargetChain.MANTLE_SEPOLIA and requested_profile_name is None:
         configured_name = "Sepolia Test"
     return normalize_profile_name(configured_name)
+
+
+def _latest_market_context_best_effort() -> tuple[list[NormalizedPriceSnapshot] | None, list[NormalizedQuoteSnapshot] | None]:
+    try:
+        repo = MarketDataRepository()
+        return repo.latest_normalized_prices(), repo.latest_normalized_quotes()
+    except Exception:
+        return None, None
+
+
+def _quote_validation_status(quotes: list[NormalizedQuoteSnapshot] | None) -> str:
+    return (
+        DataStatusCode.QUOTE_FRESH.value
+        if quotes is not None and any(quote.amount_out is not None for quote in quotes)
+        else DataStatusCode.DATA_MISSING.value
+    )
 
 
 def _resolve_price(symbol: str, prices: dict[str, Decimal], settings: Settings) -> Decimal:
@@ -223,10 +245,14 @@ async def build_decision_context(
         portfolio = internal_snapshot_from_response(portfolio_response)
         effective_profile = _active_profile_name(settings, profile_name)
 
+    prices, quotes = _latest_market_context_best_effort()
     risk_assessment = RiskEngine().evaluate(
         portfolio=portfolio_response,
         runtime_mode=settings.runtime_mode,
         target_chain=settings.target_chain.value,
+        quote_validation_status=_quote_validation_status(quotes),
+        prices=prices,
+        quotes=quotes,
     )
 
     return DecisionContext(
@@ -235,6 +261,8 @@ async def build_decision_context(
         portfolio=portfolio,
         risk_assessment=risk_assessment,
         risk_snapshot=risk_assessment_to_snapshot(risk_assessment),
+        prices=prices or [],
+        quotes=quotes or [],
         profile_name=effective_profile,
         scope_type="deposit" if is_scoped else "wallet",
         scope_input={

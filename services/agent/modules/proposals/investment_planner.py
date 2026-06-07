@@ -450,7 +450,7 @@ def _encode_trade_proposal(
     if not router_address:
         raise HTTPException(status_code=400, detail=f"{swap.quote.protocol} swap router address is not configured.")
 
-    selector = "0x414bf389"
+    selector = "0xa64e3dd7" if swap.quote.protocol == "AIYIELD" else "0x414bf389"
     recipient = wallet_address or settings.executor_vault_address
     if not recipient:
         raise HTTPException(status_code=400, detail="No wallet address or executor vault address is configured for trade recipient.")
@@ -468,7 +468,10 @@ def _encode_trade_proposal(
             max_amount_in,
             min_amount_out,
         )
-        encoded_struct = encode(["(address,address,address,address,uint256,uint256)"], [params])
+        encoded_struct = encode(
+            ["address", "address", "address", "address", "uint256", "uint256"],
+            list(params),
+        )
     else:
         fee_tier = int(swap.quote.route_id.split(":")[-1]) if ":" in swap.quote.route_id and swap.quote.route_id.split(":")[-1].isdigit() else 500
         params = (

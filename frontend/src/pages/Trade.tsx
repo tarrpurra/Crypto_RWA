@@ -151,8 +151,10 @@ export default function Trade() {
   const [plan, setPlan] = useState<InvestmentPlanResponse | null>(null);
   const [autoExecutionPlanId, setAutoExecutionPlanId] = useState<string | null>(null);
   const [executionConfirmPending, setExecutionConfirmPending] = useState(false);
+  const [executionInProgress, setExecutionInProgress] = useState(false);
   const [executionCancelled, setExecutionCancelled] = useState(false);
   const proposalDetailQuery = useProposalDetail(activeProposalId);
+  const suppressExecutionCancelRef = useRef(false);
   const selectedAssetIngestion = useMemo(
     () => market?.assets?.find((item) => item.asset_symbol === assetSymbol) ?? null,
     [assetSymbol, market?.assets],
@@ -423,8 +425,8 @@ export default function Trade() {
       walletBalanceAmount,
       localWarnings,
     });
-    if (!aiDecisionMakerEnabled || !routeHasInvestmentParams || !scope || plan?.plan_id || createPlan.isPending || wrapMnt.isPending || autoExecutionActive) {
-      if (!aiDecisionMakerEnabled || !routeHasInvestmentParams || plan?.plan_id) {
+    if (!aiDecisionMakerEnabled || !scope || plan?.plan_id || createPlan.isPending || wrapMnt.isPending || autoExecutionActive) {
+      if (!aiDecisionMakerEnabled || plan?.plan_id) {
         autoCreatePlanRef.current = null;
       }
       return;
@@ -452,7 +454,6 @@ export default function Trade() {
     handleCreatePlan,
     localWarnings.length,
     plan?.plan_id,
-    routeHasInvestmentParams,
     scope,
     walletAddress,
     wrapMnt.isPending,
@@ -528,7 +529,6 @@ export default function Trade() {
     }
     void (async () => {
       try {
-        await executeNativeWrapIfNeeded();
         const data = await executeProposal.mutateAsync(activeProposalId);
         appendEntry({
           proposalId: activeProposalId,
@@ -551,7 +551,6 @@ export default function Trade() {
       linked_proposals: plan?.linked_proposals.map((proposal) => proposal.proposal_id) ?? [],
       blockers: hasBlockers,
     });
-    setExecutionConfirmPending(false);
     if (!plan) {
       setAutoExecutionPlanId(null);
       return;
@@ -561,9 +560,13 @@ export default function Trade() {
       setAutoExecutionPlanId(null);
       return;
     }
+    setExecutionInProgress(true);
     try {
-      await executeNativeWrapIfNeeded();
       for (const proposal of plan.linked_proposals) {
+        console.info("[frontend][trade] executing approved proposal", {
+          plan_id: plan.plan_id,
+          proposal_id: proposal.proposal_id,
+        });
         await executeProposal.mutateAsync(proposal.proposal_id);
         appendEntry({
           proposalId: proposal.proposal_id,
@@ -572,10 +575,13 @@ export default function Trade() {
           timestamp: new Date().toISOString(),
         });
       }
+      suppressExecutionCancelRef.current = true;
+      setExecutionConfirmPending(false);
       toast.success("Full access AI completed the current plan.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Full access AI failed to execute the current plan.");
     } finally {
+      setExecutionInProgress(false);
       setAutoExecutionPlanId(null);
     }
   };
@@ -594,7 +600,8 @@ export default function Trade() {
     rejectProposal.isPending ||
     executeProposal.isPending ||
     autoExecutionActive ||
-    executionConfirmPending;
+    executionConfirmPending ||
+    executionInProgress;
 
   return (
     <PageScaffold
@@ -971,7 +978,21 @@ export default function Trade() {
         risk={resolvedPlan?.risk_assessment ?? risk}
       />
 
-      <Dialog open={executionConfirmPending} onOpenChange={(open) => { if (!open) handleCancelExecution(); }}>
+      <Dialog
+        open={executionConfirmPending}
+        onOpenChange={(open) => {
+          if (!open) {
+            if (suppressExecutionCancelRef.current) {
+              suppressExecutionCancelRef.current = false;
+              return;
+            }
+            if (executionInProgress) {
+              return;
+            }
+            handleCancelExecution();
+          }
+        }}
+      >
         <DialogContent className="max-w-lg border-border bg-background">
           <DialogHeader>
             <DialogTitle>Confirm execution</DialogTitle>
@@ -1003,11 +1024,11 @@ export default function Trade() {
           </div>
 
           <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={handleCancelExecution} disabled={executeProposal.isPending}>
+            <Button variant="outline" onClick={handleCancelExecution} disabled={executeProposal.isPending || executionInProgress}>
               Cancel
             </Button>
-            <Button onClick={handleConfirmExecution} disabled={executeProposal.isPending}>
-              {executeProposal.isPending ? "Executing..." : "Confirm execution"}
+            <Button onClick={handleConfirmExecution} disabled={executeProposal.isPending || executionInProgress}>
+              {executeProposal.isPending || executionInProgress ? "Executing..." : "Confirm execution"}
             </Button>
           </DialogFooter>
         </DialogContent>

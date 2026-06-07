@@ -17,6 +17,10 @@ The service has working scaffolding and several local-safe features, but the liv
 - Market ingestion surfaces exist for prices, USDY oracle status, routes, and quotes.
 - Portfolio reads support wallet-scoped `/portfolio/current` and persisted snapshot history.
 - Risk has a richer canonical response through `/risk/current`.
+- `RiskEngine.evaluate()` now owns the canonical oracle freshness, USDY depeg, liquidity/slippage, concentration, portfolio valuation, ops readiness, and data quality checks.
+- `RiskScoreEngine.compute_risk_snapshot()` is now a deprecated compatibility adapter for `/risk/snapshot` instead of a separate risk scoring path.
+- Shared decision context includes market price and quote snapshots and passes them into canonical risk evaluation.
+- Deprecated `/portfolio/snapshot`, `/risk/snapshot`, and `/allocation/profile` are marked in FastAPI and return deprecation headers.
 - Allocation recommendations exist through `/allocation/recommendation`.
 - AI reasoning exists through `/decisions`.
 - Proposal creation and approval queue routes exist through `/proposals/*`.
@@ -24,13 +28,12 @@ The service has working scaffolding and several local-safe features, but the liv
 
 ### Broken Or Inconsistent
 
-- Risk logic is split between `RiskEngine.evaluate()` and the older `RiskScoreEngine.compute_risk_snapshot()`.
-- `/risk/current` uses the richer canonical risk model, but `/allocation/recommendation` and `/decisions` still use the older risk snapshot path for non-scoped reads.
-- Scoped allocation can build recommendations without using the same canonical risk assessment shape as `/risk/current`.
+- Some legacy tests still assert the older risk snapshot shape and should be refreshed around the adapter behavior.
+- Proposal creation now uses the shared context, but proposal guard responses still need a final status-code cleanup pass.
 - Allocation responses can return proposal-oriented status codes such as `PROPOSAL_DRAFT`, which mixes allocation and proposal contracts.
 - AI decision-maker mode can override the deterministic allocation action in parser logic, which conflicts with the locked rule that AI must explain, not bypass controls.
 - Runtime AI state is split between static settings and `runtime_config.AI_DECISION_MAKER_ENABLED`, so endpoints can report and behave differently.
-- Legacy `/portfolio/snapshot` and `/risk/snapshot` force env fallback and can disagree with wallet-scoped frontend reads.
+- Legacy `/portfolio/snapshot` and `/risk/snapshot` are deprecated but still force env fallback for temporary compatibility.
 - Some integration tests still assert legacy endpoints and stale proposal payload shapes.
 
 ## Endpoint Status
@@ -160,22 +163,24 @@ Make `RiskEngine.evaluate()` the only canonical risk engine for current applicat
 
 ### Required Changes
 
-- Move the useful checks from `RiskScoreEngine` into `RiskEngine`:
+- [x] Move the useful checks from `RiskScoreEngine` into `RiskEngine`:
   - stale oracle hard-block checks
   - USDY oracle versus DEX depeg checks
   - quote availability checks
   - slippage and liquidity checks
   - concentration checks
   - portfolio data quality checks
-- Keep weighted, explainable buckets in the canonical response.
-- Keep the restrictive escalation rule: hard guards override numeric score.
-- Add metadata showing:
+- [x] Keep weighted, explainable buckets in the canonical response.
+- [x] Keep the restrictive escalation rule: hard guards override numeric score.
+- [x] Add metadata showing:
   - input portfolio snapshot id
   - quote validation status
   - latest price snapshot ids where available
   - latest quote snapshot ids where available
   - scoring method
   - bucket weights
+- [ ] Refresh tests that directly assert legacy `RiskSnapshot` internals.
+- [ ] Finish proposal and allocation status namespace cleanup.
 
 ### Hard Veto Rules
 
@@ -202,7 +207,7 @@ The risk engine should return restricted but non-veto states for:
 
 ### Legacy Adapter
 
-Keep `RiskScoreEngine.compute_risk_snapshot()` only for the deprecated `/risk/snapshot` adapter until that endpoint is removed. It should call or mirror canonical risk behavior instead of owning separate business logic.
+Keep `RiskScoreEngine.compute_risk_snapshot()` only for the deprecated `/risk/snapshot` adapter until that endpoint is removed. It now calls canonical `RiskEngine.evaluate()` and converts the result back into the older `RiskSnapshot` shape for compatibility.
 
 ## Allocation Engine Repair
 
@@ -386,15 +391,15 @@ Consumers:
 
 ### Step 5: Proposal Guard Refactor
 
-- Reuse canonical context in `/proposals/create`.
+- [x] Reuse canonical context in `/proposals/create`.
 - Return explicit blockers for every failed guard.
-- Make execute response status code execution-oriented.
+- [x] Make execute response status code execution-oriented.
 - Add tests for blocked and successful plan creation.
 
 ### Step 6: Endpoint Deprecation Cleanup
 
-- Add `deprecated=True` to legacy snapshot route decorators.
-- Add response headers:
+- [x] Add `deprecated=True` to legacy snapshot route decorators.
+- [x] Add response headers:
   - `Deprecation: true`
   - `Link: </portfolio/current>; rel="successor-version"` for portfolio
   - `Link: </risk/current>; rel="successor-version"` for risk
@@ -510,4 +515,3 @@ Proposal:
 - Verify mETH pricing mode for Sepolia demo asset versus mainnet asset.
 - Verify frontend exchange/challenge pages are intentionally in scope before adding any matching backend routes.
 - Verify whether full-access AI should default to disabled in all environments or only local/demo environments.
-

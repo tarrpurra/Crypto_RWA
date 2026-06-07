@@ -17,6 +17,7 @@ from services.agent.modules.proposals.investment_planner import (
     _build_target_allocations,
     _latest_price_map,
 )
+from services.agent.repositories.db.market_repository import MarketDataRepository
 # circular-safe: lazy import inside async functions
 # from services.agent.modules.decisions import build_decision_context
 from services.agent.risk.engine import RiskEngine
@@ -98,6 +99,14 @@ def _quote_validation_status(swaps) -> str:
     if all(swap.quote and swap.quote.amount_out and swap.quote.status_code == DataStatusCode.QUOTE_FRESH.value for swap in swaps):
         return DataStatusCode.QUOTE_FRESH.value
     return DataStatusCode.LIQUIDITY_UNKNOWN.value
+
+
+def _latest_market_context_best_effort():
+    try:
+        repo = MarketDataRepository()
+        return repo.latest_normalized_prices(), repo.latest_normalized_quotes()
+    except Exception:
+        return None, None
 
 
 def build_scoped_portfolio_response(scope: InvestmentScopeInput, settings: Settings | None = None) -> tuple[PortfolioSnapshotResponse, dict[str, float], str]:
@@ -205,11 +214,14 @@ def build_scoped_risk_assessment(scope: InvestmentScopeInput, settings: Settings
         deposit_amount=Decimal(str(scope.deposit_amount)),
         target_weights=target_weights,
     )
+    prices, quotes = _latest_market_context_best_effort()
     return RiskEngine().evaluate(
         portfolio=snapshot,
         runtime_mode=settings.runtime_mode,
         target_chain=settings.target_chain.value,
         quote_validation_status=_quote_validation_status(swaps),
+        prices=prices,
+        quotes=quotes,
     )
 
 

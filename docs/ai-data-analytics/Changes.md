@@ -20,6 +20,108 @@ For each entry, record:
 ### 2026-06-07
 
 Type:
+Risk engine unification
+
+Author:
+Codex
+
+Summary:
+
+- moved legacy oracle freshness, USDY depeg, liquidity/slippage, and concentration checks into canonical `RiskEngine.evaluate()`
+- added optional latest price and quote snapshots to canonical risk evaluation and risk metadata
+- changed hard-veto risk scoring so canonical hard guards force a `RISK_VETO` score of `100.0`
+- converted `RiskScoreEngine.compute_risk_snapshot()` into a deprecated adapter that calls `RiskEngine.evaluate()` and converts the result to the old `RiskSnapshot` shape
+- wired shared decision context, `/risk/current`, scoped risk, `/proposals/create`, and proposal execution to pass market context into canonical risk where available
+- marked `/portfolio/snapshot`, `/risk/snapshot`, and `/allocation/profile` as deprecated and added successor-link headers
+- changed proposal execution payload readiness from `PROPOSAL_APPROVED` leakage to `EXECUTION_READY`
+
+Affected scope:
+
+- services/agent/risk/engine.py
+- services/agent/risk/scoring/score_engine.py
+- services/agent/modules/decisions/context.py
+- services/agent/app/api/risk.py
+- services/agent/app/api/investment_scope.py
+- services/agent/app/api/decisions.py
+- services/agent/app/api/portfolio.py
+- services/agent/app/api/allocation.py
+- docs/ai-data-analytics/ai_plan.md
+
+Impact:
+
+- risk: current, allocation, decisions, and proposal creation now use one canonical risk engine instead of split new/legacy scoring paths
+- execution: proposal execute responses now use execution status vocabulary once calldata is ready
+- compatibility: legacy risk and portfolio endpoints remain available for old clients but are visibly deprecated
+- tests: syntax compilation was run for touched backend files; full unit/integration tests were not run in this pass
+
+### 2026-06-07
+
+Type:
+Proposal execution logging
+
+Author:
+Codex
+
+Summary:
+
+- added backend logs at the start of `POST /proposals/{proposal_id}/execute`
+- added warning logs when execution is blocked so the failure reason is visible before the HTTP 400 is raised
+- added a final payload-ready log showing the router, selector, tokens, and chain id when execution passes all backend guards
+
+Affected scope:
+
+- services/agent/app/api/decisions.py
+
+Impact:
+
+- observability: execution failures and successful payload generation are now visible in backend logs, making it easier to distinguish a backend block from a frontend wallet issue
+
+### 2026-06-07
+
+Type:
+Trade execution modal fix
+
+Author:
+Codex
+
+Summary:
+
+- kept the Trade confirmation modal in place, but changed confirm handling so the execution flow owns the modal lifecycle instead of closing first and racing the swap calls
+- added explicit frontend logs before each approved proposal is executed through `/proposals/{id}/execute`
+- suppressed the modal's close handler during programmatic completion so the confirm action does not get mistaken for cancel
+
+Affected scope:
+
+- frontend/src/pages/Trade.tsx
+
+Impact:
+
+- frontend behavior: confirming the modal now actually drives the execution sequence while preserving the last-review checkpoint for the operator
+
+### 2026-06-07
+
+Type:
+Trade auto-create gating fix
+
+Author:
+Codex
+
+Summary:
+
+- removed the `routeHasInvestmentParams` requirement from the Trade page's full-access AI auto-create effect
+- kept the current form scope as the source of truth so AI-managed Trade can create a plan even when the URL does not include `asset`, `amount`, or `risk` query parameters
+
+Affected scope:
+
+- frontend/src/pages/Trade.tsx
+
+Impact:
+
+- frontend behavior: full-access AI on Trade will now create and execute from the active form state instead of silently waiting for route query parameters that are absent in normal navigation
+
+### 2026-06-07
+
+Type:
 Backend and frontend request logging
 
 Author:
