@@ -114,6 +114,7 @@ export function useExecuteProposal() {
               },
             ] as const,
             functionName: "approve",
+            chainId: txData.chain_id,
             args: [txData.router as `0x${string}`, amountIn],
           })
           await publicClient.waitForTransactionReceipt({ hash: approvalHash })

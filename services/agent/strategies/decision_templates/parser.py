@@ -6,10 +6,10 @@ import httpx
 from services.agent.app.core.settings import get_settings
 from services.agent.app.core import runtime_config
 from services.agent.app.schemas.portfolio import PortfolioSnapshot
-from services.agent.app.schemas.risk import RiskSnapshot
+from services.agent.app.schemas.risk import RiskAssessmentResponse, RiskSnapshot
 from services.agent.app.schemas.allocation import AllocationDecision, RebalanceAction
 from services.agent.app.schemas.recommendations import RecommendationResponse
-from services.agent.strategies.decision_templates.prompt_builder import build_reasoning_prompt
+from services.agent.strategies.decision_templates.prompt_builder import build_allocation_prompt, build_reasoning_prompt
 from services.agent.strategies.decision_templates.fallback_rules import generate_deterministic_explanation
 
 logger = logging.getLogger("services.agent.strategies.ai_parser")
@@ -34,24 +34,250 @@ def _override_with_ai_decision(
     decision: AllocationDecision,
     ai_output: dict,
 ) -> AllocationDecision:
-    """Override the deterministic decision with the AI's recommended action."""
-    from datetime import datetime
-    ai_action = ai_output.get("recommended_action", decision.recommended_action)
-    if ai_action not in ("HOLD", "REBALANCE", "PAUSE"):
-        ai_action = decision.recommended_action
+    """Return the deterministic decision while preserving AI suggestions in metadata elsewhere."""
     return AllocationDecision(
         decision_id=decision.decision_id,
         wallet_or_vault=decision.wallet_or_vault,
         profile_name=decision.profile_name,
         current_weights=decision.current_weights,
         target_weights=decision.target_weights,
-        recommended_action=ai_action,
-        confidence=float(ai_output.get("confidence", decision.confidence)),
-        reasoning=str(ai_output.get("reasoning_summary", decision.reasoning)),
+        recommended_action=decision.recommended_action,
+        confidence=decision.confidence,
+        reasoning=decision.reasoning,
         risk_snapshot_id=decision.risk_snapshot_id,
         status_code=decision.status_code,
         created_at=decision.created_at,
     )
+
+
+def _apply_allocation_guardrails(
+    ai_response: dict,
+    deposit_amount: float,
+    deposit_asset_symbol: str,
+    target_weights: dict[str, float],
+    risk_assessment: RiskAssessmentResponse | None,
+    profile_name: str,
+) -> tuple[AllocationDecision, list[RebalanceAction]]:
+    from services.agent.app.core.status_codes import RiskStatusCode, DataStatusCode
+    from services.agent.modules.oracle.freshness import utc_now
+    from services.agent.strategies.allocation.clip_sizing import clip_trade_amount
+
+    now = utc_now()
+    recommended_action = ai_response.get("recommended_action", "HOLD")
+    confidence = float(ai_response.get("confidence", 0.85))
+    reasoning = ai_response.get("reasoning_summary", "AI-generated allocation plan.")
+    notes = list(ai_response.get("notes", []))
+    raw_allocations = ai_response.get("allocations", [])
+
+    risk_code = risk_assessment.status_code if risk_assessment else RiskStatusCode.RISK_NORMAL.value
+    hard_veto_active = (risk_assessment and risk_assessment.hard_veto_status == "active") or risk_code in (RiskStatusCode.RISK_VETO.value, RiskStatusCode.RISK_PAUSE_REQUIRED.value)
+
+    if hard_veto_active:
+        recommended_action = "PAUSE"
+        reasoning = f"Allocation blocked by active risk: {risk_code}. {risk_assessment.status_reason if risk_assessment else ''}"
+        confidence = 0.99
+        decision = AllocationDecision(
+            decision_id=f"ai_allocation_{int(now.timestamp())}",
+            wallet_or_vault="investment_scope",
+            profile_name=profile_name,
+            current_weights={deposit_asset_symbol: 1.0},
+            target_weights=dict(target_weights),
+            recommended_action="PAUSE",
+            confidence=confidence,
+            reasoning=reasoning,
+            risk_snapshot_id=str(risk_assessment.metadata.get("risk_snapshot_id") or "") if risk_assessment else None,
+            status_code=risk_code,
+            created_at=now,
+        )
+        return decision, []
+
+    actions: list[RebalanceAction] = []
+    for alloc in raw_allocations:
+        asset = alloc.get("asset", "")
+        action = alloc.get("action", "HOLD")
+        amount = float(alloc.get("amount", 0))
+        if amount <= 0:
+            continue
+        if action == "HOLD":
+            actions.append(RebalanceAction(asset_symbol=asset, action="HOLD", amount=amount, route_id=None))
+        elif action == "BUY":
+            clipped = clip_trade_amount(asset, amount * 1.0, deposit_amount)
+            actions.append(RebalanceAction(asset_symbol=asset, action="BUY", amount=clipped, route_id=f"ai_route_{asset.lower()}"))
+
+    if not actions:
+        recommended_action = "HOLD"
+        reasoning = "AI generated no actionable allocations."
+
+    status_code = DataStatusCode.DATA_FRESH.value if not hard_veto_active else risk_code
+
+    decision = AllocationDecision(
+        decision_id=f"ai_allocation_{int(now.timestamp())}",
+        wallet_or_vault="investment_scope",
+        profile_name=profile_name,
+        current_weights={deposit_asset_symbol: 1.0},
+        target_weights=dict(target_weights),
+        recommended_action=recommended_action,
+        confidence=confidence,
+        reasoning=reasoning,
+        risk_snapshot_id=str(risk_assessment.metadata.get("risk_snapshot_id") or "") if risk_assessment else None,
+        status_code=status_code,
+        created_at=now,
+    )
+    return decision, actions
+
+
+async def generate_ai_allocation(
+    portfolio_value_usd: float,
+    deposit_asset_symbol: str,
+    deposit_amount: float,
+    target_weights: dict[str, float],
+    risk_assessment: RiskAssessmentResponse | None,
+    profile_name: str,
+) -> tuple[AllocationDecision, list[RebalanceAction]]:
+    settings = get_settings()
+    from services.agent.app.core.status_codes import RiskStatusCode
+
+    risk_status = risk_assessment.status_code if risk_assessment else RiskStatusCode.RISK_NORMAL.value
+    risk_score = risk_assessment.risk_score if risk_assessment else 0.0
+    risk_notes = list(risk_assessment.notes) if risk_assessment else []
+
+    prompt = build_allocation_prompt(
+        portfolio_value_usd=portfolio_value_usd,
+        deposit_asset_symbol=deposit_asset_symbol,
+        deposit_amount=deposit_amount,
+        target_weights=target_weights,
+        risk_status=risk_status,
+        risk_score=risk_score,
+        risk_notes=risk_notes,
+        profile_name=profile_name,
+    )
+
+    ai_response_text: str | None = None
+    parsed: dict = {}
+    fallback_reason: str | None = None
+
+    ollama_url = settings.ollama_url
+    ai_available = False
+
+    try:
+        if settings.ai_reasoning_enabled and settings.ai_reasoning_provider == "ollama":
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                response = await client.get(f"{ollama_url}/api/tags")
+                if response.status_code == 200:
+                    ai_available = True
+    except Exception:
+        logger.debug("Ollama not reachable at %s for allocation.", ollama_url)
+
+    if ai_available:
+        try:
+            payload = {
+                "model": settings.ai_reasoning_model,
+                "prompt": prompt,
+                "stream": False,
+                "format": "json",
+            }
+            logger.info("Sending allocation prompt to Ollama at %s/api/generate", ollama_url)
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                res = await client.post(f"{ollama_url}/api/generate", json=payload)
+                if res.status_code == 200:
+                    result_json = res.json()
+                    ai_response_text = result_json.get("response", "").strip()
+                    logger.debug("Ollama allocation raw response: %s", ai_response_text)
+                    parsed = _extract_json_payload(ai_response_text)
+                else:
+                    fallback_reason = f"Ollama returned HTTP {res.status_code}"
+                    logger.warning("Ollama returned HTTP %s for allocation prompt.", res.status_code)
+        except Exception as exc:
+            logger.warning("AI allocation query failed: %s. Using deterministic fallback.", exc)
+            fallback_reason = str(exc)
+
+    if not parsed:
+        logger.info("AI allocation unavailable or failed; using deterministic allocation. reason=%s", fallback_reason)
+        return _deterministic_allocation(
+            deposit_asset_symbol=deposit_asset_symbol,
+            deposit_amount=deposit_amount,
+            target_weights=target_weights,
+            risk_assessment=risk_assessment,
+            profile_name=profile_name,
+        )
+
+    return _apply_allocation_guardrails(
+        ai_response=parsed,
+        deposit_amount=deposit_amount,
+        deposit_asset_symbol=deposit_asset_symbol,
+        target_weights=target_weights,
+        risk_assessment=risk_assessment,
+        profile_name=profile_name,
+    )
+
+
+def _deterministic_allocation(
+    deposit_asset_symbol: str,
+    deposit_amount: float,
+    target_weights: dict[str, float],
+    risk_assessment: RiskAssessmentResponse | None,
+    profile_name: str,
+) -> tuple[AllocationDecision, list[RebalanceAction]]:
+    from services.agent.app.core.status_codes import RiskStatusCode, DataStatusCode
+    from services.agent.modules.oracle.freshness import utc_now
+    from services.agent.strategies.allocation.clip_sizing import clip_trade_amount
+
+    now = utc_now()
+    risk_code = risk_assessment.status_code if risk_assessment else RiskStatusCode.RISK_NORMAL.value
+    hard_veto_active = (risk_assessment and risk_assessment.hard_veto_status == "active") or risk_code in (RiskStatusCode.RISK_VETO.value, RiskStatusCode.RISK_PAUSE_REQUIRED.value)
+
+    if hard_veto_active:
+        decision = AllocationDecision(
+            decision_id=f"det_allocation_{int(now.timestamp())}",
+            wallet_or_vault="investment_scope",
+            profile_name=profile_name,
+            current_weights={deposit_asset_symbol: 1.0},
+            target_weights=dict(target_weights),
+            recommended_action="PAUSE",
+            confidence=0.99,
+            reasoning=f"Allocation blocked by active risk: {risk_code}. {risk_assessment.status_reason if risk_assessment else ''}",
+            risk_snapshot_id=str(risk_assessment.metadata.get("risk_snapshot_id") or "") if risk_assessment else None,
+            status_code=risk_code,
+            created_at=now,
+        )
+        return decision, []
+
+    retained_weight = target_weights.get(deposit_asset_symbol, 0.0)
+    retained_amount = deposit_amount * retained_weight
+    actions: list[RebalanceAction] = []
+    if retained_amount > 0:
+        actions.append(RebalanceAction(asset_symbol=deposit_asset_symbol, action="HOLD", amount=round(retained_amount, 8), route_id=None))
+
+    for asset, weight in target_weights.items():
+        if asset.upper() == deposit_asset_symbol.upper():
+            continue
+        amount_in = deposit_amount * weight
+        if amount_in <= 0:
+            continue
+        clipped = clip_trade_amount(asset, amount_in, deposit_amount)
+        if clipped > 0:
+            actions.append(RebalanceAction(asset_symbol=asset, action="BUY", amount=round(clipped, 8), route_id=f"det_route_{asset.lower()}"))
+
+    has_buys = any(a.action == "BUY" for a in actions)
+    recommended_action = "REBALANCE" if has_buys else "HOLD"
+    reasoning = f"Deterministic allocation using {profile_name} profile."
+    if risk_code in (RiskStatusCode.RISK_REBALANCE_ONLY.value, RiskStatusCode.RISK_CAUTION.value):
+        reasoning += f" Risk: {risk_code}. Trades constrained accordingly."
+
+    decision = AllocationDecision(
+        decision_id=f"det_allocation_{int(now.timestamp())}",
+        wallet_or_vault="investment_scope",
+        profile_name=profile_name,
+        current_weights={deposit_asset_symbol: 1.0},
+        target_weights=dict(target_weights),
+        recommended_action=recommended_action,
+        confidence=0.90,
+        reasoning=reasoning,
+        risk_snapshot_id=str(risk_assessment.metadata.get("risk_snapshot_id") or "") if risk_assessment else None,
+        status_code=DataStatusCode.DATA_FRESH.value,
+        created_at=now,
+    )
+    return decision, actions
 
 
 async def generate_recommendation_reasoning(
@@ -91,7 +317,7 @@ async def generate_recommendation_reasoning(
                 "format": "json",
             }
             logger.info("Sending prompt to Ollama at %s/api/generate", ollama_url)
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=120.0) as client:
                 res = await client.post(f"{ollama_url}/api/generate", json=payload)
                 if res.status_code == 200:
                     result_json = res.json()
@@ -102,7 +328,6 @@ async def generate_recommendation_reasoning(
                     parsed_response = parsed
                     if ai_decision_maker:
                         if "recommended_action" in parsed:
-                            effective_decision = _override_with_ai_decision(decision, parsed)
                             explanation = {
                                 "reasoning_summary": parsed.get("reasoning_summary", effective_decision.reasoning),
                                 "confidence": float(parsed.get("confidence", 0.90)),
@@ -143,7 +368,8 @@ async def generate_recommendation_reasoning(
             "mode": "ai_decision_maker" if ai_decision_maker else "ai_recommender",
             "ai_model": f"ollama:{settings.ai_reasoning_model}",
             "ai_decision_maker": ai_decision_maker,
-            "ai_overrode_deterministic": ai_decision_maker and effective_decision.recommended_action != decision.recommended_action,
+            "ai_overrode_deterministic": False,
+            "ai_suggested_action": parsed_response.get("recommended_action") if isinstance(parsed_response, dict) else None,
         }
         ai_debug_mode = f"ollama:{settings.ai_reasoning_model}"
         used_fallback = False
@@ -183,7 +409,7 @@ async def generate_recommendation_reasoning(
             "parsed_response": parsed_response,
             "mode": ai_debug_mode,
             "used_fallback": used_fallback,
-            "ai_overrode_deterministic": ai_decision_maker and effective_decision.recommended_action != decision.recommended_action,
+            "ai_overrode_deterministic": False,
             "fallback_reason": fallback_reason,
         },
         metadata=metadata,

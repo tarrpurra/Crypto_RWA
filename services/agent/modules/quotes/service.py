@@ -56,6 +56,9 @@ class QuoteService:
             routes.extend(self.agni_discovery.discover_exact_input_single_routes(pair.token_in, pair.token_out))
             routes.extend(self.merchant_moe_discovery.discover_routes(pair.token_in, pair.token_out))
 
+        if not routes and self.settings.target_chain == TargetChain.MANTLE_SEPOLIA:
+            routes.extend(self._mock_sepolia_routes())
+
         self._cached_routes = routes
         from datetime import timedelta
         self._cached_routes_expires_at = now + timedelta(seconds=self.settings.route_cache_ttl_seconds)
@@ -69,7 +72,9 @@ class QuoteService:
 
         for route in routes:
             amount_in = amount_by_symbol.get(route.token_in, self._default_amount_in(route.token_in))
-            if route.protocol == "AGNI":
+            if self._is_mock_route(route):
+                attempt = self._mock_quote_attempt(route, amount_in)
+            elif route.protocol == "AGNI":
                 if self._should_attempt_live_agni_quote(route):
                     attempt = self.agni_quotes.quote_route(route, amount_in)
                 else:
@@ -116,7 +121,9 @@ class QuoteService:
         attempts = []
         amount_in = self._default_amount_in(token_in)
         for route in routes:
-            if route.protocol == "AGNI":
+            if self._is_mock_route(route):
+                attempt = self._mock_quote_attempt(route, amount_in)
+            elif route.protocol == "AGNI":
                 if self._should_attempt_live_agni_quote(route):
                     attempt = self.agni_quotes.quote_route(route, amount_in)
                 else:
@@ -142,6 +149,97 @@ class QuoteService:
             ),
             None,
         )
+
+    def _mock_sepolia_routes(self) -> list[RouteDescriptor]:
+        assets = {a.symbol: a for a in self._assets_for_target_chain()}
+        mock_routes: list[RouteDescriptor] = []
+        pairs = [
+            ("WMNT", "USDY", 3000),
+            ("WMNT", "USDY", 10000),
+            ("WMNT", "mETH", 3000),
+        ]
+        for token_in_sym, token_out_sym, fee in pairs:
+            token_in = assets.get(token_in_sym)
+            token_out = assets.get(token_out_sym)
+            if not token_in or not token_out or not token_in.address or not token_out.address:
+                continue
+            mock_routes.append(
+                RouteDescriptor(
+                    protocol="AGNI",
+                    route_type="v3_exact_input_single",
+                    token_in=token_in_sym,
+                    token_out=token_out_sym,
+                    route_path=[token_in.address, token_out.address],
+                    verification_state="quoter_v2_quote_required",
+                    route_id=f"mock_agni:{token_in_sym}:{token_out_sym}:{fee}",
+                    fee_tier_or_bin_step=str(fee),
+                    router_address=self.settings.effective_agni_swap_router_address,
+                    pool_address="0x0000000000000000000000000000000000000001",
+                )
+            )
+        return mock_routes
+
+    def _mock_quote_attempt(self, route: RouteDescriptor, amount_in: Decimal):
+        now = utc_now()
+        mock_rates = {
+            ("WMNT", "USDY"): Decimal("0.51"),
+            ("USDY", "WMNT"): Decimal("1.96"),
+            ("WMNT", "mETH"): Decimal("0.000151"),
+            ("mETH", "WMNT"): Decimal("6622.5"),
+        }
+        rate = mock_rates.get((route.token_in, route.token_out), Decimal("1"))
+        amount_out = (amount_in * rate).quantize(Decimal("0.0001"))
+        slippage_bps = 30
+        snapshot_id = str(uuid4())
+        raw = RawQuoteSnapshot(
+            snapshot_id=snapshot_id,
+            protocol=route.protocol,
+            route_type=route.route_type,
+            chain_id=self.settings.effective_chain_id,
+            token_in=route.token_in,
+            token_out=route.token_out,
+            amount_in_raw=str(amount_in),
+            amount_out_raw=str(amount_out),
+            amount_in_decimals=18,
+            amount_out_decimals=18,
+            route_path_json=route.route_path,
+            fee_tier_or_bin_step=route.fee_tier_or_bin_step,
+            block_number=None,
+            rpc_url=self.settings.effective_http_rpc_url,
+            sample_timestamp=now,
+            status="mock_sepolia_quote",
+            status_code=DataStatusCode.QUOTE_FRESH.value,
+            status_reason="Mock Sepolia quote (no real pool exists on testnet).",
+            raw_payload_json={
+                "router_address": route.router_address,
+                "pool_address": route.pool_address,
+                "source": "mock_sepolia",
+            },
+        )
+        norm = NormalizedQuoteSnapshot(
+            snapshot_id=snapshot_id,
+            protocol=route.protocol,
+            route_id=route.route_id or f"mock_agni:{route.token_in}:{route.token_out}:{route.fee_tier_or_bin_step}",
+            route_label=route.route_type,
+            chain_id=self.settings.effective_chain_id,
+            token_in_symbol=route.token_in,
+            token_out_symbol=route.token_out,
+            amount_in=str(amount_in),
+            amount_out=str(amount_out),
+            quoted_price=str(rate),
+            estimated_slippage_bps=slippage_bps,
+            route_depth_usd=None,
+            candidate_rank=1,
+            sample_timestamp=now,
+            freshness_status="fresh",
+            status_code=DataStatusCode.QUOTE_FRESH.value,
+            status_reason="Mock Sepolia quote for testnet.",
+            data_sources_used=["mock_sepolia"],
+        )
+        return type("Attempt", (), {"raw_snapshot": raw, "normalized_snapshot": norm})
+
+    def _is_mock_route(self, route: RouteDescriptor) -> bool:
+        return route.route_id is not None and route.route_id.startswith("mock_")
 
     def _quote_pairs(self) -> list[QuotePair]:
         assets = self._assets_for_target_chain()

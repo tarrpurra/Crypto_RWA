@@ -69,12 +69,14 @@ def internal_snapshot_from_response(snapshot: PortfolioSnapshotResponse) -> Port
         value_usd = _float_or_zero(position.value_usd)
         weight = _float_or_zero(position.weight)
         balance = _float_or_zero(position.balance)
+        price_usd = _float_or_zero(position.price_usd)
         balances.append(
             AssetBalance(
                 asset_symbol=position.asset_symbol,
                 balance=balance,
                 value_usd=value_usd,
                 weight=weight,
+                price_usd=price_usd,
             )
         )
         weights[position.asset_symbol] = weight

@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from services.agent.app.core.settings import Settings, TargetChain, get_settings
 from services.agent.app.core.status_codes import DataStatusCode
-from services.agent.app.schemas.allocation import AllocationDecision, AllocationDecisionResponse, RebalanceAction
+from services.agent.app.schemas.allocation import AllocationDecisionResponse
 from services.agent.app.schemas.portfolio import AssetBalance, PortfolioPosition, PortfolioSnapshot, PortfolioSnapshotResponse
 from services.agent.app.schemas.recommendations import RecommendationResponse
 from services.agent.app.schemas.risk import RiskAssessmentResponse
@@ -17,10 +17,11 @@ from services.agent.modules.proposals.investment_planner import (
     _build_target_allocations,
     _latest_price_map,
 )
+# circular-safe: lazy import inside async functions
+# from services.agent.modules.decisions import build_decision_context
 from services.agent.risk.engine import RiskEngine
-from services.agent.risk.scoring.score_engine import RiskScoreEngine
 from services.agent.strategies.allocation.profiles import get_allocation_profile_for_chain, normalize_profile_name
-from services.agent.strategies.decision_templates.parser import generate_recommendation_reasoning
+from services.agent.strategies.decision_templates.parser import generate_ai_allocation, generate_recommendation_reasoning
 
 
 @dataclass(frozen=True)
@@ -180,6 +181,7 @@ def build_scoped_internal_portfolio(scope: InvestmentScopeInput, settings: Setti
             balance=float(position.balance or 0),
             value_usd=float(position.value_usd or 0),
             weight=float(position.weight or 0),
+            price_usd=float(position.price_usd or 0),
         )
         for position in snapshot.positions
     ]
@@ -211,67 +213,30 @@ def build_scoped_risk_assessment(scope: InvestmentScopeInput, settings: Settings
     )
 
 
-def build_scoped_allocation_response(scope: InvestmentScopeInput, settings: Settings | None = None) -> AllocationDecisionResponse:
+async def build_scoped_allocation_response(scope: InvestmentScopeInput, settings: Settings | None = None) -> AllocationDecisionResponse:
     settings = settings or get_settings()
-    snapshot, target_weights, profile_name = build_scoped_portfolio_response(scope, settings)
-    deposit_symbol = scope.deposit_asset_symbol.upper()
-    deposit_amount = float(scope.deposit_amount)
-    allocations_by_symbol = {position.asset_symbol.upper(): position for position in snapshot.positions}
-    actions: list[RebalanceAction] = []
-    retained_weight = target_weights.get(scope.deposit_asset_symbol, target_weights.get(deposit_symbol, 0.0))
-    retained_amount = deposit_amount * retained_weight
-    if retained_amount > 0:
-        actions.append(
-            RebalanceAction(
-                asset_symbol=scope.deposit_asset_symbol,
-                action="HOLD",
-                amount=round(retained_amount, 8),
-                route_id=None,
-            )
-        )
-    swaps = _build_planned_swaps(
+    from services.agent.modules.decisions import build_decision_context
+    context = await build_decision_context(
+        wallet_address=scope.wallet_address,
         deposit_asset_symbol=scope.deposit_asset_symbol,
-        deposit_amount=Decimal(str(scope.deposit_amount)),
-        target_weights=target_weights,
+        deposit_amount=scope.deposit_amount,
+        risk_profile=scope.risk_profile,
+        allocation_mode=scope.allocation_mode,
     )
-    for swap in swaps:
-        target_position = allocations_by_symbol.get(swap.target_asset_symbol.upper())
-        actions.append(
-            RebalanceAction(
-                asset_symbol=swap.target_asset_symbol,
-                action="BUY",
-                amount=round(float(target_position.balance) if target_position and target_position.balance else 0.0, 8),
-                route_id=swap.quote.route_id if swap.quote else None,
-            )
-        )
-    actions = [action for action in actions if action.amount > 0]
-    actionable_actions = [action for action in actions if action.action != "HOLD"]
-    actions = actionable_actions + [action for action in actions if action.action == "HOLD"]
-    recommended_action = "REBALANCE" if actionable_actions else "HOLD"
-    reasoning = (
-        f"Scoped allocation uses {scope.deposit_amount} {scope.deposit_asset_symbol} on chain {settings.effective_chain_id} "
-        f"with the {profile_name} target profile."
+    decision, actions = await generate_ai_allocation(
+        portfolio_value_usd=context.portfolio.total_value_usd,
+        deposit_asset_symbol=scope.deposit_asset_symbol,
+        deposit_amount=scope.deposit_amount,
+        target_weights=context.portfolio.weights,
+        risk_assessment=context.risk_assessment,
+        profile_name=context.profile_name,
     )
-    if settings.target_chain == TargetChain.MANTLE_SEPOLIA and "USDC" not in target_weights:
-        reasoning += " USDC is excluded on Mantle Sepolia and the remaining sleeves are renormalized."
-    decision = AllocationDecision(
-        decision_id=f"scoped_allocation_{uuid4().hex}",
-        wallet_or_vault=scope.wallet_address or "investment_scope",
-        profile_name=profile_name,
-        current_weights={scope.deposit_asset_symbol: 1.0},
-        target_weights=target_weights,
-        recommended_action=recommended_action,
-        confidence=0.85 if snapshot.status_code == DataStatusCode.DATA_FRESH.value else 0.5,
-        reasoning=reasoning,
-        risk_snapshot_id=None,
-        status_code=DataStatusCode.DATA_FRESH.value,
-        created_at=utc_now(),
-    )
+    status = "degraded" if decision.recommended_action == "PAUSE" else "ok"
     return AllocationDecisionResponse(
-        status="ok",
-        status_code=DataStatusCode.DATA_FRESH.value,
-        status_label=DataStatusCode.DATA_FRESH.value,
-        status_reason=reasoning,
+        status=status,
+        status_code=decision.status_code,
+        status_label=decision.status_code,
+        status_reason=decision.reasoning,
         generated_at=utc_now(),
         decision=decision,
         rebalance_actions=actions,
@@ -280,12 +245,25 @@ def build_scoped_allocation_response(scope: InvestmentScopeInput, settings: Sett
 
 async def build_scoped_decision_response(scope: InvestmentScopeInput, settings: Settings | None = None) -> RecommendationResponse:
     settings = settings or get_settings()
-    allocation = build_scoped_allocation_response(scope, settings)
-    internal_portfolio = build_scoped_internal_portfolio(scope, settings)
-    risk_snapshot = RiskScoreEngine().compute_risk_snapshot(internal_portfolio)
+    from services.agent.modules.decisions import build_decision_context
+    context = await build_decision_context(
+        wallet_address=scope.wallet_address,
+        deposit_asset_symbol=scope.deposit_asset_symbol,
+        deposit_amount=scope.deposit_amount,
+        risk_profile=scope.risk_profile,
+        allocation_mode=scope.allocation_mode,
+    )
+    decision, actions = await generate_ai_allocation(
+        portfolio_value_usd=context.portfolio.total_value_usd,
+        deposit_asset_symbol=scope.deposit_asset_symbol,
+        deposit_amount=scope.deposit_amount,
+        target_weights=context.portfolio.weights,
+        risk_assessment=context.risk_assessment,
+        profile_name=context.profile_name,
+    )
     return await generate_recommendation_reasoning(
-        internal_portfolio,
-        risk_snapshot,
-        allocation.decision,
-        allocation.rebalance_actions,
+        context.portfolio,
+        context.risk_snapshot,
+        decision,
+        actions,
     )

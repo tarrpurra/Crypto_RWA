@@ -104,9 +104,12 @@ def compute_rebalance(
         # It's usually safer to execute sales first to free up capital, but in our backend recommendation
         # we output individual asset buy/sell actions.
         for asset, drift in significant_drifts:
-            current_val = next((b.value_usd for b in portfolio.balances if b.asset_symbol == asset), 0.0)
-            current_bal = next((b.balance for b in portfolio.balances if b.asset_symbol == asset), 0.0)
-            price = current_val / current_bal if current_bal > 0 else 0.0
+            entry = next((b for b in portfolio.balances if b.asset_symbol == asset), None)
+            current_val = entry.value_usd if entry else 0.0
+            current_bal = entry.balance if entry else 0.0
+            price = entry.price_usd if entry and entry.price_usd > 0 else (
+                current_val / current_bal if current_bal > 0 else 0.0
+            )
             
             if price == 0.0:
                 logger.warning("Skipping %s rebalance action because the position price is unavailable.", asset)
@@ -160,7 +163,7 @@ def compute_rebalance(
                 reasoning = f"Significant drifts detected, but rebalance actions were filtered out by risk engine rules ({risk.risk_band})."
 
     if rebalance_actions:
-        status_code = "PROPOSAL_DRAFT"
+        status_code = RiskStatusCode.RISK_NORMAL.value
     elif significant_drifts:
         status_code = risk.status_code if risk.status_code != RiskStatusCode.RISK_NORMAL.value else RiskStatusCode.RISK_REBALANCE_ONLY.value
     else:

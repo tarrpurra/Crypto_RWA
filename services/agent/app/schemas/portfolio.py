@@ -11,6 +11,7 @@ class AssetBalance(BaseModel):
     balance: float
     value_usd: float
     weight: float
+    price_usd: float = 0.0
 
 
 class PortfolioSnapshot(BaseModel):

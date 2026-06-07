@@ -20,6 +20,105 @@ For each entry, record:
 ### 2026-06-06
 
 Type:
+Fix / shared decision context and AI override removal
+
+Author:
+Codex
+
+Summary:
+
+- added a shared decision context module for portfolio, canonical risk, risk-snapshot adaptation, and allocation profile resolution
+- refactored `/allocation/recommendation` non-scoped reads to use canonical `RiskEngine.evaluate()` context instead of independently computing the older `RiskScoreEngine` snapshot
+- refactored `/decisions` non-scoped reads to use the same shared context as allocation
+- changed AI decision-maker parsing so model output can suggest an action in metadata but cannot override the deterministic allocation action
+- updated the AI prompt to describe full-access AI as orchestration bounded by deterministic risk and proposal guards
+- refreshed the stale proposal lifecycle integration test to use the current `InvestmentPlanRequest` shape
+
+Affected scope:
+
+- services/agent/modules/decisions/context.py
+- services/agent/modules/decisions/__init__.py
+- services/agent/app/api/allocation.py
+- services/agent/app/api/decisions.py
+- services/agent/strategies/decision_templates/parser.py
+- services/agent/strategies/decision_templates/prompt_builder.py
+- services/agent/tests/unit/test_ai_fallback.py
+- services/agent/tests/integration/test_portfolio_endpoints.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract bytecode changed
+- frontend: no UI code changed; allocation and decision endpoints now align more closely with `/risk/current`
+- data quality: risk and allocation recommendations now share the same canonical portfolio/risk context for non-scoped reads
+
+Assumptions / unresolved verification items:
+
+- scoped investment allocation still uses its existing helper path and should be moved onto the shared context in the next pass
+- proposal creation still has its own risk call and should be unified with the shared context in the next pass
+- full risk unification still needs the stale-oracle, depeg, liquidity, and slippage checks from `RiskScoreEngine` folded into `RiskEngine`
+
+Commands run:
+
+- `python -m unittest services.agent.tests.unit.test_allocation services.agent.tests.unit.test_ai_fallback services.agent.tests.unit.test_risk_engine -v`
+- `python -m unittest services.agent.tests.integration.test_portfolio_endpoints services.agent.tests.integration.test_risk services.agent.tests.integration.test_health -v`
+
+---
+
+### 2026-06-06 (later)
+
+Type:
+Scoped allocation moved onto shared decision context + AI-driven allocation
+
+Author:
+Codex
+
+Summary:
+
+- extended `build_decision_context()` to accept deposit scope params (`deposit_asset_symbol`, `deposit_amount`, `risk_profile`, `allocation_mode`) and build a scoped portfolio via `_build_scoped_portfolio()` helper
+- added `scope_type` and `scope_input` fields to `DecisionContext` dataclass
+- added `build_allocation_prompt()` in `prompt_builder.py` — prompt for AI to generate allocation amounts
+- added `generate_ai_allocation()`, `_apply_allocation_guardrails()`, `_deterministic_allocation()` in `parser.py` — AI generates allocation actions with deterministic guardrails (veto blocks AI, clip sizing, deterministic fallback on AI failure)
+- refactored `build_scoped_allocation_response()` to be async, using shared context + AI allocation instead of ad-hoc action builder
+- refactored `build_scoped_decision_response()` to use canonical `RiskEngine.evaluate()` via shared context instead of old `RiskScoreEngine.compute_risk_snapshot()`
+- changed `compute_rebalance()` `PROPOSAL_DRAFT` status code to `RiskStatusCode.RISK_NORMAL.value`
+- used lazy imports in `allocation.py`, `decisions.py`, `investment_scope.py` to avoid circular imports through the new context → api chain
+- added price-resolution fallback in scoped portfolio builder via `_resolve_price()` with sepolia-specific stable/mETH fallbacks
+
+Affected scope:
+
+- services/agent/modules/decisions/context.py
+- services/agent/strategies/decision_templates/prompt_builder.py
+- services/agent/strategies/decision_templates/parser.py
+- services/agent/app/api/investment_scope.py
+- services/agent/app/api/allocation.py
+- services/agent/app/api/decisions.py
+- services/agent/strategies/allocation/rebalance.py
+- services/agent/tests/unit/test_investment_scope.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract bytecode changed
+- frontend: scoped allocation and decision endpoints now flow through shared context + canonical risk; AI can generate allocation amounts directly for scoped/preview flows but veto still blocks
+- data quality: all flows (wallet and scoped) now use the same `RiskEngine.evaluate()` for risk; scoped allocation no longer emits `PROPOSAL_DRAFT` status codes
+
+Assumptions / unresolved verification items:
+
+- scoped decision responses now pass through `generate_recommendation_reasoning()` with canonical risk snapshot adapter (risk_assessment_to_snapshot) — verify human-readable output matches old risk snapshot format
+- AI allocation prompt assumes Ollama is available; falls back to deterministic weight-based allocation if unavailable
+- proposal creation (`/proposals/create`) still has its own risk call and should be unified with shared context in a future pass
+- full risk unification still needs the stale-oracle, depeg, liquidity, and slippage checks from `RiskScoreEngine` folded into `RiskEngine`
+
+Commands run:
+
+- `python -m unittest services.agent.tests.unit.test_investment_scope -v` (7 tests, all pass)
+- `python -m unittest services.agent.tests.unit.test_allocation services.agent.tests.unit.test_ai_fallback services.agent.tests.unit.test_risk_engine services.agent.tests.unit.test_investment_scope -v` (27 tests, all pass)
+- `python -m unittest services.agent.tests.integration.test_portfolio_endpoints services.agent.tests.integration.test_risk services.agent.tests.integration.test_health -v` (13 tests, all pass)
+
+### 2026-06-06
+
+Type:
 Docs / AI repair plan
 
 Author:

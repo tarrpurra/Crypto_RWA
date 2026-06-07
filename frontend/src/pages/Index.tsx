@@ -57,7 +57,10 @@ const Index = () => {
   const autoLaunchTradeFlowRef = useRef<string | null>(null);
   const amountTouchedRef = useRef(false);
   const selectedPortfolioBalance = useMemo(() => {
-    const position = portfolio?.positions?.find((item) => item.asset_symbol === depositAsset);
+    const candidates = portfolio?.positions ?? [];
+    const position = candidates.find((item) => item.asset_symbol === depositAsset)
+      ?? (depositAsset === "MNT" ? candidates.find((item) => item.asset_symbol === "WMNT") : undefined)
+      ?? (depositAsset === "WMNT" ? candidates.find((item) => item.asset_symbol === "MNT") : undefined);
     return position?.balance?.trim() ?? "";
   }, [depositAsset, portfolio?.positions]);
   const selectedPortfolioBalanceValue = Number.parseFloat(selectedPortfolioBalance || "0");
@@ -79,6 +82,11 @@ const Index = () => {
       amount: resolvedDepositAmount,
       risk: riskProfile,
     });
+    if (swapRecommendation) {
+      params.set("amount", String(swapRecommendation.amount));
+      params.set("aiTargetAsset", swapRecommendation.asset_symbol);
+      params.set("aiTargetAmount", String(swapRecommendation.amount));
+    }
     navigate(`/trade?${params.toString()}`);
   };
 

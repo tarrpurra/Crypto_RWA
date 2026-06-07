@@ -6,6 +6,54 @@ from services.agent.app.schemas.risk import RiskSnapshot
 from services.agent.app.schemas.allocation import AllocationDecision, RebalanceAction
 
 
+def build_allocation_prompt(
+    portfolio_value_usd: float,
+    deposit_asset_symbol: str,
+    deposit_amount: float,
+    target_weights: dict[str, float],
+    risk_status: str,
+    risk_score: float,
+    risk_notes: list[str],
+    profile_name: str,
+) -> str:
+    target_lines = [f'    "{asset}": {weight}' for asset, weight in target_weights.items()]
+    risk_notes_str = "\n".join(f"  - {note}" for note in risk_notes)
+
+    return f"""You are the AI Allocation Engine of AIxRWA. Generate an allocation plan for a scoped investment.
+
+Input:
+- Deposit: {deposit_amount} {deposit_asset_symbol}
+- Portfolio value: ${portfolio_value_usd:.2f}
+- Target profile: {profile_name}
+- Target weights:
+{{{','.join(target_lines)}
+}}
+- Risk status: {risk_status} (score: {risk_score})
+- Risk notes:
+{risk_notes_str}
+
+Rules:
+1. Allocate the deposit across target assets according to the profile weights.
+2. You may deviate from target weights by up to 10% based on risk conditions ({risk_status}).
+3. If risk is RISK_VETO or RISK_PAUSE_REQUIRED, set recommended_action to "PAUSE" and give empty amounts.
+4. If no significant risk, set recommended_action to "REBALANCE".
+5. If everything is already aligned, set recommended_action to "HOLD".
+6. The retained deposit asset amount is determined by its target weight.
+
+Respond with ONLY valid JSON:
+{{
+  "recommended_action": "REBALANCE",
+  "allocations": [
+    {{"asset": "{deposit_asset_symbol}", "action": "HOLD", "amount": 0.0}},
+    {{"asset": "USDY", "action": "BUY", "amount": 0.0}}
+  ],
+  "reasoning_summary": "Brief explanation",
+  "confidence": 0.0,
+  "notes": ["note1"]
+}}
+"""
+
+
 def build_reasoning_prompt(
     portfolio: PortfolioSnapshot,
     risk: RiskSnapshot,
@@ -17,7 +65,8 @@ def build_reasoning_prompt(
     Constructs the prompt for the AI reasoning layer.
 
     When ai_decision_maker is False: AI explains the deterministic decision.
-    When ai_decision_maker is True: AI evaluates and makes the final decision.
+    When ai_decision_maker is True: AI may recommend orchestration, but deterministic
+    risk and allocation controls remain authoritative.
     """
     portfolio_data = {
         "total_value_usd": portfolio.total_value_usd,
@@ -54,20 +103,20 @@ def build_reasoning_prompt(
         "risk": risk_data,
         "rebalance_target_profile": decision.profile_name,
         "proposed_rebalance_actions": rebalance_data,
-        "recommended_decision": decision.recommended_action
+        "deterministic_decision": decision.recommended_action
     }
 
     if ai_decision_maker:
         prompt = f"""You are the AI Decision Maker of AIxRWA, a risk-managed portfolio allocator on Mantle.
-Your role is to evaluate the portfolio, risk, and market state below and decide the best action.
+Your role is to evaluate the portfolio, risk, and market state below and explain whether full-access automation should proceed.
 
 Context:
 {json.dumps(context, indent=2)}
 
 Decision rules:
-- The deterministic engine suggests: {decision.recommended_action}
-- You may AGREE with this recommendation or OVERRIDE it with a different action.
-- Valid actions: "HOLD" (no trades), "REBALANCE" (execute proposed trades), "PAUSE" (stop all trading).
+- The deterministic engine decides: {decision.recommended_action}
+- You may suggest an action for operator visibility, but you cannot override deterministic risk, allocation, or proposal guards.
+- Valid suggested actions: "HOLD" (no trades), "REBALANCE" (execute proposed trades), "PAUSE" (stop all trading).
 - Consider all risk factors including oracle freshness, depeg risk, liquidity/slippage, and concentration limits.
 - You must still respect hard risk constraints: if risk_band is RISK_VETO or RISK_PAUSE_REQUIRED, you must choose PAUSE.
 

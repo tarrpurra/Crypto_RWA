@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from services.agent.app.api.investment_scope import InvestmentScopeInput, build_scoped_decision_response
 from services.agent.app.api.portfolio import current_portfolio
-from services.agent.app.core.settings import TargetChain, get_settings
+from services.agent.app.core.settings import get_settings
 from services.agent.app.schemas.proposals import (
     InvestmentPlanRequest,
     InvestmentPlanResponse,
@@ -18,16 +18,15 @@ from services.agent.app.schemas.proposals import (
 )
 from services.agent.app.schemas.recommendations import RecommendationResponse
 from services.agent.modules.oracle.freshness import utc_now
-from services.agent.modules.market_data.balances import fetch_portfolio_snapshot
+# circular-safe: lazy import inside endpoint function
+# from services.agent.modules.decisions import build_decision_context
 from services.agent.modules.proposals.investment_planner import build_investment_plan, get_cached_plan_for_proposal
 from services.agent.repositories.db.investment_plan_repository import InvestmentPlanRepository
 from services.agent.repositories.db.models import TradeProposalRecord
 from services.agent.repositories.db.session import create_session, init_db
 from services.agent.risk.engine import RiskEngine
-from services.agent.risk.scoring.score_engine import RiskScoreEngine
-from services.agent.strategies.allocation import profiles
+from services.agent.modules.quotes import get_quote_service
 from services.agent.strategies.allocation.rebalance import compute_rebalance
-from services.agent.strategies.allocation.profiles import normalize_profile_name
 from services.agent.strategies.decision_templates.parser import generate_recommendation_reasoning
 
 
@@ -85,14 +84,10 @@ async def get_latest_decisions(
                 allocation_mode=allocation_mode or "AI Suggested",
             )
         )
-    portfolio = fetch_portfolio_snapshot(wallet_address=wallet_address, allow_env_fallback=False)
-    risk = RiskScoreEngine().compute_risk_snapshot(portfolio)
-    settings = get_settings()
-    profile_name = profiles.ACTIVE_PROFILE_NAME or settings.allocation_profile_name
-    if settings.target_chain == TargetChain.MANTLE_SEPOLIA:
-        profile_name = "Sepolia Test"
-    decision, actions = compute_rebalance(portfolio, risk, normalize_profile_name(profile_name))
-    return await generate_recommendation_reasoning(portfolio, risk, decision, actions)
+    from services.agent.modules.decisions import build_decision_context
+    context = await build_decision_context(wallet_address=wallet_address)
+    decision, actions = compute_rebalance(context.portfolio, context.risk_snapshot, context.profile_name)
+    return await generate_recommendation_reasoning(context.portfolio, context.risk_snapshot, decision, actions)
 
 
 @router.post("/proposals/create", response_model=InvestmentPlanResponse)
@@ -222,6 +217,7 @@ async def list_proposals(status: str | None = None) -> ProposalListResponse:
 async def execute_proposal(proposal_id: str) -> ProposalExecuteResponse:
     settings = get_settings()
     init_db()
+
     with create_session() as session:
         from sqlalchemy import select
 
@@ -235,21 +231,44 @@ async def execute_proposal(proposal_id: str) -> ProposalExecuteResponse:
             )
         if not record.calldata:
             raise HTTPException(status_code=500, detail="Proposal calldata is missing from the record.")
-        return ProposalExecuteResponse(
-            status="ok",
-            status_code="PROPOSAL_APPROVED",
-            proposal_id=record.proposal_id,
-            router=record.router,
-            selector=record.selector,
-            calldata=record.calldata,
-            calldata_hash=record.calldata_hash,
-            token_in=record.token_in,
-            token_out=record.token_out,
-            recipient=record.recipient,
-            max_amount_in=record.max_amount_in,
-            min_amount_out=record.min_amount_out,
-            native_value=record.native_value,
-            deadline=record.deadline,
-            nonce=record.nonce,
-            chain_id=settings.effective_chain_id,
+
+    portfolio = await current_portfolio(wallet_address=record.wallet_or_vault)
+    risk = RiskEngine().evaluate(portfolio_snapshot=portfolio)
+    data_status = (portfolio.status_code or "").upper()
+
+    block_reasons: list[str] = []
+    if risk.hard_veto_status == "active":
+        block_reasons.append(f"risk hard veto is active ({risk.hard_veto_status})")
+    if risk.risk_band in ("RISK_VETO", "RISK_PAUSE_REQUIRED"):
+        block_reasons.append(f"risk band is {risk.risk_band}")
+    if data_status in ("DATA_PARTIAL", "DATA_MISSING"):
+        block_reasons.append(f"portfolio data status is {data_status}")
+    quote_service = get_quote_service()
+    quote = quote_service.best_quote_for_pair(record.token_in, record.token_out)
+    if quote is None or quote.amount_out is None or quote.protocol is None:
+        block_reasons.append("no swap route available for the required pair")
+
+    if block_reasons:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Execution blocked: {'; '.join(block_reasons)}.",
         )
+
+    return ProposalExecuteResponse(
+        status="ok",
+        status_code="PROPOSAL_APPROVED",
+        proposal_id=record.proposal_id,
+        router=record.router,
+        selector=record.selector,
+        calldata=record.calldata,
+        calldata_hash=record.calldata_hash,
+        token_in=record.token_in,
+        token_out=record.token_out,
+        recipient=record.recipient,
+        max_amount_in=record.max_amount_in,
+        min_amount_out=record.min_amount_out,
+        native_value=record.native_value,
+        deadline=record.deadline,
+        nonce=record.nonce,
+        chain_id=settings.effective_chain_id,
+    )

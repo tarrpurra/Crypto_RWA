@@ -3,10 +3,9 @@ from __future__ import annotations
 import logging
 from fastapi import APIRouter, HTTPException
 from services.agent.app.api.investment_scope import InvestmentScopeInput, build_scoped_allocation_response
-from services.agent.app.api.portfolio import current_portfolio
-from services.agent.app.schemas.allocation import AllocationDecisionResponse, AllocationDecision, RebalanceAction, UpdateProfileRequest
-from services.agent.modules.market_data.balances import internal_snapshot_from_response
-from services.agent.risk.scoring.score_engine import RiskScoreEngine
+from services.agent.app.schemas.allocation import AllocationDecisionResponse, AllocationDecision, UpdateProfileRequest
+# circular-safe: lazy import inside endpoint function
+# from services.agent.modules.decisions import build_decision_context
 from services.agent.strategies.allocation.rebalance import compute_rebalance
 from services.agent.strategies.allocation import profiles
 from services.agent.strategies.allocation.profiles import normalize_profile_name
@@ -42,17 +41,6 @@ def _save_allocation_decision(decision: AllocationDecision) -> None:
         logger.warning("Failed to persist allocation decision: %s", exc)
 
 
-def _active_profile_name() -> str:
-    settings = get_settings()
-    configured_name = profiles.ACTIVE_PROFILE_NAME or settings.allocation_profile_name
-    if settings.target_chain == TargetChain.MANTLE_SEPOLIA:
-        configured_name = "Sepolia Test"
-    try:
-        return normalize_profile_name(configured_name)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
 @router.get("/recommendation", response_model=AllocationDecisionResponse)
 async def get_allocation_recommendation(
     wallet_address: str | None = None,
@@ -62,7 +50,7 @@ async def get_allocation_recommendation(
     allocation_mode: str | None = None,
 ) -> AllocationDecisionResponse:
     if deposit_asset_symbol and deposit_amount and risk_profile:
-        return build_scoped_allocation_response(
+        return await build_scoped_allocation_response(
             InvestmentScopeInput(
                 wallet_address=wallet_address,
                 deposit_asset_symbol=deposit_asset_symbol,
@@ -71,12 +59,13 @@ async def get_allocation_recommendation(
                 allocation_mode=allocation_mode or "AI Suggested",
             )
         )
-    portfolio_response = await current_portfolio(wallet_address=wallet_address)
-    portfolio = internal_snapshot_from_response(portfolio_response)
-    risk_engine = RiskScoreEngine()
-    risk = risk_engine.compute_risk_snapshot(portfolio)
-    
-    decision, actions = compute_rebalance(portfolio, risk, _active_profile_name())
+    try:
+        from services.agent.modules.decisions import build_decision_context
+        context = await build_decision_context(wallet_address=wallet_address)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    decision, actions = compute_rebalance(context.portfolio, context.risk_snapshot, context.profile_name)
     _save_allocation_decision(decision)
 
     status = "ok"

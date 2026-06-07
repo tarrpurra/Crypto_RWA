@@ -12,6 +12,14 @@ import { RiskDetailsModal } from "@/components/swap/RiskDetailsModal";
 import { TransactionStatus } from "@/components/swap/TransactionStatus";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useMarketIngestionStatus, useLatestPrices, useMarketRoutes, useUsdyOracle } from "@/hooks/useMarket";
@@ -126,6 +134,8 @@ export default function Trade() {
   const initialAssetSymbol = searchParams.get("asset");
   const initialAmount = searchParams.get("amount");
   const initialRiskProfile = searchParams.get("risk");
+  const aiTargetAsset = searchParams.get("aiTargetAsset");
+  const aiTargetAmount = searchParams.get("aiTargetAmount");
   const [assetSymbol, setAssetSymbol] = useState<(typeof assetOptions)[number]>(
     assetOptions.includes(initialAssetSymbol as (typeof assetOptions)[number]) ? (initialAssetSymbol as (typeof assetOptions)[number]) : "MNT",
   );
@@ -141,6 +151,8 @@ export default function Trade() {
   const [showRiskDialog, setShowRiskDialog] = useState(false);
   const [plan, setPlan] = useState<InvestmentPlanResponse | null>(null);
   const [autoExecutionPlanId, setAutoExecutionPlanId] = useState<string | null>(null);
+  const [executionConfirmPending, setExecutionConfirmPending] = useState(false);
+  const [executionCancelled, setExecutionCancelled] = useState(false);
   const proposalDetailQuery = useProposalDetail(activeProposalId);
   const selectedAssetIngestion = useMemo(
     () => market?.assets?.find((item) => item.asset_symbol === assetSymbol) ?? null,
@@ -153,7 +165,10 @@ export default function Trade() {
   });
   const nativeMntBalance = nativeBalanceQuery.data ? Number.parseFloat(nativeBalanceQuery.data.formatted) : NaN;
   const selectedPortfolioBalance = useMemo(() => {
-    const position = portfolio?.positions?.find((item) => item.asset_symbol === assetSymbol);
+    const candidates = portfolio?.positions ?? [];
+    const position = candidates.find((item) => item.asset_symbol === assetSymbol)
+      ?? (assetSymbol === "MNT" ? candidates.find((item) => item.asset_symbol === "WMNT") : undefined)
+      ?? (assetSymbol === "WMNT" ? candidates.find((item) => item.asset_symbol === "MNT") : undefined);
     return position?.balance?.trim() ?? "";
   }, [assetSymbol, portfolio?.positions]);
   const selectedPortfolioBalanceValue = Number.parseFloat(selectedPortfolioBalance || "0");
@@ -241,10 +256,14 @@ export default function Trade() {
     if (autoExecutionPlanIdRef.current === plan.plan_id) {
       return;
     }
+    if (executionCancelled) {
+      return;
+    }
 
     autoExecutionPlanIdRef.current = plan.plan_id;
     setAutoExecutionPlanId(plan.plan_id);
-    toast.info("Full access AI is approving and executing the current plan.");
+    setExecutionCancelled(false);
+    toast.info("Full access AI is approving the current plan.");
 
     const run = async () => {
       try {
@@ -256,24 +275,16 @@ export default function Trade() {
             message: "Full access AI approved proposal",
             timestamp: new Date().toISOString(),
           });
-          await executeProposal.mutateAsync(proposal.proposal_id);
-          appendEntry({
-            proposalId: proposal.proposal_id,
-            type: "submitted",
-            message: "Full access AI submitted execution",
-            timestamp: new Date().toISOString(),
-          });
         }
-        toast.success("Full access AI completed the current plan.");
+        setExecutionConfirmPending(true);
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Full access AI failed to complete the current plan.");
-      } finally {
+        toast.error(error instanceof Error ? error.message : "Full access AI failed to approve the current plan.");
         setAutoExecutionPlanId(null);
       }
     };
 
     void run();
-  }, [aiDecisionMakerEnabled, appendEntry, approveProposal, executeProposal, plan]);
+  }, [aiDecisionMakerEnabled, appendEntry, approveProposal, plan, executionCancelled]);
 
   useEffect(() => {
     const asset = searchParams.get("asset");
@@ -318,6 +329,14 @@ export default function Trade() {
       toast.error("Connect a wallet before creating a plan.");
       return;
     }
+
+    const GAS_RESERVE_MNT = 0.5;
+    const deployAmountRaw = aiTargetAsset && aiTargetAmount
+      ? Number(aiTargetAmount)
+      : numericAmount;
+    const planDepositAmount = Math.max(0, deployAmountRaw - GAS_RESERVE_MNT);
+    const planManualWeights = aiTargetAsset ? { [aiTargetAsset]: 1.0 } : (manualWeights ?? undefined);
+
     if (assetSymbol === "MNT") {
       if (!settings?.sepolia_wmnt_address) {
         toast.error("WMNT contract address is not configured in backend settings.");
@@ -326,7 +345,7 @@ export default function Trade() {
       try {
         await wrapMnt.mutateAsync({
           wmntAddress: settings.sepolia_wmnt_address as `0x${string}`,
-          amount: resolvedAmount,
+          amount: String(planDepositAmount),
         });
       } catch {
         return;
@@ -336,10 +355,10 @@ export default function Trade() {
       {
         wallet_address: walletAddress,
         deposit_asset_symbol: assetSymbol,
-        deposit_amount: numericAmount,
+        deposit_amount: planDepositAmount,
         risk_profile: riskProfile,
-        allocation_mode: allocationMode,
-        manual_target_weights: manualWeights ?? undefined,
+        allocation_mode: aiTargetAsset ? "Manual" : allocationMode,
+        manual_target_weights: planManualWeights,
       },
       {
         onSuccess: (response) => {
@@ -435,8 +454,29 @@ export default function Trade() {
     });
   };
 
+  const hasBlockers = useMemo(() => {
+    const blockers: string[] = [];
+    if (!routes?.routes?.length) {
+      blockers.push("No swap routes available");
+    }
+    if (risk?.risk_band === "RISK_VETO" || risk?.risk_band === "RISK_PAUSE_REQUIRED") {
+      blockers.push(`Risk band is ${risk.risk_band}`);
+    }
+    if (risk?.hard_veto_status === "active") {
+      blockers.push("Risk hard veto is active");
+    }
+    if ((market?.status_code ?? "") === "DATA_PARTIAL" || (market?.status_code ?? "") === "DATA_MISSING") {
+      blockers.push(`Market data status is ${market?.status_code}`);
+    }
+    return blockers;
+  }, [routes?.routes?.length, risk?.risk_band, risk?.hard_veto_status, market?.status_code]);
+
   const handleExecute = () => {
     if (!activeProposalId) {
+      return;
+    }
+    if (hasBlockers.length > 0) {
+      toast.error(`Cannot execute: ${hasBlockers.join("; ")}.`);
       return;
     }
     executeProposal.mutate(activeProposalId, {
@@ -455,13 +495,50 @@ export default function Trade() {
     });
   };
 
+  const handleConfirmExecution = async () => {
+    setExecutionConfirmPending(false);
+    if (!plan) {
+      setAutoExecutionPlanId(null);
+      return;
+    }
+    if (hasBlockers.length > 0) {
+      toast.error(`Cannot execute: ${hasBlockers.join("; ")}.`);
+      setAutoExecutionPlanId(null);
+      return;
+    }
+    try {
+      for (const proposal of plan.linked_proposals) {
+        await executeProposal.mutateAsync(proposal.proposal_id);
+        appendEntry({
+          proposalId: proposal.proposal_id,
+          type: "submitted",
+          message: "Execution submitted via operator confirmation",
+          timestamp: new Date().toISOString(),
+        });
+      }
+      toast.success("Full access AI completed the current plan.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Full access AI failed to execute the current plan.");
+    } finally {
+      setAutoExecutionPlanId(null);
+    }
+  };
+
+  const handleCancelExecution = () => {
+    setExecutionConfirmPending(false);
+    setExecutionCancelled(true);
+    setAutoExecutionPlanId(null);
+    toast.info("Execution cancelled by operator.");
+  };
+
   const working =
     wrapMnt.isPending ||
     createPlan.isPending ||
     approveProposal.isPending ||
     rejectProposal.isPending ||
     executeProposal.isPending ||
-    autoExecutionActive;
+    autoExecutionActive ||
+    executionConfirmPending;
 
   return (
     <PageScaffold
@@ -618,10 +695,10 @@ export default function Trade() {
                   View risk details
                 </Button>
               </div>
-            ) : (
+              ) : (
               <div className="space-y-2">
                 <div className="rounded border border-success/40 bg-success/10 p-3 text-sm text-success">
-                  Full access AI is preparing the plan, approving linked proposals, and executing the swap automatically when the scoped wallet balance is ready.
+                  Full access AI will prepare the plan, approve linked proposals, then request your confirmation before executing the swap.
                 </div>
                 <Button variant="outline" onClick={() => setShowRiskDialog(true)} disabled={!resolvedPlan?.risk_assessment && !risk}>
                   View risk details
@@ -781,14 +858,19 @@ export default function Trade() {
               </div>
             )}
 
-            {aiDecisionMakerEnabled && !autoExecutionActive && (resolvedPlan?.approval_enabled ?? plan?.approval_enabled) && (
+            {aiDecisionMakerEnabled && !autoExecutionActive && !executionConfirmPending && (resolvedPlan?.approval_enabled ?? plan?.approval_enabled) && (
               <div className="rounded border border-success/40 bg-success/10 px-3 py-2 text-sm text-success">
-                Full access AI is enabled. Linked proposals will auto-approve and auto-execute after the plan is created.
+                Full access AI is enabled. Linked proposals will auto-approve, then request confirmation before execution.
               </div>
             )}
-            {autoExecutionActive && (
+            {autoExecutionActive && !executionConfirmPending && (
               <div className="rounded border border-primary/40 bg-primary/10 px-3 py-2 text-sm text-primary">
-                Full access AI is currently approving and executing the linked proposals.
+                Full access AI is approving the linked proposals.
+              </div>
+            )}
+            {executionConfirmPending && (
+              <div className="rounded border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning">
+                All proposals approved. Confirm execution to submit the swap transaction.
               </div>
             )}
             {!aiDecisionMakerEnabled ? (
@@ -799,13 +881,13 @@ export default function Trade() {
                 <Button variant="outline" onClick={handleReject} disabled={!activeProposalId || working || autoExecutionActive}>
                   Reject plan
                 </Button>
-                <Button onClick={handleExecute} disabled={!activeProposalId || working || autoExecutionActive || selectedPlanProposal?.status_code !== "PROPOSAL_APPROVED"}>
+                <Button onClick={handleExecute} disabled={!activeProposalId || working || autoExecutionActive || selectedPlanProposal?.status_code !== "PROPOSAL_APPROVED" || hasBlockers.length > 0}>
                   {executeProposal.isPending ? "Executing..." : "Execute selected proposal"}
                 </Button>
               </div>
             ) : (
               <div className="rounded border border-success/40 bg-success/10 px-3 py-2 text-sm text-success">
-                Linked proposals are being approved and executed automatically by full access AI.
+                Full access AI will approve linked proposals, then request confirmation before execution.
               </div>
             )}
           </div>
@@ -827,6 +909,48 @@ export default function Trade() {
         onOpenChange={setShowRiskDialog}
         risk={resolvedPlan?.risk_assessment ?? risk}
       />
+
+      <Dialog open={executionConfirmPending} onOpenChange={(open) => { if (!open) handleCancelExecution(); }}>
+        <DialogContent className="max-w-lg border-border bg-background">
+          <DialogHeader>
+            <DialogTitle>Confirm execution</DialogTitle>
+            <DialogDescription>
+              Full access AI has approved the plan. Review the swap details below, then confirm in your connected wallet to submit the transaction.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 text-sm">
+            {plan?.linked_proposals.map((proposal) => (
+              <div key={proposal.proposal_id} className="flex items-center justify-between rounded border border-border bg-surface-2 px-3 py-2">
+                <div>
+                  <span className="font-medium text-foreground">{proposal.token_in_symbol}</span>
+                  <ArrowRight className="mx-1 inline h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="font-medium text-foreground">{proposal.token_out_symbol}</span>
+                </div>
+                <span className="font-mono text-muted-foreground">{proposal.amount.toFixed(4)} {proposal.token_in_symbol}</span>
+              </div>
+            ))}
+            {plan?.risk_profile && (
+              <div className="flex items-center justify-between rounded border border-border bg-surface-2 px-3 py-2">
+                <span className="text-muted-foreground">Risk profile</span>
+                <span className="font-medium text-foreground">{plan.risk_profile}</span>
+              </div>
+            )}
+            <div className="rounded border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+              A wallet transaction prompt (MetaMask or equivalent) will open after you confirm. Review and sign it to complete the swap.
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={handleCancelExecution} disabled={executeProposal.isPending}>
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmExecution} disabled={executeProposal.isPending}>
+              {executeProposal.isPending ? "Executing..." : "Confirm execution"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PageScaffold>
   );
 }
