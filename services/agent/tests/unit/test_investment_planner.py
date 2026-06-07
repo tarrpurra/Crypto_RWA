@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from services.agent.app.core.settings import Settings
-from services.agent.app.core.status_codes import TargetChain
+from services.agent.app.core.status_codes import RuntimeMode, TargetChain
 from services.agent.app.schemas.portfolio import PortfolioSnapshotResponse
 from services.agent.app.schemas.proposals import (
     ExecutionPayloadSchema,
@@ -18,7 +18,7 @@ from services.agent.app.schemas.risk import RiskAssessmentResponse
 from services.agent.app.core.status_codes import DataStatusCode
 from services.agent.app.schemas.quotes import NormalizedQuoteSnapshot
 from services.agent.modules.oracle.freshness import utc_now
-from services.agent.modules.proposals.investment_planner import PlannedSwap, _build_planned_swaps, build_investment_plan
+from services.agent.modules.proposals.investment_planner import PlannedSwap, _build_guard_checks, _build_planned_swaps, _encode_trade_proposal, build_investment_plan
 
 
 class InvestmentPlannerTests(unittest.TestCase):
@@ -92,7 +92,84 @@ class InvestmentPlannerTests(unittest.TestCase):
         self.assertTrue(all(swap.quote.status_code == DataStatusCode.QUOTE_FRESH.value for swap in swaps if swap.quote))
         self.assertEqual([swap.quote.token_out_symbol for swap in swaps if swap.quote], ["USDC", "USDY", "mETH"])
 
-    @patch("services.agent.modules.proposals.investment_planner._encode_agni_trade_proposal")
+    @patch("services.agent.modules.proposals.investment_planner.get_ondo_usdy_oracle_adapter")
+    def test_guard_checks_stay_advisory_in_monitor_only_mode(self, mock_oracle_adapter) -> None:
+        mock_oracle_adapter.return_value.read.return_value = SimpleNamespace(
+            status=SimpleNamespace(status="stale"),
+        )
+
+        settings = Settings(
+            target_chain=TargetChain.MANTLE_MAINNET,
+            runtime_mode=RuntimeMode.MONITOR_ONLY,
+            native_mnt_enabled=True,
+        )
+        swap = PlannedSwap(
+            target_asset_symbol="USDY",
+            amount_in=Decimal("100"),
+            token_in_symbol="WMNT",
+            token_out_symbol="USDY",
+            quote=NormalizedQuoteSnapshot(
+                snapshot_id="quote-1",
+                protocol="AGNI",
+                route_id="agni:WMNT:USDY:500",
+                route_label="v3_exact_input_single",
+                chain_id=5003,
+                token_in_symbol="WMNT",
+                token_out_symbol="USDY",
+                amount_in="100",
+                amount_out="80",
+                quoted_price="0.8",
+                estimated_slippage_bps="120",
+                route_depth_usd="100000",
+                candidate_rank=1,
+                sample_timestamp=self.now,
+                freshness_status="stale",
+                status_code=DataStatusCode.QUOTE_STALE.value,
+                status_reason="Quote is stale.",
+                data_sources_used=["agni_live_quote"],
+            ),
+            gas_estimate=Decimal("1"),
+        )
+        risk = RiskAssessmentResponse(
+            asset="portfolio",
+            recommended_action="REBALANCE",
+            risk_score=32.0,
+            risk_band="RISK_NORMAL",
+            confidence=0.9,
+            reasoning_summary="Risk is acceptable for monitor-only mode.",
+            data_sources_used=[],
+            hard_veto_status="inactive",
+            required_human_approval_status="not_required",
+            status="ok",
+            status_code=DataStatusCode.DATA_FRESH.value,
+            status_label=DataStatusCode.DATA_FRESH.value,
+            status_reason="Risk engine permits rebalance.",
+            generated_at=self.now,
+            runtime_mode=RuntimeMode.MONITOR_ONLY.value,
+            target_chain=TargetChain.MANTLE_MAINNET.value,
+            freshness_status="fresh",
+            buckets=[],
+            notes=[],
+            metadata={},
+        )
+
+        checks, blockers = _build_guard_checks(
+            settings=settings,
+            deposit_asset_symbol="MNT",
+            selected_weights={"USDY": 0.75, "mETH": 0.25},
+            prices={"WMNT": Decimal("1"), "USDY": Decimal("1"), "mETH": Decimal("2500")},
+            swaps=[swap],
+            risk=risk,
+        )
+
+        blocking_codes = {check.code for check in checks if check.blocking and not check.passed}
+        self.assertEqual(blockers, [])
+        self.assertFalse(blocking_codes)
+        self.assertTrue(any(check.code == "price_deviation" and not check.blocking for check in checks))
+        self.assertTrue(any(check.code == "slippage_limit" and not check.blocking for check in checks))
+        self.assertTrue(any(check.code == "concentration_risk" and not check.blocking for check in checks))
+
+    @patch("services.agent.modules.proposals.investment_planner._encode_trade_proposal")
     @patch("services.agent.modules.proposals.investment_planner._build_guard_checks")
     @patch("services.agent.modules.proposals.investment_planner._build_planned_swaps")
     @patch("services.agent.modules.proposals.investment_planner._latest_price_map")
@@ -206,7 +283,7 @@ class InvestmentPlannerTests(unittest.TestCase):
             deposit_amount=100.0,
             risk_profile="Balanced",
             allocation_mode="Manual",
-            manual_target_weights={"USDC": 1.0},
+            manual_target_weights={"USDY": 1.0},
         )
 
         response, proposal_pairs = build_investment_plan(
@@ -222,7 +299,7 @@ class InvestmentPlannerTests(unittest.TestCase):
         self.assertTrue(response.transaction_steps)
         self.assertTrue(all(not step.requires_user_action for step in response.transaction_steps))
 
-    @patch("services.agent.modules.proposals.investment_planner._encode_agni_trade_proposal")
+    @patch("services.agent.modules.proposals.investment_planner._encode_trade_proposal")
     @patch("services.agent.modules.proposals.investment_planner._build_guard_checks")
     @patch("services.agent.modules.proposals.investment_planner._build_planned_swaps")
     @patch("services.agent.modules.proposals.investment_planner._latest_price_map")
@@ -338,8 +415,171 @@ class InvestmentPlannerTests(unittest.TestCase):
         self.assertNotIn("USDC", selected_weights)
         self.assertAlmostEqual(selected_weights["USDY"], 0.6)
         self.assertAlmostEqual(selected_weights["mETH"], 0.4)
-        self.assertTrue(any("USDC is excluded" in warning for warning in response.warning_messages))
+        self.assertTrue(any("renormalized across the remaining sleeves" in warning for warning in response.warning_messages))
         self.assertTrue(all(item.asset_symbol != "USDC" for item in response.selected_target_allocations))
+
+    @patch("services.agent.modules.proposals.investment_planner.get_pause_guardian_state")
+    @patch("services.agent.modules.proposals.investment_planner.get_ondo_usdy_oracle_adapter")
+    def test_guard_checks_are_relaxed_on_sepolia(self, mock_get_ondo_oracle, mock_get_pause_guardian_state) -> None:
+        mock_ondo_adapter = MagicMock()
+        mock_ondo_adapter.read.return_value = SimpleNamespace(status=SimpleNamespace(status="ok"))
+        mock_get_ondo_oracle.return_value = mock_ondo_adapter
+        mock_get_pause_guardian_state.return_value = {"paused": False}
+
+        settings = Settings(
+            target_chain=TargetChain.MANTLE_SEPOLIA,
+            runtime_mode=RuntimeMode.SIMULATION,
+        )
+        quote = self._fresh_quote("WMNT", "USDY").model_copy(update={"amount_in": "100", "amount_out": "96", "quoted_price": "1.04166667"})
+        swaps = [
+            PlannedSwap(
+                target_asset_symbol="USDY",
+                amount_in=Decimal("100"),
+                token_in_symbol="WMNT",
+                token_out_symbol="USDY",
+                quote=quote,
+                gas_estimate=Decimal("1"),
+                uses_native_value=False,
+            )
+        ]
+
+        checks, blockers = _build_guard_checks(
+            settings=settings,
+            deposit_asset_symbol="MNT",
+            selected_weights={"USDY": 0.95, "mETH": 0.05},
+            prices={"WMNT": Decimal("1"), "USDY": Decimal("1")},
+            swaps=swaps,
+            risk=RiskAssessmentResponse(
+                asset="portfolio",
+                recommended_action="REBALANCE",
+                risk_score=25.0,
+                risk_band="RISK_REBALANCE_ONLY",
+                confidence=0.9,
+                reasoning_summary="Rebalance recommended.",
+                data_sources_used=[],
+                hard_veto_status="inactive",
+                required_human_approval_status="not_required",
+                status="ok",
+                status_code="DATA_FRESH",
+                status_label="DATA_FRESH",
+                status_reason="Risk engine permits rebalance.",
+                generated_at=self.now,
+                runtime_mode="simulation",
+                target_chain="mantle_sepolia",
+                freshness_status="fresh",
+                buckets=[],
+                notes=[],
+                metadata={},
+            ),
+        )
+
+        self.assertFalse(blockers)
+        self.assertTrue(all(check.passed or not check.blocking for check in checks))
+        self.assertTrue(next(check for check in checks if check.code == "price_deviation").passed)
+        self.assertTrue(next(check for check in checks if check.code == "concentration_risk").passed)
+
+    @patch("services.agent.modules.proposals.investment_planner.get_pause_guardian_state")
+    @patch("services.agent.modules.proposals.investment_planner.get_ondo_usdy_oracle_adapter")
+    def test_guard_checks_scale_sample_quotes_to_actual_swap_amount(self, mock_get_ondo_oracle, mock_get_pause_guardian_state) -> None:
+        mock_ondo_adapter = MagicMock()
+        mock_ondo_adapter.read.return_value = SimpleNamespace(status=SimpleNamespace(status="ok"))
+        mock_get_ondo_oracle.return_value = mock_ondo_adapter
+        mock_get_pause_guardian_state.return_value = {"paused": False}
+
+        settings = Settings(
+            target_chain=TargetChain.MANTLE_SEPOLIA,
+            runtime_mode=RuntimeMode.SIMULATION,
+        )
+        quote = self._fresh_quote("WMNT", "USDY").model_copy(
+            update={
+                "amount_in": "10",
+                "amount_out": "4.7231",
+                "quoted_price": "0.47231",
+            },
+        )
+        swaps = [
+            PlannedSwap(
+                target_asset_symbol="USDY",
+                amount_in=Decimal("206.4"),
+                token_in_symbol="WMNT",
+                token_out_symbol="USDY",
+                quote=quote,
+                gas_estimate=Decimal("1"),
+                uses_native_value=False,
+            )
+        ]
+
+        checks, blockers = _build_guard_checks(
+            settings=settings,
+            deposit_asset_symbol="MNT",
+            selected_weights={"USDY": 0.95, "mETH": 0.05},
+            prices={"WMNT": Decimal("0.53608383"), "USDY": Decimal("1.13469831")},
+            swaps=swaps,
+            risk=RiskAssessmentResponse(
+                asset="portfolio",
+                recommended_action="REBALANCE",
+                risk_score=25.0,
+                risk_band="RISK_REBALANCE_ONLY",
+                confidence=0.9,
+                reasoning_summary="Rebalance recommended.",
+                data_sources_used=[],
+                hard_veto_status="inactive",
+                required_human_approval_status="not_required",
+                status="ok",
+                status_code="DATA_FRESH",
+                status_label="DATA_FRESH",
+                status_reason="Risk engine permits rebalance.",
+                generated_at=self.now,
+                runtime_mode="simulation",
+                target_chain="mantle_sepolia",
+                freshness_status="fresh",
+                buckets=[],
+                notes=[],
+                metadata={},
+            ),
+        )
+
+        self.assertFalse(blockers)
+        self.assertTrue(next(check for check in checks if check.code == "price_deviation").passed)
+
+    def test_encode_trade_proposal_scales_sample_quote_to_swap_amount(self) -> None:
+        settings = Settings(
+            target_chain=TargetChain.MANTLE_SEPOLIA,
+            native_mnt_enabled=True,
+            aiyield_sepolia_swap_router_address="0x0000000000000000000000000000000000000001",
+            sepolia_wmnt_address="0x0000000000000000000000000000000000000002",
+            sepolia_usdy_address="0x0000000000000000000000000000000000000003",
+        )
+        quote = self._fresh_quote("WMNT", "USDY").model_copy(
+            update={
+                "protocol": "AIYIELD",
+                "route_id": "aiyield:WMNT:USDY",
+                "amount_in": "10",
+                "amount_out": "4.7231",
+                "quoted_price": "0.47231",
+            },
+        )
+        swap = PlannedSwap(
+            target_asset_symbol="USDY",
+            amount_in=Decimal("206.4"),
+            token_in_symbol="WMNT",
+            token_out_symbol="USDY",
+            quote=quote,
+            gas_estimate=Decimal("1"),
+            uses_native_value=False,
+        )
+
+        proposal, summary, _ = _encode_trade_proposal(
+            settings=settings,
+            wallet_address="0x8ecc35264986c08E5C7594F27140f359A53768DD",
+            swap=swap,
+        )
+
+        expected_min_amount_out = int((Decimal("4.7231") * Decimal("20.64") * Decimal("0.99")) * Decimal(10 ** 18))
+        self.assertEqual(proposal.payload.maxAmountIn, int(Decimal("206.4") * Decimal(10 ** 18)))
+        self.assertEqual(proposal.payload.minAmountOut, expected_min_amount_out)
+        self.assertEqual(summary.token_in_symbol, "WMNT")
+        self.assertEqual(summary.token_out_symbol, "USDY")
 
 
 if __name__ == "__main__":

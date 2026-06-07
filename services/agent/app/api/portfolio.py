@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 
 from services.agent.app.core.status_codes import DataStatusCode
 from services.agent.app.core.settings import get_settings
@@ -219,8 +219,10 @@ async def current_portfolio(wallet_address: str | None = None, allow_env_fallbac
     return snapshot
 
 
-@router.get("/snapshot", response_model=dict)
-async def legacy_portfolio_snapshot() -> dict:
+@router.get("/snapshot", response_model=dict, deprecated=True)
+async def legacy_portfolio_snapshot(response: Response) -> dict:
+    response.headers["Deprecation"] = "true"
+    response.headers["Link"] = '</portfolio/current>; rel="successor-version"'
     snapshot = fetch_portfolio_snapshot(allow_env_fallback=True)
     return {"snapshot": snapshot.model_dump(mode="json")}
 

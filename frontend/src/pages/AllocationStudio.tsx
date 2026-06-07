@@ -18,6 +18,11 @@ export default function AllocationStudio() {
   const recommendation = recommendationQuery.data;
   const decision = recommendation?.decision;
   const actions = recommendation?.rebalance_actions ?? [];
+  const getSwapPairLabel = (action: (typeof actions)[number]) =>
+    action.swap_pair_label
+    ?? (action.token_in_symbol && action.token_out_symbol
+      ? `${action.token_in_symbol} -> ${action.token_out_symbol}`
+      : action.asset_symbol);
 
   const currentWeights = useMemo(
     () =>
@@ -135,10 +140,15 @@ export default function AllocationStudio() {
           )}
           {actions.map((action) => (
             <div
-              key={`${action.asset_symbol}-${action.action}`}
-              className="grid gap-2 border border-border bg-surface-2 px-3 py-3 md:grid-cols-[1fr_auto_auto]"
+              key={`${action.asset_symbol}-${action.action}-${action.token_in_symbol ?? "na"}-${action.token_out_symbol ?? "na"}`}
+              className="grid gap-2 border border-border bg-surface-2 px-3 py-3 md:grid-cols-[1.4fr_auto_auto]"
             >
-              <span className="font-medium text-foreground">{action.asset_symbol}</span>
+              <div className="min-w-0">
+                <span className="block truncate font-medium text-foreground">{getSwapPairLabel(action)}</span>
+                <span className="block text-xs text-muted-foreground">
+                  {action.action} {action.asset_symbol}
+                </span>
+              </div>
               <span className="font-mono text-sm text-muted-foreground">{action.action}</span>
               <span className="font-mono text-sm text-muted-foreground">{action.amount}</span>
             </div>

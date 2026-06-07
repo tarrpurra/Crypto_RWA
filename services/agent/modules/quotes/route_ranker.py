@@ -10,12 +10,19 @@ STATUS_PRIORITY = {
     "DATA_MISSING": 3,
 }
 
+PROTOCOL_PRIORITY = {
+    "AIYIELD": 0,
+    "AGNI": 1,
+    "MERCHANT_MOE": 2,
+}
+
 
 def rank_quotes(quotes: list[NormalizedQuoteSnapshot]) -> list[NormalizedQuoteSnapshot]:
     ordered = sorted(
         quotes,
         key=lambda quote: (
             STATUS_PRIORITY.get(quote.status_code, 99),
+            PROTOCOL_PRIORITY.get(quote.protocol, 99),
             -(float(quote.amount_out) if quote.amount_out is not None else -1.0),
         ),
     )

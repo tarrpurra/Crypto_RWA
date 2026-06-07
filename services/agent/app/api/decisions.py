@@ -6,7 +6,8 @@ from fastapi import APIRouter, HTTPException
 
 from services.agent.app.api.investment_scope import InvestmentScopeInput, build_scoped_decision_response
 from services.agent.app.api.portfolio import current_portfolio
-from services.agent.app.core.settings import TargetChain, get_settings
+from services.agent.app.core.status_codes import DataStatusCode, ExecutionStatusCode
+from services.agent.app.core.settings import get_settings
 from services.agent.app.schemas.proposals import (
     InvestmentPlanRequest,
     InvestmentPlanResponse,
@@ -18,21 +19,32 @@ from services.agent.app.schemas.proposals import (
 )
 from services.agent.app.schemas.recommendations import RecommendationResponse
 from services.agent.modules.oracle.freshness import utc_now
-from services.agent.modules.market_data.balances import fetch_portfolio_snapshot
+# circular-safe: lazy import inside endpoint function
+# from services.agent.modules.decisions import build_decision_context
 from services.agent.modules.proposals.investment_planner import build_investment_plan, get_cached_plan_for_proposal
 from services.agent.repositories.db.investment_plan_repository import InvestmentPlanRepository
+from services.agent.repositories.db.market_repository import MarketDataRepository
 from services.agent.repositories.db.models import TradeProposalRecord
 from services.agent.repositories.db.session import create_session, init_db
 from services.agent.risk.engine import RiskEngine
-from services.agent.risk.scoring.score_engine import RiskScoreEngine
-from services.agent.strategies.allocation import profiles
+from services.agent.modules.quotes import get_quote_service
 from services.agent.strategies.allocation.rebalance import compute_rebalance
-from services.agent.strategies.allocation.profiles import normalize_profile_name
 from services.agent.strategies.decision_templates.parser import generate_recommendation_reasoning
 
 
 logger = logging.getLogger("services.agent.decisions.api")
 router = APIRouter(tags=["decisions"])
+
+
+def _address_to_symbol_map(settings) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for asset in settings.asset_registry.values():
+        address = asset.get("address")
+        symbol = asset.get("symbol")
+        if not address or not symbol:
+            continue
+        mapping[str(address).lower()] = str(symbol)
+    return mapping
 
 
 def _save_proposal_record(proposal: TradeProposal, calldata: str) -> None:
@@ -75,8 +87,16 @@ async def get_latest_decisions(
     risk_profile: str | None = None,
     allocation_mode: str | None = None,
 ) -> RecommendationResponse:
+    logger.info(
+        "Decision recommendation requested: wallet=%s deposit_asset=%s deposit_amount=%s risk_profile=%s allocation_mode=%s",
+        wallet_address,
+        deposit_asset_symbol,
+        deposit_amount,
+        risk_profile,
+        allocation_mode,
+    )
     if deposit_asset_symbol and deposit_amount and risk_profile:
-        return await build_scoped_decision_response(
+        response = await build_scoped_decision_response(
             InvestmentScopeInput(
                 wallet_address=wallet_address,
                 deposit_asset_symbol=deposit_asset_symbol,
@@ -85,30 +105,59 @@ async def get_latest_decisions(
                 allocation_mode=allocation_mode or "AI Suggested",
             )
         )
-    portfolio = fetch_portfolio_snapshot(wallet_address=wallet_address, allow_env_fallback=False)
-    risk = RiskScoreEngine().compute_risk_snapshot(portfolio)
-    settings = get_settings()
-    profile_name = profiles.ACTIVE_PROFILE_NAME or settings.allocation_profile_name
-    if settings.target_chain == TargetChain.MANTLE_SEPOLIA:
-        profile_name = "Sepolia Test"
-    decision, actions = compute_rebalance(portfolio, risk, normalize_profile_name(profile_name))
-    return await generate_recommendation_reasoning(portfolio, risk, decision, actions)
+        logger.info(
+            "Decision recommendation completed (scoped): status=%s status_code=%s recommended_action=%s",
+            response.status,
+            response.status_code,
+            response.recommended_action,
+        )
+        return response
+    from services.agent.modules.decisions import build_decision_context
+    context = await build_decision_context(wallet_address=wallet_address)
+    decision, actions = compute_rebalance(context.portfolio, context.risk_snapshot, context.profile_name)
+    response = await generate_recommendation_reasoning(context.portfolio, context.risk_snapshot, decision, actions)
+    logger.info(
+        "Decision recommendation completed: status=%s status_code=%s recommended_action=%s",
+        response.status,
+        response.status_code,
+        response.recommended_action,
+    )
+    return response
 
 
 @router.post("/proposals/create", response_model=InvestmentPlanResponse)
 async def create_investment_plan(request: InvestmentPlanRequest) -> InvestmentPlanResponse:
     settings = get_settings()
-    portfolio_response = await current_portfolio(wallet_address=request.wallet_address)
-    risk = RiskEngine().evaluate(
-        portfolio=portfolio_response,
-        runtime_mode=settings.runtime_mode,
-        target_chain=settings.target_chain.value,
+    logger.info(
+        "Investment plan requested: wallet=%s deposit_asset=%s deposit_amount=%s risk_profile=%s allocation_mode=%s manual_target_weights=%s",
+        request.wallet_address,
+        request.deposit_asset_symbol,
+        request.deposit_amount,
+        request.risk_profile,
+        request.allocation_mode,
+        request.manual_target_weights,
+    )
+    from services.agent.modules.decisions import build_decision_context
+
+    context = await build_decision_context(
+        wallet_address=request.wallet_address,
+        deposit_asset_symbol=request.deposit_asset_symbol,
+        deposit_amount=request.deposit_amount,
+        risk_profile=request.risk_profile,
+        allocation_mode=request.allocation_mode,
     )
     plan_response, proposal_pairs = build_investment_plan(
         settings=settings,
         request=request,
-        portfolio=portfolio_response,
-        risk=risk,
+        portfolio=context.portfolio_response,
+        risk=context.risk_assessment,
+    )
+    logger.info(
+        "Investment plan generated: status=%s status_code=%s linked_proposals=%d approval_enabled=%s",
+        plan_response.status,
+        plan_response.status_code,
+        len(plan_response.linked_proposals),
+        plan_response.approval_enabled,
     )
     for proposal, calldata in proposal_pairs:
         _save_proposal_record(proposal, calldata)
@@ -222,6 +271,8 @@ async def list_proposals(status: str | None = None) -> ProposalListResponse:
 async def execute_proposal(proposal_id: str) -> ProposalExecuteResponse:
     settings = get_settings()
     init_db()
+    logger.info("Proposal execution requested: proposal_id=%s", proposal_id)
+
     with create_session() as session:
         from sqlalchemy import select
 
@@ -235,21 +286,94 @@ async def execute_proposal(proposal_id: str) -> ProposalExecuteResponse:
             )
         if not record.calldata:
             raise HTTPException(status_code=500, detail="Proposal calldata is missing from the record.")
-        return ProposalExecuteResponse(
-            status="ok",
-            status_code="PROPOSAL_APPROVED",
-            proposal_id=record.proposal_id,
-            router=record.router,
-            selector=record.selector,
-            calldata=record.calldata,
-            calldata_hash=record.calldata_hash,
-            token_in=record.token_in,
-            token_out=record.token_out,
-            recipient=record.recipient,
-            max_amount_in=record.max_amount_in,
-            min_amount_out=record.min_amount_out,
-            native_value=record.native_value,
-            deadline=record.deadline,
-            nonce=record.nonce,
-            chain_id=settings.effective_chain_id,
+
+    portfolio = await current_portfolio(wallet_address=record.wallet_or_vault)
+    quote_service = get_quote_service()
+    address_to_symbol = _address_to_symbol_map(settings)
+    token_in_symbol = address_to_symbol.get(str(record.token_in).lower())
+    token_out_symbol = address_to_symbol.get(str(record.token_out).lower())
+    if not token_in_symbol or not token_out_symbol:
+        logger.warning(
+            "Proposal execution token symbol resolution failed: proposal_id=%s token_in=%s token_out=%s resolved_in=%s resolved_out=%s",
+            proposal_id,
+            record.token_in,
+            record.token_out,
+            token_in_symbol,
+            token_out_symbol,
         )
+    quote = (
+        quote_service.best_quote_for_pair(token_in_symbol, token_out_symbol)
+        if token_in_symbol and token_out_symbol
+        else None
+    )
+    try:
+        repo = MarketDataRepository()
+        prices = repo.latest_normalized_prices()
+        quotes = repo.latest_normalized_quotes()
+    except Exception as exc:
+        logger.warning("Proposal execution market context lookup failed: %s", exc)
+        prices = None
+        quotes = None
+    quote_validation_status = (
+        DataStatusCode.QUOTE_FRESH.value
+        if quote is not None and quote.amount_out is not None and quote.protocol is not None
+        else DataStatusCode.DATA_MISSING.value
+    )
+    risk = RiskEngine().evaluate(
+        portfolio=portfolio,
+        runtime_mode=settings.runtime_mode,
+        target_chain=settings.target_chain.value,
+        quote_validation_status=quote_validation_status,
+        prices=prices,
+        quotes=quotes,
+    )
+    data_status = (portfolio.status_code or "").upper()
+
+    block_reasons: list[str] = []
+    if risk.hard_veto_status == "active":
+        block_reasons.append(f"risk hard veto is active ({risk.hard_veto_status})")
+    if risk.risk_band in ("RISK_VETO", "RISK_PAUSE_REQUIRED"):
+        block_reasons.append(f"risk band is {risk.risk_band}")
+    if data_status in ("DATA_PARTIAL", "DATA_MISSING"):
+        block_reasons.append(f"portfolio data status is {data_status}")
+    if quote is None or quote.amount_out is None or quote.protocol is None:
+        block_reasons.append("no swap route available for the required pair")
+
+    if block_reasons:
+        logger.warning(
+            "Proposal execution blocked: proposal_id=%s reasons=%s",
+            proposal_id,
+            block_reasons,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Execution blocked: {'; '.join(block_reasons)}.",
+        )
+
+    logger.info(
+        "Proposal execution payload ready: proposal_id=%s router=%s selector=%s token_in=%s token_out=%s chain_id=%s",
+        record.proposal_id,
+        record.router,
+        record.selector,
+        record.token_in,
+        record.token_out,
+        settings.effective_chain_id,
+    )
+    return ProposalExecuteResponse(
+        status="ok",
+        status_code=ExecutionStatusCode.EXECUTION_READY.value,
+        proposal_id=record.proposal_id,
+        router=record.router,
+        selector=record.selector,
+        calldata=record.calldata,
+        calldata_hash=record.calldata_hash,
+        token_in=record.token_in,
+        token_out=record.token_out,
+        recipient=record.recipient,
+        max_amount_in=record.max_amount_in,
+        min_amount_out=record.min_amount_out,
+        native_value=record.native_value,
+        deadline=record.deadline,
+        nonce=record.nonce,
+        chain_id=settings.effective_chain_id,
+    )

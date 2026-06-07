@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from services.agent.app.api.investment_scope import InvestmentScopeInput, build_scoped_allocation_response
-from services.agent.app.api.portfolio import current_portfolio
-from services.agent.app.schemas.allocation import AllocationDecisionResponse, AllocationDecision, RebalanceAction, UpdateProfileRequest
-from services.agent.modules.market_data.balances import internal_snapshot_from_response
-from services.agent.risk.scoring.score_engine import RiskScoreEngine
+from services.agent.app.schemas.allocation import AllocationDecisionResponse, AllocationDecision, UpdateProfileRequest
+# circular-safe: lazy import inside endpoint function
+# from services.agent.modules.decisions import build_decision_context
 from services.agent.strategies.allocation.rebalance import compute_rebalance
 from services.agent.strategies.allocation import profiles
 from services.agent.strategies.allocation.profiles import normalize_profile_name
@@ -42,17 +41,6 @@ def _save_allocation_decision(decision: AllocationDecision) -> None:
         logger.warning("Failed to persist allocation decision: %s", exc)
 
 
-def _active_profile_name() -> str:
-    settings = get_settings()
-    configured_name = profiles.ACTIVE_PROFILE_NAME or settings.allocation_profile_name
-    if settings.target_chain == TargetChain.MANTLE_SEPOLIA:
-        configured_name = "Sepolia Test"
-    try:
-        return normalize_profile_name(configured_name)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
 @router.get("/recommendation", response_model=AllocationDecisionResponse)
 async def get_allocation_recommendation(
     wallet_address: str | None = None,
@@ -61,8 +49,16 @@ async def get_allocation_recommendation(
     risk_profile: str | None = None,
     allocation_mode: str | None = None,
 ) -> AllocationDecisionResponse:
+    logger.info(
+        "Allocation recommendation requested: wallet=%s deposit_asset=%s deposit_amount=%s risk_profile=%s allocation_mode=%s",
+        wallet_address,
+        deposit_asset_symbol,
+        deposit_amount,
+        risk_profile,
+        allocation_mode,
+    )
     if deposit_asset_symbol and deposit_amount and risk_profile:
-        return build_scoped_allocation_response(
+        response = await build_scoped_allocation_response(
             InvestmentScopeInput(
                 wallet_address=wallet_address,
                 deposit_asset_symbol=deposit_asset_symbol,
@@ -71,19 +67,28 @@ async def get_allocation_recommendation(
                 allocation_mode=allocation_mode or "AI Suggested",
             )
         )
-    portfolio_response = await current_portfolio(wallet_address=wallet_address)
-    portfolio = internal_snapshot_from_response(portfolio_response)
-    risk_engine = RiskScoreEngine()
-    risk = risk_engine.compute_risk_snapshot(portfolio)
-    
-    decision, actions = compute_rebalance(portfolio, risk, _active_profile_name())
+        logger.info(
+            "Allocation recommendation completed (scoped): status=%s status_code=%s recommended_action=%s actions=%d",
+            response.status,
+            response.status_code,
+            response.decision.recommended_action,
+            len(response.rebalance_actions),
+        )
+        return response
+    try:
+        from services.agent.modules.decisions import build_decision_context
+        context = await build_decision_context(wallet_address=wallet_address)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    decision, actions = compute_rebalance(context.portfolio, context.risk_snapshot, context.profile_name)
     _save_allocation_decision(decision)
 
     status = "ok"
     if decision.recommended_action == "PAUSE":
         status = "degraded"
 
-    return AllocationDecisionResponse(
+    response = AllocationDecisionResponse(
         status=status,
         status_code=decision.status_code,
         status_label=decision.status_code,
@@ -92,10 +97,20 @@ async def get_allocation_recommendation(
         decision=decision,
         rebalance_actions=actions,
     )
+    logger.info(
+        "Allocation recommendation completed: status=%s status_code=%s recommended_action=%s actions=%d",
+        response.status,
+        response.status_code,
+        response.decision.recommended_action,
+        len(response.rebalance_actions),
+    )
+    return response
 
 
-@router.post("/profile", response_model=dict[str, str])
-async def update_active_profile(request: UpdateProfileRequest) -> dict[str, str]:
+@router.post("/profile", response_model=dict[str, str], deprecated=True)
+async def update_active_profile(request: UpdateProfileRequest, response: Response) -> dict[str, str]:
+    response.headers["Deprecation"] = "true"
+    response.headers["Link"] = '</allocation/recommendation>; rel="successor-version"'
     settings = get_settings()
     try:
         canonical_name = normalize_profile_name(request.profile_name)

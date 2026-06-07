@@ -15,7 +15,7 @@ import { useSwapQuote } from "@/hooks/useSwap";
 import { useSettings } from "@/hooks/useSystem";
 import { AlertTriangle } from "lucide-react";
 
-const assetOptions = ["USDC", "USDY", "mETH", "MNT"] as const;
+const assetOptions = ["USDY", "mETH", "MNT"] as const;
 const riskProfiles = ["Defensive", "Balanced", "Yield-Seeking"] as const;
 
 export function SwapForm() {

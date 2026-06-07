@@ -20,7 +20,7 @@ import { useCurrentRisk } from "@/hooks/useRisk";
 import { useSettings, useSystemHealth, useUpdateSettings } from "@/hooks/useSystem";
 import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 
-const assetOptions = ["USDC", "USDY", "mETH", "MNT"] as const;
+const assetOptions = ["USDY", "mETH", "MNT"] as const;
 const riskProfiles = ["Defensive", "Balanced", "Yield-Seeking"] as const;
 
 const Index = () => {
@@ -53,11 +53,22 @@ const Index = () => {
     allocation?.decision.recommended_action === "REBALANCE"
       ? allocation.rebalance_actions.find((action) => action.action !== "HOLD" && action.amount > 0) ?? null
       : null;
+  const swapPairLabel = swapRecommendation
+    ? swapRecommendation.swap_pair_label
+      ?? (swapRecommendation.token_in_symbol && swapRecommendation.token_out_symbol
+        ? `${swapRecommendation.token_in_symbol} -> ${swapRecommendation.token_out_symbol}`
+        : swapRecommendation.asset_symbol)
+    : null;
   const lastRecommendationToastRef = useRef<string | null>(null);
-  const autoLaunchTradeFlowRef = useRef<string | null>(null);
+  const autoLaunchTradeFlowRef = useRef<string | null>(
+    sessionStorage.getItem("lastAutoLaunchKey"),
+  );
   const amountTouchedRef = useRef(false);
   const selectedPortfolioBalance = useMemo(() => {
-    const position = portfolio?.positions?.find((item) => item.asset_symbol === depositAsset);
+    const candidates = portfolio?.positions ?? [];
+    const position = candidates.find((item) => item.asset_symbol === depositAsset)
+      ?? (depositAsset === "MNT" ? candidates.find((item) => item.asset_symbol === "WMNT") : undefined)
+      ?? (depositAsset === "WMNT" ? candidates.find((item) => item.asset_symbol === "MNT") : undefined);
     return position?.balance?.trim() ?? "";
   }, [depositAsset, portfolio?.positions]);
   const selectedPortfolioBalanceValue = Number.parseFloat(selectedPortfolioBalance || "0");
@@ -74,8 +85,9 @@ const Index = () => {
       : risk?.reasoning_summary ?? "";
 
   const launchTradeFlow = () => {
+    const launchAsset = swapRecommendation ? "WMNT" : depositAsset;
     const params = new URLSearchParams({
-      asset: depositAsset,
+      asset: launchAsset,
       amount: resolvedDepositAmount,
       risk: riskProfile,
     });
@@ -111,37 +123,39 @@ const Index = () => {
       return;
     }
 
-    const recommendationKey = `${swapRecommendation.asset_symbol}:${swapRecommendation.action}:${swapRecommendation.amount}`;
+    const recommendationKey = `${swapRecommendation.asset_symbol}:${swapRecommendation.action}:${swapRecommendation.amount}:${swapPairLabel ?? ""}`;
     if (lastRecommendationToastRef.current === recommendationKey) {
       return;
     }
 
     lastRecommendationToastRef.current = recommendationKey;
     toast.info(
-      `Is now the right time to swap? ${swapRecommendation.asset_symbol} ${swapRecommendation.action} ${swapRecommendation.amount.toFixed(4)} is ready for review.`,
+      `Is now the right time to swap? ${swapPairLabel ?? swapRecommendation.asset_symbol} ${swapRecommendation.action} ${swapRecommendation.amount.toFixed(4)} is ready for review.`,
     );
-  }, [aiDecisionMakerEnabled, hasConnectedSupportedWallet, swapRecommendation]);
+  }, [aiDecisionMakerEnabled, hasConnectedSupportedWallet, swapPairLabel, swapRecommendation]);
 
   useEffect(() => {
     if (!hasConnectedSupportedWallet || !aiDecisionMakerEnabled || !swapRecommendation) {
       autoLaunchTradeFlowRef.current = null;
+      sessionStorage.removeItem("lastAutoLaunchKey");
       return;
     }
     if (!walletBalanceAmount) {
       return;
     }
 
-    const autoLaunchKey = `${swapRecommendation.asset_symbol}:${swapRecommendation.action}:${swapRecommendation.amount}`;
+    const autoLaunchKey = `${swapRecommendation.asset_symbol}:${swapRecommendation.action}:${swapRecommendation.amount}:${swapPairLabel ?? ""}`;
     if (autoLaunchTradeFlowRef.current === autoLaunchKey) {
       return;
     }
 
     autoLaunchTradeFlowRef.current = autoLaunchKey;
+    sessionStorage.setItem("lastAutoLaunchKey", autoLaunchKey);
     toast.info(
-      `Full access AI is opening the trade flow and will execute ${swapRecommendation.asset_symbol} ${swapRecommendation.action === "BUY" ? "buy" : swapRecommendation.action} automatically.`,
+      `Full access AI is opening the trade flow and will execute ${swapPairLabel ?? swapRecommendation.asset_symbol} ${swapRecommendation.action === "BUY" ? "buy" : swapRecommendation.action} automatically.`,
     );
     launchTradeFlow();
-  }, [aiDecisionMakerEnabled, hasConnectedSupportedWallet, launchTradeFlow, swapRecommendation, walletBalanceAmount]);
+  }, [aiDecisionMakerEnabled, hasConnectedSupportedWallet, launchTradeFlow, swapPairLabel, swapRecommendation, walletBalanceAmount]);
 
   useEffect(() => {
     if (hasConnectedSupportedWallet && !walletBalanceAmount) {
@@ -272,7 +286,7 @@ const Index = () => {
                     <div className="rounded border border-border bg-surface-2 px-3 py-2">
                       <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">Swap asset</p>
                       <p className="mt-1 font-mono text-sm text-foreground">
-                        {swapRecommendation.asset_symbol} {swapRecommendation.action === "BUY" ? "buy" : swapRecommendation.action}
+                        {swapPairLabel ?? swapRecommendation.asset_symbol} {swapRecommendation.action === "BUY" ? "buy" : swapRecommendation.action}
                       </p>
                     </div>
                     <div className="rounded border border-border bg-surface-2 px-3 py-2">

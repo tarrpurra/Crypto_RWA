@@ -9,6 +9,9 @@ class RebalanceAction(BaseModel):
     action: str  # "BUY", "SELL", "HOLD"
     amount: float
     route_id: str | None = None
+    token_in_symbol: str | None = None
+    token_out_symbol: str | None = None
+    swap_pair_label: str | None = None
 
 
 class AllocationDecision(BaseModel):

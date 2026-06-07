@@ -8,6 +8,7 @@ from services.agent.app.schemas.risk import RiskSnapshot
 from services.agent.app.schemas.allocation import AllocationDecision, RebalanceAction
 from services.agent.strategies.allocation.profiles import get_allocation_profile
 from services.agent.strategies.allocation.clip_sizing import clip_trade_amount
+from services.agent.strategies.allocation.swap_pairs import build_rebalance_swap_pair, build_swap_pair_label
 from services.agent.modules.oracle.freshness import utc_now
 
 logger = logging.getLogger("services.agent.strategies.rebalance")
@@ -104,9 +105,12 @@ def compute_rebalance(
         # It's usually safer to execute sales first to free up capital, but in our backend recommendation
         # we output individual asset buy/sell actions.
         for asset, drift in significant_drifts:
-            current_val = next((b.value_usd for b in portfolio.balances if b.asset_symbol == asset), 0.0)
-            current_bal = next((b.balance for b in portfolio.balances if b.asset_symbol == asset), 0.0)
-            price = current_val / current_bal if current_bal > 0 else 0.0
+            entry = next((b for b in portfolio.balances if b.asset_symbol == asset), None)
+            current_val = entry.value_usd if entry else 0.0
+            current_bal = entry.balance if entry else 0.0
+            price = entry.price_usd if entry and entry.price_usd > 0 else (
+                current_val / current_bal if current_bal > 0 else 0.0
+            )
             
             if price == 0.0:
                 logger.warning("Skipping %s rebalance action because the position price is unavailable.", asset)
@@ -136,15 +140,25 @@ def compute_rebalance(
                 continue
 
             action_type = "BUY" if delta_val_usd > 0 else "SELL"
+            token_in_symbol, token_out_symbol = build_rebalance_swap_pair(
+                action_type,
+                asset,
+                current_weights,
+                target_weights,
+            )
             rebalance_actions.append(
                 RebalanceAction(
                     asset_symbol=asset,
                     action=action_type,
                     amount=clipped_amount,
                     route_id=f"route_{asset.lower()}_{action_type.lower()}",
+                    token_in_symbol=token_in_symbol,
+                    token_out_symbol=token_out_symbol,
+                    swap_pair_label=build_swap_pair_label(token_in_symbol, token_out_symbol),
                 )
             )
-            rebalance_notes.append(f"{action_type} {clipped_amount:.4f} {asset} (~${clipped_val_usd:.2f})")
+            pair_label = build_swap_pair_label(token_in_symbol, token_out_symbol) or asset
+            rebalance_notes.append(f"{pair_label}: {action_type} {clipped_amount:.4f} {asset} (~${clipped_val_usd:.2f})")
             
         if rebalance_actions:
             reasoning = f"Proposed rebalance actions for {profile_name} profile: " + ", ".join(rebalance_notes)
@@ -160,7 +174,7 @@ def compute_rebalance(
                 reasoning = f"Significant drifts detected, but rebalance actions were filtered out by risk engine rules ({risk.risk_band})."
 
     if rebalance_actions:
-        status_code = "PROPOSAL_DRAFT"
+        status_code = RiskStatusCode.RISK_NORMAL.value
     elif significant_drifts:
         status_code = risk.status_code if risk.status_code != RiskStatusCode.RISK_NORMAL.value else RiskStatusCode.RISK_REBALANCE_ONLY.value
     else:

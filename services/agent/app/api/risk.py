@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 
 from services.agent.app.api.investment_scope import InvestmentScopeInput, build_scoped_risk_assessment
 from services.agent.app.api.portfolio import current_portfolio
@@ -10,6 +10,7 @@ from services.agent.app.core.settings import get_settings
 from services.agent.app.core.status_codes import DataStatusCode
 from services.agent.app.schemas.risk import RiskAssessmentHistoryResponse, RiskAssessmentResponse
 from services.agent.modules.market_data.balances import fetch_portfolio_snapshot
+from services.agent.repositories.db.market_repository import MarketDataRepository
 from services.agent.repositories.db.risk_repository import RiskAssessmentRepository
 from services.agent.risk.scoring.score_engine import RiskScoreEngine
 from services.agent.risk.engine import RiskEngine
@@ -24,6 +25,15 @@ def _save_assessment_best_effort(assessment: RiskAssessmentResponse) -> None:
         RiskAssessmentRepository().save_assessment(assessment)
     except Exception as exc:
         logger.warning("Risk assessment persistence failed: %s", exc)
+
+
+def _latest_market_context_best_effort() -> tuple[list | None, list | None]:
+    try:
+        repo = MarketDataRepository()
+        return repo.latest_normalized_prices(), repo.latest_normalized_quotes()
+    except Exception as exc:
+        logger.warning("Risk market context lookup failed: %s", exc)
+        return None, None
 
 
 @router.get("/current", response_model=RiskAssessmentResponse)
@@ -49,17 +59,28 @@ async def current_risk(
         return assessment
     settings = get_settings()
     portfolio = await current_portfolio(wallet_address=wallet_address, allow_env_fallback=allow_env_fallback)
+    prices, quotes = _latest_market_context_best_effort()
+    quote_validation_status = (
+        DataStatusCode.QUOTE_FRESH.value
+        if quotes is not None and any(quote.amount_out is not None for quote in quotes)
+        else DataStatusCode.DATA_MISSING.value
+    )
     assessment = RiskEngine().evaluate(
         portfolio=portfolio,
         runtime_mode=settings.runtime_mode,
         target_chain=settings.target_chain.value,
+        quote_validation_status=quote_validation_status,
+        prices=prices,
+        quotes=quotes,
     )
     _save_assessment_best_effort(assessment)
     return assessment
 
 
-@router.get("/snapshot", response_model=dict)
-async def legacy_risk_snapshot() -> dict:
+@router.get("/snapshot", response_model=dict, deprecated=True)
+async def legacy_risk_snapshot(response: Response) -> dict:
+    response.headers["Deprecation"] = "true"
+    response.headers["Link"] = '</risk/current>; rel="successor-version"'
     portfolio = fetch_portfolio_snapshot(allow_env_fallback=True)
     risk = RiskScoreEngine().compute_risk_snapshot(portfolio)
     return {"risk": risk.model_dump(mode="json")}

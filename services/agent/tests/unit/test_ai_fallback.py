@@ -102,14 +102,14 @@ class AiFallbackTests(unittest.TestCase):
         prompt = build_reasoning_prompt(self.portfolio, self.risk, self.decision, [], ai_decision_maker=True)
         self.assertIn("recommended_action", prompt)
         self.assertIn("AI Decision Maker", prompt)
-        self.assertIn("override", prompt.lower())
+        self.assertIn("cannot override", prompt.lower())
 
     def test_prompt_builder_reasoning_mode_omits_action_field(self) -> None:
         prompt = build_reasoning_prompt(self.portfolio, self.risk, self.decision, [], ai_decision_maker=False)
         self.assertIn("AI Reasoning Layer", prompt)
         self.assertNotIn("recommended_action", prompt)
 
-    def test_override_with_ai_decision_uses_ai_action(self) -> None:
+    def test_override_with_ai_decision_preserves_deterministic_action(self) -> None:
         ai_output = {
             "recommended_action": "REBALANCE",
             "reasoning_summary": "AI thinks rebalance is warranted",
@@ -117,9 +117,9 @@ class AiFallbackTests(unittest.TestCase):
             "notes": ["note 1"],
         }
         overridden = _override_with_ai_decision(self.decision, ai_output)
-        self.assertEqual(overridden.recommended_action, "REBALANCE")
-        self.assertEqual(overridden.confidence, 0.85)
-        self.assertIn("AI thinks rebalance", overridden.reasoning)
+        self.assertEqual(overridden.recommended_action, self.decision.recommended_action)
+        self.assertEqual(overridden.confidence, self.decision.confidence)
+        self.assertEqual(overridden.reasoning, self.decision.reasoning)
 
     def test_override_with_ai_decision_invalid_action_falls_back(self) -> None:
         ai_output = {

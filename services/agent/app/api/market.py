@@ -134,6 +134,10 @@ def latest_usdy_oracle_status() -> OndoUsdyOracleStatus:
 
 @router.get("/quotes/latest", response_model=LatestQuotesResponse)
 async def latest_quotes() -> LatestQuotesResponse:
+    price_service = get_price_service()
+    price_bundle = await price_service.fetch_latest_prices()
+    PRICE_SNAPSHOT_STORE.write(price_bundle)
+    _save_prices_best_effort(price_bundle)
     service = get_quote_service()
     bundle = service.sample_latest_quotes()
     QUOTE_SNAPSHOT_STORE.write(bundle)
@@ -146,7 +150,11 @@ async def latest_quotes() -> LatestQuotesResponse:
 
 
 @router.get("/quotes/{token_in}/{token_out}", response_model=LatestQuotesResponse)
-def latest_quotes_for_pair(token_in: str, token_out: str) -> LatestQuotesResponse:
+async def latest_quotes_for_pair(token_in: str, token_out: str) -> LatestQuotesResponse:
+    price_service = get_price_service()
+    price_bundle = await price_service.fetch_latest_prices()
+    PRICE_SNAPSHOT_STORE.write(price_bundle)
+    _save_prices_best_effort(price_bundle)
     service = get_quote_service()
     quotes = service.latest_quotes_for_pair(token_in, token_out)
     return _quote_response_from_snapshots(
@@ -157,7 +165,11 @@ def latest_quotes_for_pair(token_in: str, token_out: str) -> LatestQuotesRespons
 
 
 @router.get("/quotes/{token_in}/{token_out}/best", response_model=NormalizedQuoteSnapshot)
-def best_quote_for_pair(token_in: str, token_out: str) -> NormalizedQuoteSnapshot:
+async def best_quote_for_pair(token_in: str, token_out: str) -> NormalizedQuoteSnapshot:
+    price_service = get_price_service()
+    price_bundle = await price_service.fetch_latest_prices()
+    PRICE_SNAPSHOT_STORE.write(price_bundle)
+    _save_prices_best_effort(price_bundle)
     service = get_quote_service()
     best_quote = service.best_quote_for_pair(token_in, token_out)
     if best_quote is not None:

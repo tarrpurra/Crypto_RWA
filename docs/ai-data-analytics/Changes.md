@@ -17,6 +17,427 @@ For each entry, record:
 
 ## Change Log
 
+### 2026-06-07
+
+Type:
+Risk engine unification
+
+Author:
+Codex
+
+Summary:
+
+- moved legacy oracle freshness, USDY depeg, liquidity/slippage, and concentration checks into canonical `RiskEngine.evaluate()`
+- added optional latest price and quote snapshots to canonical risk evaluation and risk metadata
+- changed hard-veto risk scoring so canonical hard guards force a `RISK_VETO` score of `100.0`
+- converted `RiskScoreEngine.compute_risk_snapshot()` into a deprecated adapter that calls `RiskEngine.evaluate()` and converts the result to the old `RiskSnapshot` shape
+- wired shared decision context, `/risk/current`, scoped risk, `/proposals/create`, and proposal execution to pass market context into canonical risk where available
+- marked `/portfolio/snapshot`, `/risk/snapshot`, and `/allocation/profile` as deprecated and added successor-link headers
+- changed proposal execution payload readiness from `PROPOSAL_APPROVED` leakage to `EXECUTION_READY`
+
+Affected scope:
+
+- services/agent/risk/engine.py
+- services/agent/risk/scoring/score_engine.py
+- services/agent/modules/decisions/context.py
+- services/agent/app/api/risk.py
+- services/agent/app/api/investment_scope.py
+- services/agent/app/api/decisions.py
+- services/agent/app/api/portfolio.py
+- services/agent/app/api/allocation.py
+- docs/ai-data-analytics/ai_plan.md
+
+Impact:
+
+- risk: current, allocation, decisions, and proposal creation now use one canonical risk engine instead of split new/legacy scoring paths
+- execution: proposal execute responses now use execution status vocabulary once calldata is ready
+- compatibility: legacy risk and portfolio endpoints remain available for old clients but are visibly deprecated
+- tests: syntax compilation was run for touched backend files; full unit/integration tests were not run in this pass
+
+### 2026-06-07
+
+Type:
+Proposal execution logging
+
+Author:
+Codex
+
+Summary:
+
+- added backend logs at the start of `POST /proposals/{proposal_id}/execute`
+- added warning logs when execution is blocked so the failure reason is visible before the HTTP 400 is raised
+- added a final payload-ready log showing the router, selector, tokens, and chain id when execution passes all backend guards
+
+Affected scope:
+
+- services/agent/app/api/decisions.py
+
+Impact:
+
+- observability: execution failures and successful payload generation are now visible in backend logs, making it easier to distinguish a backend block from a frontend wallet issue
+
+### 2026-06-07
+
+Type:
+Trade execution modal fix
+
+Author:
+Codex
+
+Summary:
+
+- kept the Trade confirmation modal in place, but changed confirm handling so the execution flow owns the modal lifecycle instead of closing first and racing the swap calls
+- added explicit frontend logs before each approved proposal is executed through `/proposals/{id}/execute`
+- suppressed the modal's close handler during programmatic completion so the confirm action does not get mistaken for cancel
+
+Affected scope:
+
+- frontend/src/pages/Trade.tsx
+
+Impact:
+
+- frontend behavior: confirming the modal now actually drives the execution sequence while preserving the last-review checkpoint for the operator
+
+### 2026-06-07
+
+Type:
+Trade auto-create gating fix
+
+Author:
+Codex
+
+Summary:
+
+- removed the `routeHasInvestmentParams` requirement from the Trade page's full-access AI auto-create effect
+- kept the current form scope as the source of truth so AI-managed Trade can create a plan even when the URL does not include `asset`, `amount`, or `risk` query parameters
+
+Affected scope:
+
+- frontend/src/pages/Trade.tsx
+
+Impact:
+
+- frontend behavior: full-access AI on Trade will now create and execute from the active form state instead of silently waiting for route query parameters that are absent in normal navigation
+
+### 2026-06-07
+
+Type:
+Backend and frontend request logging
+
+Author:
+Codex
+
+Summary:
+
+- added request-level backend logs for `/allocation/recommendation` and `/proposals/create`
+- added browser-console logs in the Trade flow for plan creation, auto-create evaluation, wrap execution, proposal execution, and onchain router submission
+- renamed the AI prompt logger to the `services.agent.ai` subsystem so AI prompt logs are grouped with the rest of the AI logs
+
+Affected scope:
+
+- services/agent/app/api/allocation.py
+- services/agent/app/api/decisions.py
+- services/agent/strategies/decision_templates/parser.py
+- frontend/src/pages/Trade.tsx
+- frontend/src/hooks/useSwap.ts
+
+Impact:
+
+- observability: the frontend and backend now log the exact entry points for allocation, proposal creation, and swap submission, making it much easier to confirm whether the AI path is actually being exercised
+
+### 2026-06-07
+
+Type:
+Frontend allocation logging
+
+Author:
+Codex
+
+Summary:
+
+- added browser-console logs when the frontend calls `/allocation/recommendation`
+- added browser-console logs when the Trade flow submits `/proposals/create`, which is the frontend entrypoint that triggers backend allocation during plan creation
+
+Affected scope:
+
+- frontend/src/hooks/useAllocation.ts
+- frontend/src/hooks/useSwap.ts
+
+Impact:
+
+- frontend observability: allocation requests and proposal submissions are now visible in the browser console, making it easier to confirm when allocation is actually being queried from the UI
+
+### 2026-06-07
+
+Type:
+AI prompt logging
+
+Author:
+Codex
+
+Summary:
+
+- added explicit backend logs for the full AI allocation and reasoning prompts immediately before each Ollama call
+- kept the prompt logging on the backend call path so the frontend does not need extra debug noise to confirm the AI request
+
+Affected scope:
+
+- services/agent/strategies/decision_templates/parser.py
+
+Impact:
+
+- observability: backend logs now show the exact system prompt being sent to the AI provider for allocation and reasoning calls
+
+### 2026-06-07
+
+Type:
+Proposal quote scaling / quote visibility
+
+Author:
+Codex
+
+Summary:
+
+- fixed proposal encoding so `min_amount_out` is scaled to the actual swap size instead of reusing the raw sample quote amount
+- fixed the price-deviation guard to compare against the scaled quote output, which removes the false block caused by sample quotes being attached to larger proposals
+- surfaced an approximate quote rate on the Approvals queue and added swap-direction labels in the Trade allocation view so the active pair is visible in the UI
+
+Affected scope:
+
+- services/agent/modules/proposals/investment_planner.py
+- services/agent/tests/unit/test_investment_planner.py
+- frontend/src/pages/ApprovalsPage.tsx
+- frontend/src/pages/Trade.tsx
+
+Impact:
+
+- proposals: approval queue min-out values now reflect the actual planned swap amount rather than the fixed quote sample size
+- allocation/ui: the swap direction and approximate rate are visible when reviewing queued proposals and selected allocations
+
+### 2026-06-07
+
+Type:
+Quote freshness / stale price snapshot fix
+
+Author:
+Codex
+
+Summary:
+
+- changed quote and proposal price lookup to prefer the fresh in-memory Sepolia price bundle instead of only the persisted market repository snapshot
+- made the Sepolia quote endpoints refresh the latest price bundle before sampling quotes so `WMNT -> mETH` and related AIYIELD rates stay aligned with current market prices
+- confirmed WMNT is already present in the Sepolia asset registry; the stale swap-rate issue was coming from persisted price reads, not from the asset filter
+
+Affected scope:
+
+- services/agent/modules/quotes/service.py
+- services/agent/modules/proposals/investment_planner.py
+- services/agent/app/api/market.py
+
+Impact:
+
+- market data: Sepolia quote sampling now tracks the latest price bundle rather than lagging the database snapshot
+- allocation/proposals: swap-rate-derived guards and min-out checks now follow the same fresh price source as the market UI
+
+### 2026-06-07
+
+Type:
+Runtime cleanup / Remove Sepolia USDC from active flow
+
+Author:
+Codex
+
+Summary:
+
+- removed the Sepolia `USDC` asset from the active asset registry so market ingestion no longer reports it as missing
+- removed `USDC` from the frontend swap and trade selectors so the active Sepolia flow only exposes `USDY`, `mETH`, and `WMNT`
+- updated the Sepolia settings test to reflect the reduced active asset set
+
+Affected scope:
+
+- services/agent/app/core/settings.py
+- services/agent/tests/unit/test_settings.py
+- services/agent/.env.example
+- frontend/src/pages/Index.tsx
+- frontend/src/pages/Trade.tsx
+- frontend/src/components/swap/SwapForm.tsx
+- frontend/src/components/swap/TokenSelectDialog.tsx
+
+Impact:
+
+- market data: `DATA_PARTIAL` should clear once the backend reloads with the new asset registry
+- frontend: USDC is no longer presented as an active Sepolia swap choice
+- allocation: Sepolia planning now stays on the active `USDY` / `mETH` basket
+
+### 2026-06-07
+
+Type:
+Feature / Sepolia guard threshold relaxation
+
+Author:
+Codex
+
+Summary:
+
+- loosened the Sepolia investment-plan guard checks so normal test allocations can clear proposal creation without tripping on the old 1% quote band or 70% concentration cap
+- widened the Sepolia quote-deviation threshold to 10% and the Sepolia concentration cap to 100%, while keeping the live defaults tighter
+- increased the Sepolia slippage threshold so the AIYIELD test router can pass the planner without failing on conservative testnet estimates
+
+Affected scope:
+
+- services/agent/modules/proposals/investment_planner.py
+- services/agent/tests/unit/test_investment_planner.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract bytecode changed
+- frontend: allocation and trade flows can now reach proposal creation more reliably on Mantle Sepolia
+- data quality: the guard layer still runs, but its thresholds are now more permissive on Sepolia test flows so synthetic and lightly deviated quotes do not block execution
+
+Assumptions / unresolved verification items:
+
+- the relaxed thresholds are intended for Sepolia/testnet flows; live-chain guarding remains strict
+- approval freshness is still informational and will remain pending until the ERC-20 approval transaction is submitted
+
+### 2026-06-07
+
+Type:
+Feature / allocation swap pair labels
+
+Author:
+Codex
+
+Summary:
+
+- added explicit `token_in_symbol`, `token_out_symbol`, and `swap_pair_label` fields to allocation rebalance actions so UI surfaces can show the actual swap direction instead of only the target asset
+- taught deterministic and AI-backed allocation paths to populate swap pair metadata, including normalization of native `MNT` display into `WMNT` for router-facing flows
+- updated quote ranking to prefer the deployed AIYIELD test router on Sepolia so the planner does not keep choosing a live AGNI quote that fails the 1% deviation guard
+- updated the dashboard, risk, and allocation screens to render swap pairs such as `WMNT -> USDY` directly in the allocation summary and rebalance clip lists
+
+Affected scope:
+
+- services/agent/app/schemas/allocation.py
+- services/agent/strategies/allocation/swap_pairs.py
+- services/agent/strategies/allocation/rebalance.py
+- services/agent/strategies/decision_templates/parser.py
+- services/agent/modules/quotes/route_ranker.py
+- frontend/src/lib/api/types.ts
+- frontend/src/pages/AllocationStudio.tsx
+- frontend/src/pages/RiskCenter.tsx
+- frontend/src/pages/Index.tsx
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract bytecode changed
+- frontend: allocation and dashboard summaries now show the actual swap direction, which makes AI recommendations and rebalance clips easier to interpret
+- data quality: the rebalance metadata now preserves source/target context instead of leaving the UI to infer it from the target asset alone
+
+Assumptions / unresolved verification items:
+
+- swap pair inference is heuristic for allocation previews and uses the best available portfolio/target weights or the connected deposit asset as the source leg
+- the UI change has not been manually verified in-browser after this patch
+
+### 2026-06-06
+
+Type:
+Fix / shared decision context and AI override removal
+
+Author:
+Codex
+
+Summary:
+
+- added a shared decision context module for portfolio, canonical risk, risk-snapshot adaptation, and allocation profile resolution
+- refactored `/allocation/recommendation` non-scoped reads to use canonical `RiskEngine.evaluate()` context instead of independently computing the older `RiskScoreEngine` snapshot
+- refactored `/decisions` non-scoped reads to use the same shared context as allocation
+- changed AI decision-maker parsing so model output can suggest an action in metadata but cannot override the deterministic allocation action
+- updated the AI prompt to describe full-access AI as orchestration bounded by deterministic risk and proposal guards
+- refreshed the stale proposal lifecycle integration test to use the current `InvestmentPlanRequest` shape
+
+Affected scope:
+
+- services/agent/modules/decisions/context.py
+- services/agent/modules/decisions/__init__.py
+- services/agent/app/api/allocation.py
+- services/agent/app/api/decisions.py
+- services/agent/strategies/decision_templates/parser.py
+- services/agent/strategies/decision_templates/prompt_builder.py
+- services/agent/tests/unit/test_ai_fallback.py
+- services/agent/tests/integration/test_portfolio_endpoints.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract bytecode changed
+- frontend: no UI code changed; allocation and decision endpoints now align more closely with `/risk/current`
+- data quality: risk and allocation recommendations now share the same canonical portfolio/risk context for non-scoped reads
+
+Assumptions / unresolved verification items:
+
+- scoped investment allocation still uses its existing helper path and should be moved onto the shared context in the next pass
+- proposal creation still has its own risk call and should be unified with the shared context in the next pass
+- full risk unification still needs the stale-oracle, depeg, liquidity, and slippage checks from `RiskScoreEngine` folded into `RiskEngine`
+
+Commands run:
+
+- `python -m unittest services.agent.tests.unit.test_allocation services.agent.tests.unit.test_ai_fallback services.agent.tests.unit.test_risk_engine -v`
+- `python -m unittest services.agent.tests.integration.test_portfolio_endpoints services.agent.tests.integration.test_risk services.agent.tests.integration.test_health -v`
+
+---
+
+### 2026-06-06 (later)
+
+Type:
+Scoped allocation moved onto shared decision context + AI-driven allocation
+
+Author:
+Codex
+
+Summary:
+
+- extended `build_decision_context()` to accept deposit scope params (`deposit_asset_symbol`, `deposit_amount`, `risk_profile`, `allocation_mode`) and build a scoped portfolio via `_build_scoped_portfolio()` helper
+- added `scope_type` and `scope_input` fields to `DecisionContext` dataclass
+- added `build_allocation_prompt()` in `prompt_builder.py` — prompt for AI to generate allocation amounts
+- added `generate_ai_allocation()`, `_apply_allocation_guardrails()`, `_deterministic_allocation()` in `parser.py` — AI generates allocation actions with deterministic guardrails (veto blocks AI, clip sizing, deterministic fallback on AI failure)
+- refactored `build_scoped_allocation_response()` to be async, using shared context + AI allocation instead of ad-hoc action builder
+- refactored `build_scoped_decision_response()` to use canonical `RiskEngine.evaluate()` via shared context instead of old `RiskScoreEngine.compute_risk_snapshot()`
+- changed `compute_rebalance()` `PROPOSAL_DRAFT` status code to `RiskStatusCode.RISK_NORMAL.value`
+- used lazy imports in `allocation.py`, `decisions.py`, `investment_scope.py` to avoid circular imports through the new context → api chain
+- added price-resolution fallback in scoped portfolio builder via `_resolve_price()` with sepolia-specific stable/mETH fallbacks
+
+Affected scope:
+
+- services/agent/modules/decisions/context.py
+- services/agent/strategies/decision_templates/prompt_builder.py
+- services/agent/strategies/decision_templates/parser.py
+- services/agent/app/api/investment_scope.py
+- services/agent/app/api/allocation.py
+- services/agent/app/api/decisions.py
+- services/agent/strategies/allocation/rebalance.py
+- services/agent/tests/unit/test_investment_scope.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract bytecode changed
+- frontend: scoped allocation and decision endpoints now flow through shared context + canonical risk; AI can generate allocation amounts directly for scoped/preview flows but veto still blocks
+- data quality: all flows (wallet and scoped) now use the same `RiskEngine.evaluate()` for risk; scoped allocation no longer emits `PROPOSAL_DRAFT` status codes
+
+Assumptions / unresolved verification items:
+
+- scoped decision responses now pass through `generate_recommendation_reasoning()` with canonical risk snapshot adapter (risk_assessment_to_snapshot) — verify human-readable output matches old risk snapshot format
+- AI allocation prompt assumes Ollama is available; falls back to deterministic weight-based allocation if unavailable
+- proposal creation (`/proposals/create`) still has its own risk call and should be unified with shared context in a future pass
+- full risk unification still needs the stale-oracle, depeg, liquidity, and slippage checks from `RiskScoreEngine` folded into `RiskEngine`
+
+Commands run:
+
+- `python -m unittest services.agent.tests.unit.test_investment_scope -v` (7 tests, all pass)
+- `python -m unittest services.agent.tests.unit.test_allocation services.agent.tests.unit.test_ai_fallback services.agent.tests.unit.test_risk_engine services.agent.tests.unit.test_investment_scope -v` (27 tests, all pass)
+- `python -m unittest services.agent.tests.integration.test_portfolio_endpoints services.agent.tests.integration.test_risk services.agent.tests.integration.test_health -v` (13 tests, all pass)
+
 ### 2026-06-06
 
 Type:
