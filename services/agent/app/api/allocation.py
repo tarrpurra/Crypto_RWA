@@ -49,8 +49,16 @@ async def get_allocation_recommendation(
     risk_profile: str | None = None,
     allocation_mode: str | None = None,
 ) -> AllocationDecisionResponse:
+    logger.info(
+        "Allocation recommendation requested: wallet=%s deposit_asset=%s deposit_amount=%s risk_profile=%s allocation_mode=%s",
+        wallet_address,
+        deposit_asset_symbol,
+        deposit_amount,
+        risk_profile,
+        allocation_mode,
+    )
     if deposit_asset_symbol and deposit_amount and risk_profile:
-        return await build_scoped_allocation_response(
+        response = await build_scoped_allocation_response(
             InvestmentScopeInput(
                 wallet_address=wallet_address,
                 deposit_asset_symbol=deposit_asset_symbol,
@@ -59,6 +67,14 @@ async def get_allocation_recommendation(
                 allocation_mode=allocation_mode or "AI Suggested",
             )
         )
+        logger.info(
+            "Allocation recommendation completed (scoped): status=%s status_code=%s recommended_action=%s actions=%d",
+            response.status,
+            response.status_code,
+            response.decision.recommended_action,
+            len(response.rebalance_actions),
+        )
+        return response
     try:
         from services.agent.modules.decisions import build_decision_context
         context = await build_decision_context(wallet_address=wallet_address)
@@ -72,7 +88,7 @@ async def get_allocation_recommendation(
     if decision.recommended_action == "PAUSE":
         status = "degraded"
 
-    return AllocationDecisionResponse(
+    response = AllocationDecisionResponse(
         status=status,
         status_code=decision.status_code,
         status_label=decision.status_code,
@@ -81,6 +97,14 @@ async def get_allocation_recommendation(
         decision=decision,
         rebalance_actions=actions,
     )
+    logger.info(
+        "Allocation recommendation completed: status=%s status_code=%s recommended_action=%s actions=%d",
+        response.status,
+        response.status_code,
+        response.decision.recommended_action,
+        len(response.rebalance_actions),
+    )
+    return response
 
 
 @router.post("/profile", response_model=dict[str, str])

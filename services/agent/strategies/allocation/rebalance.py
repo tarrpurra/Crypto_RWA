@@ -8,6 +8,7 @@ from services.agent.app.schemas.risk import RiskSnapshot
 from services.agent.app.schemas.allocation import AllocationDecision, RebalanceAction
 from services.agent.strategies.allocation.profiles import get_allocation_profile
 from services.agent.strategies.allocation.clip_sizing import clip_trade_amount
+from services.agent.strategies.allocation.swap_pairs import build_rebalance_swap_pair, build_swap_pair_label
 from services.agent.modules.oracle.freshness import utc_now
 
 logger = logging.getLogger("services.agent.strategies.rebalance")
@@ -139,15 +140,25 @@ def compute_rebalance(
                 continue
 
             action_type = "BUY" if delta_val_usd > 0 else "SELL"
+            token_in_symbol, token_out_symbol = build_rebalance_swap_pair(
+                action_type,
+                asset,
+                current_weights,
+                target_weights,
+            )
             rebalance_actions.append(
                 RebalanceAction(
                     asset_symbol=asset,
                     action=action_type,
                     amount=clipped_amount,
                     route_id=f"route_{asset.lower()}_{action_type.lower()}",
+                    token_in_symbol=token_in_symbol,
+                    token_out_symbol=token_out_symbol,
+                    swap_pair_label=build_swap_pair_label(token_in_symbol, token_out_symbol),
                 )
             )
-            rebalance_notes.append(f"{action_type} {clipped_amount:.4f} {asset} (~${clipped_val_usd:.2f})")
+            pair_label = build_swap_pair_label(token_in_symbol, token_out_symbol) or asset
+            rebalance_notes.append(f"{pair_label}: {action_type} {clipped_amount:.4f} {asset} (~${clipped_val_usd:.2f})")
             
         if rebalance_actions:
             reasoning = f"Proposed rebalance actions for {profile_name} profile: " + ", ".join(rebalance_notes)

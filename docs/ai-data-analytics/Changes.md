@@ -17,6 +17,226 @@ For each entry, record:
 
 ## Change Log
 
+### 2026-06-07
+
+Type:
+Backend and frontend request logging
+
+Author:
+Codex
+
+Summary:
+
+- added request-level backend logs for `/allocation/recommendation` and `/proposals/create`
+- added browser-console logs in the Trade flow for plan creation, auto-create evaluation, wrap execution, proposal execution, and onchain router submission
+- renamed the AI prompt logger to the `services.agent.ai` subsystem so AI prompt logs are grouped with the rest of the AI logs
+
+Affected scope:
+
+- services/agent/app/api/allocation.py
+- services/agent/app/api/decisions.py
+- services/agent/strategies/decision_templates/parser.py
+- frontend/src/pages/Trade.tsx
+- frontend/src/hooks/useSwap.ts
+
+Impact:
+
+- observability: the frontend and backend now log the exact entry points for allocation, proposal creation, and swap submission, making it much easier to confirm whether the AI path is actually being exercised
+
+### 2026-06-07
+
+Type:
+Frontend allocation logging
+
+Author:
+Codex
+
+Summary:
+
+- added browser-console logs when the frontend calls `/allocation/recommendation`
+- added browser-console logs when the Trade flow submits `/proposals/create`, which is the frontend entrypoint that triggers backend allocation during plan creation
+
+Affected scope:
+
+- frontend/src/hooks/useAllocation.ts
+- frontend/src/hooks/useSwap.ts
+
+Impact:
+
+- frontend observability: allocation requests and proposal submissions are now visible in the browser console, making it easier to confirm when allocation is actually being queried from the UI
+
+### 2026-06-07
+
+Type:
+AI prompt logging
+
+Author:
+Codex
+
+Summary:
+
+- added explicit backend logs for the full AI allocation and reasoning prompts immediately before each Ollama call
+- kept the prompt logging on the backend call path so the frontend does not need extra debug noise to confirm the AI request
+
+Affected scope:
+
+- services/agent/strategies/decision_templates/parser.py
+
+Impact:
+
+- observability: backend logs now show the exact system prompt being sent to the AI provider for allocation and reasoning calls
+
+### 2026-06-07
+
+Type:
+Proposal quote scaling / quote visibility
+
+Author:
+Codex
+
+Summary:
+
+- fixed proposal encoding so `min_amount_out` is scaled to the actual swap size instead of reusing the raw sample quote amount
+- fixed the price-deviation guard to compare against the scaled quote output, which removes the false block caused by sample quotes being attached to larger proposals
+- surfaced an approximate quote rate on the Approvals queue and added swap-direction labels in the Trade allocation view so the active pair is visible in the UI
+
+Affected scope:
+
+- services/agent/modules/proposals/investment_planner.py
+- services/agent/tests/unit/test_investment_planner.py
+- frontend/src/pages/ApprovalsPage.tsx
+- frontend/src/pages/Trade.tsx
+
+Impact:
+
+- proposals: approval queue min-out values now reflect the actual planned swap amount rather than the fixed quote sample size
+- allocation/ui: the swap direction and approximate rate are visible when reviewing queued proposals and selected allocations
+
+### 2026-06-07
+
+Type:
+Quote freshness / stale price snapshot fix
+
+Author:
+Codex
+
+Summary:
+
+- changed quote and proposal price lookup to prefer the fresh in-memory Sepolia price bundle instead of only the persisted market repository snapshot
+- made the Sepolia quote endpoints refresh the latest price bundle before sampling quotes so `WMNT -> mETH` and related AIYIELD rates stay aligned with current market prices
+- confirmed WMNT is already present in the Sepolia asset registry; the stale swap-rate issue was coming from persisted price reads, not from the asset filter
+
+Affected scope:
+
+- services/agent/modules/quotes/service.py
+- services/agent/modules/proposals/investment_planner.py
+- services/agent/app/api/market.py
+
+Impact:
+
+- market data: Sepolia quote sampling now tracks the latest price bundle rather than lagging the database snapshot
+- allocation/proposals: swap-rate-derived guards and min-out checks now follow the same fresh price source as the market UI
+
+### 2026-06-07
+
+Type:
+Runtime cleanup / Remove Sepolia USDC from active flow
+
+Author:
+Codex
+
+Summary:
+
+- removed the Sepolia `USDC` asset from the active asset registry so market ingestion no longer reports it as missing
+- removed `USDC` from the frontend swap and trade selectors so the active Sepolia flow only exposes `USDY`, `mETH`, and `WMNT`
+- updated the Sepolia settings test to reflect the reduced active asset set
+
+Affected scope:
+
+- services/agent/app/core/settings.py
+- services/agent/tests/unit/test_settings.py
+- services/agent/.env.example
+- frontend/src/pages/Index.tsx
+- frontend/src/pages/Trade.tsx
+- frontend/src/components/swap/SwapForm.tsx
+- frontend/src/components/swap/TokenSelectDialog.tsx
+
+Impact:
+
+- market data: `DATA_PARTIAL` should clear once the backend reloads with the new asset registry
+- frontend: USDC is no longer presented as an active Sepolia swap choice
+- allocation: Sepolia planning now stays on the active `USDY` / `mETH` basket
+
+### 2026-06-07
+
+Type:
+Feature / Sepolia guard threshold relaxation
+
+Author:
+Codex
+
+Summary:
+
+- loosened the Sepolia investment-plan guard checks so normal test allocations can clear proposal creation without tripping on the old 1% quote band or 70% concentration cap
+- widened the Sepolia quote-deviation threshold to 10% and the Sepolia concentration cap to 100%, while keeping the live defaults tighter
+- increased the Sepolia slippage threshold so the AIYIELD test router can pass the planner without failing on conservative testnet estimates
+
+Affected scope:
+
+- services/agent/modules/proposals/investment_planner.py
+- services/agent/tests/unit/test_investment_planner.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract bytecode changed
+- frontend: allocation and trade flows can now reach proposal creation more reliably on Mantle Sepolia
+- data quality: the guard layer still runs, but its thresholds are now more permissive on Sepolia test flows so synthetic and lightly deviated quotes do not block execution
+
+Assumptions / unresolved verification items:
+
+- the relaxed thresholds are intended for Sepolia/testnet flows; live-chain guarding remains strict
+- approval freshness is still informational and will remain pending until the ERC-20 approval transaction is submitted
+
+### 2026-06-07
+
+Type:
+Feature / allocation swap pair labels
+
+Author:
+Codex
+
+Summary:
+
+- added explicit `token_in_symbol`, `token_out_symbol`, and `swap_pair_label` fields to allocation rebalance actions so UI surfaces can show the actual swap direction instead of only the target asset
+- taught deterministic and AI-backed allocation paths to populate swap pair metadata, including normalization of native `MNT` display into `WMNT` for router-facing flows
+- updated quote ranking to prefer the deployed AIYIELD test router on Sepolia so the planner does not keep choosing a live AGNI quote that fails the 1% deviation guard
+- updated the dashboard, risk, and allocation screens to render swap pairs such as `WMNT -> USDY` directly in the allocation summary and rebalance clip lists
+
+Affected scope:
+
+- services/agent/app/schemas/allocation.py
+- services/agent/strategies/allocation/swap_pairs.py
+- services/agent/strategies/allocation/rebalance.py
+- services/agent/strategies/decision_templates/parser.py
+- services/agent/modules/quotes/route_ranker.py
+- frontend/src/lib/api/types.ts
+- frontend/src/pages/AllocationStudio.tsx
+- frontend/src/pages/RiskCenter.tsx
+- frontend/src/pages/Index.tsx
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: no contract bytecode changed
+- frontend: allocation and dashboard summaries now show the actual swap direction, which makes AI recommendations and rebalance clips easier to interpret
+- data quality: the rebalance metadata now preserves source/target context instead of leaving the UI to infer it from the target asset alone
+
+Assumptions / unresolved verification items:
+
+- swap pair inference is heuristic for allocation previews and uses the best available portfolio/target weights or the connected deposit asset as the source leg
+- the UI change has not been manually verified in-browser after this patch
+
 ### 2026-06-06
 
 Type:

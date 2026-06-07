@@ -9,6 +9,11 @@ export default function RiskCenter() {
   const current = currentQuery.data;
   const assessments = assessmentsQuery.data;
   const recommendation = recommendationQuery.data;
+  const getSwapPairLabel = (action: NonNullable<typeof recommendation>["rebalance_actions"][number] | undefined) =>
+    action?.swap_pair_label
+    ?? (action?.token_in_symbol && action?.token_out_symbol
+      ? `${action.token_in_symbol} -> ${action.token_out_symbol}`
+      : action?.asset_symbol ?? "-");
 
   return (
     <PageScaffold
@@ -84,9 +89,12 @@ export default function RiskCenter() {
         <p className="terminal-label text-primary">Rebalance Actions</p>
         <div className="mt-3 grid gap-2">
           {(recommendation?.rebalance_actions ?? []).map((action) => (
-            <div key={`${action.asset_symbol}-${action.action}`} className="flex items-center justify-between border border-border bg-surface-2 px-3 py-2">
-              <span className="font-medium text-foreground">{action.asset_symbol}</span>
-              <span className="font-mono text-sm text-muted-foreground">{action.action} {action.amount}</span>
+            <div key={`${action.asset_symbol}-${action.action}-${action.token_in_symbol ?? "na"}-${action.token_out_symbol ?? "na"}`} className="flex items-center justify-between gap-3 border border-border bg-surface-2 px-3 py-2">
+              <div className="min-w-0">
+                <span className="block truncate font-medium text-foreground">{getSwapPairLabel(action)}</span>
+                <span className="block text-xs text-muted-foreground">{action.action} {action.amount}</span>
+              </div>
+              <span className="shrink-0 font-mono text-sm text-muted-foreground">{action.action}</span>
             </div>
           ))}
           {!recommendation?.rebalance_actions?.length && (

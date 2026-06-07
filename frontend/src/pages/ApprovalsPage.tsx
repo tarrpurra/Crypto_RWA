@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ArrowRight, Eye } from "lucide-react";
+import { formatUnits } from "viem";
 
 import { MetricPanel, PageScaffold, toneFromStatus } from "@/components/rwa/PageScaffold";
 import { RiskDetailsModal } from "@/components/swap/RiskDetailsModal";
@@ -11,7 +12,59 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { useCurrentRisk } from "@/hooks/useRisk";
 import { useProposalActivity } from "@/hooks/useProposalActivity";
 import { useApproveProposal, useExecuteProposal, useProposalDetail, useProposals, useRejectProposal } from "@/hooks/useSwap";
-import { useSettings } from "@/hooks/useSystem";
+import { useSettings, useSystemReadiness } from "@/hooks/useSystem";
+
+function formatRawAmount(value: string | null | undefined, decimals = 18) {
+  if (!value) {
+    return "-";
+  }
+  try {
+    return formatUnits(BigInt(value), decimals);
+  } catch {
+    return value;
+  }
+}
+
+const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
+
+function shortAddress(value: string) {
+  return value.length > 10 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value;
+}
+
+function resolveTokenLabel(token: string, tokenLabelsByAddress: Map<string, string>) {
+  if (!ADDRESS_PATTERN.test(token)) {
+    return token;
+  }
+
+  return tokenLabelsByAddress.get(token.toLowerCase()) ?? shortAddress(token);
+}
+
+function formatApproxQuoteRate(
+  maxAmountIn: string,
+  minAmountOut: string,
+  tokenInDecimals: number,
+  tokenOutDecimals: number,
+  tokenInLabel: string,
+  tokenOutLabel: string,
+) {
+  try {
+    const amountIn = Number(formatUnits(BigInt(maxAmountIn), tokenInDecimals));
+    const amountOut = Number(formatUnits(BigInt(minAmountOut), tokenOutDecimals));
+    if (!Number.isFinite(amountIn) || !Number.isFinite(amountOut) || amountIn <= 0 || amountOut <= 0) {
+      return null;
+    }
+
+    const quotedAmountOut = amountOut / 0.99;
+    const rate = quotedAmountOut / amountIn;
+    if (!Number.isFinite(rate) || rate <= 0) {
+      return null;
+    }
+
+    return `~1 ${tokenInLabel} = ${rate.toFixed(4)} ${tokenOutLabel}`;
+  } catch {
+    return null;
+  }
+}
 
 function ProposalActionCard({
   proposal,
@@ -21,6 +74,8 @@ function ProposalActionCard({
   onExecute,
   onInspect,
   aiDecisionMakerEnabled,
+  tokenLabelsByAddress,
+  tokenDecimalsByAddress,
 }: {
   proposal: {
     proposal_id: string;
@@ -41,34 +96,56 @@ function ProposalActionCard({
   onExecute: (id: string) => void;
   onInspect: (proposalId: string) => void;
   aiDecisionMakerEnabled: boolean;
+  tokenLabelsByAddress: Map<string, string>;
+  tokenDecimalsByAddress: Map<string, number>;
 }) {
   const isPending = proposal.status_code === "PROPOSAL_PENDING_APPROVAL";
   const isApproved = proposal.status_code === "PROPOSAL_APPROVED";
+  const tokenInLabel = resolveTokenLabel(proposal.token_in, tokenLabelsByAddress);
+  const tokenOutLabel = resolveTokenLabel(proposal.token_out, tokenLabelsByAddress);
+  const tokenInDecimals = tokenDecimalsByAddress.get(proposal.token_in.toLowerCase()) ?? 18;
+  const tokenOutDecimals = tokenDecimalsByAddress.get(proposal.token_out.toLowerCase()) ?? 18;
+  const quoteRate = formatApproxQuoteRate(
+    proposal.max_amount_in,
+    proposal.min_amount_out,
+    tokenInDecimals,
+    tokenOutDecimals,
+    tokenInLabel,
+    tokenOutLabel,
+  );
 
   return (
     <div className="border border-border bg-surface-2 p-4">
-      <div className="grid gap-4 lg:grid-cols-[1fr_auto]">
-        <div>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-medium text-foreground">
-              {proposal.token_in} -&gt; {proposal.token_out}
+              Swap {tokenInLabel} <ArrowRight className="mx-1 inline h-3.5 w-3.5" /> {tokenOutLabel}
             </p>
             <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               {proposal.status_code}
             </span>
           </div>
-          <div className="mt-3 grid gap-2 text-xs text-muted-foreground md:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-3 grid gap-3 sm:grid-cols-4">
             <div>
-              <span className="terminal-label">Max Amount In: </span>
-              <span className="font-mono">{proposal.max_amount_in}</span>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Max in</p>
+              <p className="mt-1 font-mono text-sm text-foreground">
+                {formatRawAmount(proposal.max_amount_in)} {tokenInLabel}
+              </p>
             </div>
             <div>
-              <span className="terminal-label">Min Amount Out: </span>
-              <span className="font-mono">{proposal.min_amount_out ?? "-"}</span>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Min out</p>
+              <p className="mt-1 font-mono text-sm text-foreground">
+                {formatRawAmount(proposal.min_amount_out)} {tokenOutLabel}
+              </p>
             </div>
             <div>
-              <span className="terminal-label">Created: </span>
-              <span>{new Date(proposal.created_at).toLocaleString()}</span>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Approx quote</p>
+              <p className="mt-1 font-mono text-sm text-foreground">{quoteRate ?? "-"}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Created</p>
+              <p className="mt-1 text-sm text-muted-foreground">{new Date(proposal.created_at).toLocaleString()}</p>
             </div>
           </div>
         </div>
@@ -92,11 +169,6 @@ function ProposalActionCard({
               Execute
             </Button>
           )}
-          {aiDecisionMakerEnabled && (
-            <div className="rounded border border-success/40 bg-success/10 px-2 py-1 text-xs text-success">
-              Full access AI is handling approval and execution automatically.
-            </div>
-          )}
         </div>
       </div>
     </div>
@@ -107,12 +179,48 @@ export default function ApprovalsPage() {
   const proposalsQuery = useProposals();
   const riskQuery = useCurrentRisk();
   const settingsQuery = useSettings();
+  const readinessQuery = useSystemReadiness();
   const approveMutation = useApproveProposal();
   const rejectMutation = useRejectProposal();
   const executeMutation = useExecuteProposal();
   const { appendEntry, getEntriesForProposal } = useProposalActivity();
   const proposals = useMemo(() => proposalsQuery.data?.proposals ?? [], [proposalsQuery.data?.proposals]);
   const aiDecisionMakerEnabled = settingsQuery.data?.ai_decision_maker_enabled ?? false;
+  const tokenLabelsByAddress = useMemo(() => {
+    const labels = new Map<string, string>();
+
+    const readinessTokens = readinessQuery.data?.tokens ?? {};
+    Object.values(readinessTokens).forEach((token) => {
+      if (token.address && token.symbol) {
+        labels.set(token.address.toLowerCase(), token.symbol);
+      }
+    });
+
+    const settings = settingsQuery.data;
+    if (settings?.sepolia_usdy_address) {
+      labels.set(settings.sepolia_usdy_address.toLowerCase(), "USDY");
+    }
+    if (settings?.sepolia_wmnt_address) {
+      labels.set(settings.sepolia_wmnt_address.toLowerCase(), "WMNT");
+    }
+    if (settings?.sepolia_meth_address) {
+      labels.set(settings.sepolia_meth_address.toLowerCase(), "mETH");
+    }
+
+    return labels;
+  }, [readinessQuery.data?.tokens, settingsQuery.data]);
+  const tokenDecimalsByAddress = useMemo(() => {
+    const decimals = new Map<string, number>();
+    const readinessTokens = readinessQuery.data?.tokens ?? {};
+
+    Object.values(readinessTokens).forEach((token) => {
+      if (token.address && typeof token.decimals === "number") {
+        decimals.set(token.address.toLowerCase(), token.decimals);
+      }
+    });
+
+    return decimals;
+  }, [readinessQuery.data?.tokens]);
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
   const [showRiskDialog, setShowRiskDialog] = useState(false);
   const proposalDetailQuery = useProposalDetail(selectedProposalId);
@@ -219,6 +327,11 @@ export default function ApprovalsPage() {
             {aiDecisionMakerEnabled ? "AI-managed queue" : "Human approval required"}
           </Badge>
         </div>
+        {aiDecisionMakerEnabled && (
+          <div className="mt-3 rounded border border-success/40 bg-success/10 px-3 py-2 text-sm text-success">
+            Full access AI is handling approval and execution automatically. Open Review to inspect the payload and guard checks.
+          </div>
+        )}
         <div className="mt-3 space-y-3">
           {proposals.length === 0 && (
             <p className="text-sm text-muted-foreground">
@@ -226,17 +339,19 @@ export default function ApprovalsPage() {
             </p>
           )}
           {proposals.map((proposal) => (
-              <ProposalActionCard
+            <ProposalActionCard
               key={proposal.proposal_id}
-              proposal={proposal}
-              working={working}
-              onApprove={handleApprove}
-              onReject={handleReject}
-              onExecute={handleExecute}
-              onInspect={setSelectedProposalId}
-              aiDecisionMakerEnabled={aiDecisionMakerEnabled}
-            />
-          ))}
+            proposal={proposal}
+            working={working}
+            onApprove={handleApprove}
+            onReject={handleReject}
+            onExecute={handleExecute}
+            onInspect={setSelectedProposalId}
+            aiDecisionMakerEnabled={aiDecisionMakerEnabled}
+            tokenLabelsByAddress={tokenLabelsByAddress}
+            tokenDecimalsByAddress={tokenDecimalsByAddress}
+          />
+        ))}
         </div>
       </section>
 
@@ -257,9 +372,16 @@ export default function ApprovalsPage() {
                 <p className="text-muted-foreground">Proposal ID</p>
                 <p className="font-mono text-foreground">{selectedProposal.proposal_id}</p>
                 <p className="text-muted-foreground">Pair</p>
-                <p className="font-medium text-foreground">
-                  {selectedProposal.token_in} <ArrowRight className="mx-1 inline h-3.5 w-3.5" /> {selectedProposal.token_out}
-                </p>
+                <div>
+                  <p className="font-medium text-foreground">
+                    {resolveTokenLabel(selectedProposal.token_in, tokenLabelsByAddress)}{" "}
+                    <ArrowRight className="mx-1 inline h-3.5 w-3.5" />{" "}
+                    {resolveTokenLabel(selectedProposal.token_out, tokenLabelsByAddress)}
+                  </p>
+                  <p className="mt-1 font-mono text-xs text-muted-foreground break-all">
+                    {selectedProposal.token_in} → {selectedProposal.token_out}
+                  </p>
+                </div>
                 <p className="text-muted-foreground">Router</p>
                 <p className="font-mono text-foreground">{selectedProposal.router ?? "-"}</p>
                 <p className="text-muted-foreground">Selector</p>
@@ -269,7 +391,9 @@ export default function ApprovalsPage() {
                   {selectedProposal.deadline ? new Date(selectedProposal.deadline * 1000).toLocaleString() : "-"}
                 </p>
                 <p className="text-muted-foreground">Native value</p>
-                <p className="font-mono text-foreground">{selectedProposal.native_value ?? "-"}</p>
+                <p className="font-mono text-foreground">
+                  {formatRawAmount(selectedProposal.native_value)} MNT
+                </p>
               </div>
               {proposalDetail && (
                 <>
@@ -299,7 +423,7 @@ export default function ApprovalsPage() {
                           <p className="text-xs text-muted-foreground">{check.message}</p>
                         </div>
                         <span className={check.passed ? "text-success" : check.blocking ? "text-destructive" : "text-warning"}>
-                          {check.passed ? "pass" : check.blocking ? "block" : "pending"}
+                          {check.passed ? "pass" : check.blocking ? "block" : "warn"}
                         </span>
                       </div>
                     ))}

@@ -74,8 +74,16 @@ async def get_latest_decisions(
     risk_profile: str | None = None,
     allocation_mode: str | None = None,
 ) -> RecommendationResponse:
+    logger.info(
+        "Decision recommendation requested: wallet=%s deposit_asset=%s deposit_amount=%s risk_profile=%s allocation_mode=%s",
+        wallet_address,
+        deposit_asset_symbol,
+        deposit_amount,
+        risk_profile,
+        allocation_mode,
+    )
     if deposit_asset_symbol and deposit_amount and risk_profile:
-        return await build_scoped_decision_response(
+        response = await build_scoped_decision_response(
             InvestmentScopeInput(
                 wallet_address=wallet_address,
                 deposit_asset_symbol=deposit_asset_symbol,
@@ -84,15 +92,38 @@ async def get_latest_decisions(
                 allocation_mode=allocation_mode or "AI Suggested",
             )
         )
+        logger.info(
+            "Decision recommendation completed (scoped): status=%s status_code=%s recommended_action=%s",
+            response.status,
+            response.status_code,
+            response.recommended_action,
+        )
+        return response
     from services.agent.modules.decisions import build_decision_context
     context = await build_decision_context(wallet_address=wallet_address)
     decision, actions = compute_rebalance(context.portfolio, context.risk_snapshot, context.profile_name)
-    return await generate_recommendation_reasoning(context.portfolio, context.risk_snapshot, decision, actions)
+    response = await generate_recommendation_reasoning(context.portfolio, context.risk_snapshot, decision, actions)
+    logger.info(
+        "Decision recommendation completed: status=%s status_code=%s recommended_action=%s",
+        response.status,
+        response.status_code,
+        response.recommended_action,
+    )
+    return response
 
 
 @router.post("/proposals/create", response_model=InvestmentPlanResponse)
 async def create_investment_plan(request: InvestmentPlanRequest) -> InvestmentPlanResponse:
     settings = get_settings()
+    logger.info(
+        "Investment plan requested: wallet=%s deposit_asset=%s deposit_amount=%s risk_profile=%s allocation_mode=%s manual_target_weights=%s",
+        request.wallet_address,
+        request.deposit_asset_symbol,
+        request.deposit_amount,
+        request.risk_profile,
+        request.allocation_mode,
+        request.manual_target_weights,
+    )
     portfolio_response = await current_portfolio(wallet_address=request.wallet_address)
     risk = RiskEngine().evaluate(
         portfolio=portfolio_response,
@@ -104,6 +135,13 @@ async def create_investment_plan(request: InvestmentPlanRequest) -> InvestmentPl
         request=request,
         portfolio=portfolio_response,
         risk=risk,
+    )
+    logger.info(
+        "Investment plan generated: status=%s status_code=%s linked_proposals=%d approval_enabled=%s",
+        plan_response.status,
+        plan_response.status_code,
+        len(plan_response.linked_proposals),
+        plan_response.approval_enabled,
     )
     for proposal, calldata in proposal_pairs:
         _save_proposal_record(proposal, calldata)

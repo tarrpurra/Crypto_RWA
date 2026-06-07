@@ -11,12 +11,16 @@ def clip_trade_amount(asset_symbol: str, requested_val_usd: float, total_portfol
     - mETH: max 10% of portfolio or $30k
     - USDY: max 15% of portfolio or $50k
     - USDC / stables: max 20% of portfolio or $75k
+
+    On test networks with small portfolios, a minimum floor ensures
+    trades are not clipped to unusably small values.
     Returns the clipped USD value of the trade.
     """
     if total_portfolio_val_usd <= 0:
         return 0.0
 
-    # Define thresholds
+    MIN_TRADE_USD = 100.0
+
     if asset_symbol == "mETH":
         pct_limit = 0.10
         abs_limit = 30000.0
@@ -28,7 +32,8 @@ def clip_trade_amount(asset_symbol: str, requested_val_usd: float, total_portfol
         abs_limit = 75000.0
 
     limit_from_pct = total_portfolio_val_usd * pct_limit
-    max_allowed = min(limit_from_pct, abs_limit)
+    max_allowed = max(limit_from_pct, MIN_TRADE_USD)
+    max_allowed = min(max_allowed, abs_limit)
 
     if requested_val_usd > max_allowed:
         logger.info(

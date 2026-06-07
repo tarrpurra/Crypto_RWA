@@ -73,7 +73,6 @@ class SettingsTests(unittest.TestCase):
             sepolia_meth_address="0x0000000000000000000000000000000000000001",
             sepolia_usdy_address="0x0000000000000000000000000000000000000002",
             sepolia_wmnt_address="0x0000000000000000000000000000000000000005",
-            sepolia_usdc_address=None,
             sepolia_mock_prices_enabled=False,
             sepolia_mock_token_a_address="0x0000000000000000000000000000000000000003",
             sepolia_mock_token_b_address="0x0000000000000000000000000000000000000004",
@@ -81,7 +80,7 @@ class SettingsTests(unittest.TestCase):
 
         self.assertEqual(
             set(settings.active_portfolio_asset_registry.keys()),
-            {"SEPOLIA_METH", "SEPOLIA_USDY", "SEPOLIA_USDC", "SEPOLIA_WMNT"},
+            {"SEPOLIA_METH", "SEPOLIA_USDY", "SEPOLIA_WMNT"},
         )
 
     def test_active_portfolio_assets_include_wmnt_when_configured(self) -> None:

@@ -33,7 +33,7 @@ import { useSettings } from "@/hooks/useSystem";
 import type { InvestmentPlanResponse } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
-const assetOptions = ["USDC", "USDY", "mETH", "MNT"] as const;
+const assetOptions = ["USDY", "mETH", "MNT"] as const;
 const riskProfiles = ["Defensive", "Balanced", "Yield-Seeking"] as const;
 const allocationModes = ["AI Suggested", "Manual"] as const;
 
@@ -129,13 +129,12 @@ export default function Trade() {
   const routeHasInvestmentParams = searchParams.has("asset") || searchParams.has("amount") || searchParams.has("risk");
   const autoExecutionPlanIdRef = useRef<string | null>(null);
   const autoCreatePlanRef = useRef<string | null>(null);
+  const wrappedPlanIdRef = useRef<string | null>(null);
   const amountTouchedRef = useRef(false);
 
   const initialAssetSymbol = searchParams.get("asset");
   const initialAmount = searchParams.get("amount");
   const initialRiskProfile = searchParams.get("risk");
-  const aiTargetAsset = searchParams.get("aiTargetAsset");
-  const aiTargetAmount = searchParams.get("aiTargetAmount");
   const [assetSymbol, setAssetSymbol] = useState<(typeof assetOptions)[number]>(
     assetOptions.includes(initialAssetSymbol as (typeof assetOptions)[number]) ? (initialAssetSymbol as (typeof assetOptions)[number]) : "MNT",
   );
@@ -226,10 +225,36 @@ export default function Trade() {
     return proposals.find((proposal) => proposal.proposal_id === activeProposalId) ?? null;
   }, [activeProposalId, proposals]);
   const resolvedPlan = proposalDetailQuery.data ?? plan;
+  const executionInputSymbol = (resolvedPlan?.deposit_asset_symbol ?? plan?.deposit_asset_symbol ?? assetSymbol) === "MNT"
+    ? "WMNT"
+    : (resolvedPlan?.deposit_asset_symbol ?? plan?.deposit_asset_symbol ?? assetSymbol);
   const executionRequired = Boolean((resolvedPlan?.linked_proposals ?? plan?.linked_proposals ?? []).length);
   const autoExecutionActive = autoExecutionPlanId === plan?.plan_id;
+  const activePlanForExecution = resolvedPlan ?? plan;
 
   const proposalActivity = getEntriesForProposal(activeProposalId);
+
+  const executeNativeWrapIfNeeded = async () => {
+    const wrapStep = activePlanForExecution?.transaction_steps.find((step) => step.step_type === "wrap");
+    if (!wrapStep || wrappedPlanIdRef.current === activePlanForExecution?.plan_id) {
+      return;
+    }
+    if (!settings?.sepolia_wmnt_address) {
+      throw new Error("WMNT contract address is not configured in backend settings.");
+    }
+    console.info("[frontend][trade] wrapping native MNT before swap", {
+      plan_id: activePlanForExecution?.plan_id ?? null,
+      amount: wrapStep.amount ?? String(activePlanForExecution.deposit_amount),
+      wmnt_address: settings.sepolia_wmnt_address,
+    });
+    await wrapMnt.mutateAsync({
+      wmntAddress: settings.sepolia_wmnt_address as `0x${string}`,
+      amount: wrapStep.amount ?? String(activePlanForExecution.deposit_amount),
+    });
+    if (activePlanForExecution?.plan_id) {
+      wrappedPlanIdRef.current = activePlanForExecution.plan_id;
+    }
+  };
 
   useEffect(() => {
     if (!plan?.linked_proposals.length) {
@@ -321,7 +346,17 @@ export default function Trade() {
   }, [allocationMode, assetSymbol, aiDecisionMakerEnabled, clearScope, isConnected, isSupportedChain, numericAmount, riskProfile, setScope, walletBalanceAmount]);
 
   const handleCreatePlan = async () => {
+    console.info("[frontend][trade] create plan requested", {
+      asset_symbol: assetSymbol,
+      amount: amount,
+      numeric_amount: numericAmount,
+      risk_profile: riskProfile,
+      allocation_mode: allocationMode,
+      wallet_address: walletAddress ?? null,
+      warnings: localWarnings,
+    });
     if (localWarnings.length > 0) {
+      console.warn("[frontend][trade] create plan blocked by local warnings", localWarnings);
       toast.error(localWarnings[0]);
       return;
     }
@@ -331,37 +366,32 @@ export default function Trade() {
     }
 
     const GAS_RESERVE_MNT = 0.5;
-    const deployAmountRaw = aiTargetAsset && aiTargetAmount
-      ? Number(aiTargetAmount)
-      : numericAmount;
+    const deployAmountRaw = numericAmount;
     const planDepositAmount = Math.max(0, deployAmountRaw - GAS_RESERVE_MNT);
-    const planManualWeights = aiTargetAsset ? { [aiTargetAsset]: 1.0 } : (manualWeights ?? undefined);
+    const planManualWeights = manualWeights ?? undefined;
 
-    if (assetSymbol === "MNT") {
-      if (!settings?.sepolia_wmnt_address) {
-        toast.error("WMNT contract address is not configured in backend settings.");
-        return;
-      }
-      try {
-        await wrapMnt.mutateAsync({
-          wmntAddress: settings.sepolia_wmnt_address as `0x${string}`,
-          amount: String(planDepositAmount),
-        });
-      } catch {
-        return;
-      }
-    }
     createPlan.mutate(
       {
         wallet_address: walletAddress,
         deposit_asset_symbol: assetSymbol,
         deposit_amount: planDepositAmount,
         risk_profile: riskProfile,
-        allocation_mode: aiTargetAsset ? "Manual" : allocationMode,
+        allocation_mode: allocationMode,
         manual_target_weights: planManualWeights,
       },
       {
         onSuccess: (response) => {
+          console.info("[frontend][trade] investment plan created", {
+            plan_id: response.plan_id,
+            status_code: response.status_code,
+            approval_enabled: response.approval_enabled,
+            linked_proposals: response.linked_proposals.map((proposal) => ({
+              proposal_id: proposal.proposal_id,
+              token_in_symbol: proposal.token_in_symbol,
+              token_out_symbol: proposal.token_out_symbol,
+              action: proposal.action,
+            })),
+          });
           setPlan(response);
           const firstProposalId = response.linked_proposals[0]?.proposal_id;
           if (firstProposalId) {
@@ -382,6 +412,17 @@ export default function Trade() {
   };
 
   useEffect(() => {
+    console.info("[frontend][trade] auto-create evaluation", {
+      aiDecisionMakerEnabled,
+      routeHasInvestmentParams,
+      hasScope: Boolean(scope),
+      hasPlan: Boolean(plan?.plan_id),
+      createPending: createPlan.isPending,
+      wrapPending: wrapMnt.isPending,
+      autoExecutionActive,
+      walletBalanceAmount,
+      localWarnings,
+    });
     if (!aiDecisionMakerEnabled || !routeHasInvestmentParams || !scope || plan?.plan_id || createPlan.isPending || wrapMnt.isPending || autoExecutionActive) {
       if (!aiDecisionMakerEnabled || !routeHasInvestmentParams || plan?.plan_id) {
         autoCreatePlanRef.current = null;
@@ -401,6 +442,7 @@ export default function Trade() {
     }
 
     autoCreatePlanRef.current = scopeKey;
+    console.info("[frontend][trade] auto-create triggered", { scopeKey, scope });
     toast.info("Full access AI is creating the investment plan and executing it automatically.");
     void handleCreatePlan();
   }, [
@@ -465,7 +507,7 @@ export default function Trade() {
     if (risk?.hard_veto_status === "active") {
       blockers.push("Risk hard veto is active");
     }
-    if ((market?.status_code ?? "") === "DATA_PARTIAL" || (market?.status_code ?? "") === "DATA_MISSING") {
+    if ((market?.status_code ?? "") === "DATA_MISSING") {
       blockers.push(`Market data status is ${market?.status_code}`);
     }
     return blockers;
@@ -475,12 +517,19 @@ export default function Trade() {
     if (!activeProposalId) {
       return;
     }
+    console.info("[frontend][trade] execute proposal requested", {
+      proposal_id: activeProposalId,
+      blockers: hasBlockers,
+      status_code: selectedPlanProposal?.status_code ?? null,
+    });
     if (hasBlockers.length > 0) {
       toast.error(`Cannot execute: ${hasBlockers.join("; ")}.`);
       return;
     }
-    executeProposal.mutate(activeProposalId, {
-      onSuccess: (data) => {
+    void (async () => {
+      try {
+        await executeNativeWrapIfNeeded();
+        const data = await executeProposal.mutateAsync(activeProposalId);
         appendEntry({
           proposalId: activeProposalId,
           type: "submitted",
@@ -490,12 +539,18 @@ export default function Trade() {
           chainId: data.chain_id,
         });
         toast.success("Execution submitted");
-      },
-      onError: () => toast.error("Failed to execute plan"),
-    });
+      } catch {
+        toast.error("Failed to execute plan");
+      }
+    })();
   };
 
   const handleConfirmExecution = async () => {
+    console.info("[frontend][trade] confirm execution requested", {
+      plan_id: plan?.plan_id ?? null,
+      linked_proposals: plan?.linked_proposals.map((proposal) => proposal.proposal_id) ?? [],
+      blockers: hasBlockers,
+    });
     setExecutionConfirmPending(false);
     if (!plan) {
       setAutoExecutionPlanId(null);
@@ -507,6 +562,7 @@ export default function Trade() {
       return;
     }
     try {
+      await executeNativeWrapIfNeeded();
       for (const proposal of plan.linked_proposals) {
         await executeProposal.mutateAsync(proposal.proposal_id);
         appendEntry({
@@ -674,9 +730,9 @@ export default function Trade() {
               </div>
             </div>
 
-              {assetSymbol === "MNT" && (
+            {assetSymbol === "MNT" && (
                 <div className="rounded border border-primary/30 bg-primary/10 p-3 text-sm text-foreground">
-                  Native MNT deposits wrap to WMNT in your connected wallet before the investment plan is created. The AI uses the connected wallet balance instead of asking for more funds.
+                  Native MNT deposits are wrapped to WMNT when the plan executes. The AI uses the connected wallet balance instead of asking for more funds.
                 </div>
               )}
 
@@ -689,7 +745,7 @@ export default function Trade() {
             {!aiDecisionMakerEnabled ? (
               <div className="flex flex-wrap gap-2">
                 <Button onClick={handleCreatePlan} disabled={working || localWarnings.length > 0}>
-                  {wrapMnt.isPending ? "Wrapping MNT..." : createPlan.isPending ? "Creating plan..." : "Create investment plan"}
+                  {createPlan.isPending ? "Creating plan..." : "Create investment plan"}
                 </Button>
                 <Button variant="outline" onClick={() => setShowRiskDialog(true)} disabled={!resolvedPlan?.risk_assessment && !risk}>
                   View risk details
@@ -764,7 +820,12 @@ export default function Trade() {
                   <p className="font-medium text-foreground">Selected allocation</p>
                   {(resolvedPlan?.selected_target_allocations ?? plan.selected_target_allocations).map((allocationItem) => (
                     <div key={`${allocationItem.asset_symbol}-${allocationItem.source}`} className="flex items-center justify-between gap-2 text-sm">
-                      <span className="text-muted-foreground">{allocationItem.asset_symbol}</span>
+                      <div className="min-w-0">
+                        <span className="font-medium text-foreground">{allocationItem.asset_symbol}</span>
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          {executionInputSymbol} <ArrowRight className="mx-0.5 inline h-3 w-3" /> {allocationItem.asset_symbol}
+                        </span>
+                      </div>
                       <span className="font-mono text-foreground">
                         {(allocationItem.percentage * 100).toFixed(2)}% / {allocationItem.amount.toFixed(4)}
                       </span>
@@ -781,7 +842,7 @@ export default function Trade() {
                         <p className="text-xs text-muted-foreground">{check.message}</p>
                       </div>
                       <span className={check.passed ? "text-success" : check.blocking ? "text-destructive" : "text-warning"}>
-                        {check.passed ? "pass" : check.blocking ? "block" : "pending"}
+                        {check.passed ? "pass" : check.blocking ? "block" : "warn"}
                       </span>
                     </div>
                   ))}

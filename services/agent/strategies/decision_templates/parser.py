@@ -11,8 +11,9 @@ from services.agent.app.schemas.allocation import AllocationDecision, RebalanceA
 from services.agent.app.schemas.recommendations import RecommendationResponse
 from services.agent.strategies.decision_templates.prompt_builder import build_allocation_prompt, build_reasoning_prompt
 from services.agent.strategies.decision_templates.fallback_rules import generate_deterministic_explanation
+from services.agent.strategies.allocation.swap_pairs import build_rebalance_swap_pair, build_swap_pair_label
 
-logger = logging.getLogger("services.agent.strategies.ai_parser")
+logger = logging.getLogger("services.agent.ai")
 
 
 def _extract_json_payload(text: str) -> dict:
@@ -28,6 +29,10 @@ def _extract_json_payload(text: str) -> dict:
     if not isinstance(parsed, dict):
         raise ValueError("Ollama response JSON was not an object.")
     return parsed
+
+
+def _log_ai_prompt(prompt_kind: str, prompt: str) -> None:
+    logger.info("%s system prompt (%d chars):\n%s", prompt_kind, len(prompt), prompt)
 
 
 def _override_with_ai_decision(
@@ -98,11 +103,36 @@ def _apply_allocation_guardrails(
         amount = float(alloc.get("amount", 0))
         if amount <= 0:
             continue
+        token_in_symbol, token_out_symbol = build_rebalance_swap_pair(
+            action,
+            asset,
+            preferred_source_symbol=deposit_asset_symbol,
+        )
         if action == "HOLD":
-            actions.append(RebalanceAction(asset_symbol=asset, action="HOLD", amount=amount, route_id=None))
+            actions.append(
+                RebalanceAction(
+                    asset_symbol=asset,
+                    action="HOLD",
+                    amount=amount,
+                    route_id=None,
+                    token_in_symbol=token_in_symbol,
+                    token_out_symbol=token_out_symbol,
+                    swap_pair_label=build_swap_pair_label(token_in_symbol, token_out_symbol),
+                )
+            )
         elif action == "BUY":
             clipped = clip_trade_amount(asset, amount * 1.0, deposit_amount)
-            actions.append(RebalanceAction(asset_symbol=asset, action="BUY", amount=clipped, route_id=f"ai_route_{asset.lower()}"))
+            actions.append(
+                RebalanceAction(
+                    asset_symbol=asset,
+                    action="BUY",
+                    amount=clipped,
+                    route_id=f"ai_route_{asset.lower()}",
+                    token_in_symbol=token_in_symbol,
+                    token_out_symbol=token_out_symbol,
+                    swap_pair_label=build_swap_pair_label(token_in_symbol, token_out_symbol),
+                )
+            )
 
     if not actions:
         recommended_action = "HOLD"
@@ -176,6 +206,7 @@ async def generate_ai_allocation(
                 "stream": False,
                 "format": "json",
             }
+            _log_ai_prompt("Allocation AI", prompt)
             logger.info("Sending allocation prompt to Ollama at %s/api/generate", ollama_url)
             async with httpx.AsyncClient(timeout=120.0) as client:
                 res = await client.post(f"{ollama_url}/api/generate", json=payload)
@@ -246,7 +277,22 @@ def _deterministic_allocation(
     retained_amount = deposit_amount * retained_weight
     actions: list[RebalanceAction] = []
     if retained_amount > 0:
-        actions.append(RebalanceAction(asset_symbol=deposit_asset_symbol, action="HOLD", amount=round(retained_amount, 8), route_id=None))
+        token_in_symbol, token_out_symbol = build_rebalance_swap_pair(
+            "HOLD",
+            deposit_asset_symbol,
+            preferred_source_symbol=deposit_asset_symbol,
+        )
+        actions.append(
+            RebalanceAction(
+                asset_symbol=deposit_asset_symbol,
+                action="HOLD",
+                amount=round(retained_amount, 8),
+                route_id=None,
+                token_in_symbol=token_in_symbol,
+                token_out_symbol=token_out_symbol,
+                swap_pair_label=build_swap_pair_label(token_in_symbol, token_out_symbol),
+            )
+        )
 
     for asset, weight in target_weights.items():
         if asset.upper() == deposit_asset_symbol.upper():
@@ -256,7 +302,22 @@ def _deterministic_allocation(
             continue
         clipped = clip_trade_amount(asset, amount_in, deposit_amount)
         if clipped > 0:
-            actions.append(RebalanceAction(asset_symbol=asset, action="BUY", amount=round(clipped, 8), route_id=f"det_route_{asset.lower()}"))
+            token_in_symbol, token_out_symbol = build_rebalance_swap_pair(
+                "BUY",
+                asset,
+                preferred_source_symbol=deposit_asset_symbol,
+            )
+            actions.append(
+                RebalanceAction(
+                    asset_symbol=asset,
+                    action="BUY",
+                    amount=round(clipped, 8),
+                    route_id=f"det_route_{asset.lower()}",
+                    token_in_symbol=token_in_symbol,
+                    token_out_symbol=token_out_symbol,
+                    swap_pair_label=build_swap_pair_label(token_in_symbol, token_out_symbol),
+                )
+            )
 
     has_buys = any(a.action == "BUY" for a in actions)
     recommended_action = "REBALANCE" if has_buys else "HOLD"
@@ -316,6 +377,7 @@ async def generate_recommendation_reasoning(
                 "stream": False,
                 "format": "json",
             }
+            _log_ai_prompt("Reasoning AI", prompt)
             logger.info("Sending prompt to Ollama at %s/api/generate", ollama_url)
             async with httpx.AsyncClient(timeout=120.0) as client:
                 res = await client.post(f"{ollama_url}/api/generate", json=payload)

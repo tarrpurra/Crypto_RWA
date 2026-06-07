@@ -69,7 +69,6 @@ class Settings(BaseSettings):
     sepolia_meth_price_mode: str = "eth_proxy"
     sepolia_usdy_address: str | None = None
     sepolia_usdy_reference_price_usd: str | None = None
-    sepolia_usdc_address: str | None = None
     sepolia_wmnt_address: str | None = None
     native_mnt_enabled: bool = False
     require_live_prices: bool = False
@@ -109,6 +108,7 @@ class Settings(BaseSettings):
     agni_sepolia_quoter_address: str | None = "0xA82F8dC4704d3512b120de70480219761F24B6Eb"
     agni_sepolia_quoter_v2_address: str | None = "0x9Da17239a4170f50A5A2c11813BD0C601b5c9693"
     agni_sepolia_swap_router_address: str | None = "0xe38cfa32cCd918d94E2e20230dFaD1A4Fd8aEF16"
+    aiyield_sepolia_swap_router_address: str | None = None
 
     merchant_moe_router_address: str | None = "0xeaEE7EE68874218c3558b40063c42B82D3E7232a"
     merchant_moe_lb_router_address: str | None = "0x013e138EF6008ae5FDFDE29700e3f2Bc61d21E3a"
@@ -203,6 +203,12 @@ class Settings(BaseSettings):
         if self.target_chain == TargetChain.MANTLE_MAINNET:
             return self.agni_mainnet_swap_router_address
         return self.agni_sepolia_swap_router_address
+
+    @property
+    def effective_aiyield_swap_router_address(self) -> str | None:
+        if self.target_chain == TargetChain.MANTLE_MAINNET:
+            return None
+        return self.aiyield_sepolia_swap_router_address
 
     @property
     def subsystem_log_levels(self) -> dict[str, str]:
@@ -302,20 +308,6 @@ class Settings(BaseSettings):
                 "ratio_feed_id": None,
                 "ondo_oracle_address": self.ondo_usdy_oracle_address,
                 "decimals": 18,
-            },
-            "SEPOLIA_USDC": {
-                "asset_key": "SEPOLIA_USDC",
-                "symbol": "USDC",
-                "chain_id": self.mantle_sepolia_chain_id,
-                "address": self.sepolia_usdc_address,
-                "price_strategy": "sepolia_stable_fallback",
-                "primary_reference_source": "sepolia_stable_fallback",
-                "dex_quote_required": True,
-                "verified": bool(self.sepolia_usdc_address),
-                "pyth_feed_id": None,
-                "ratio_feed_id": None,
-                "ondo_oracle_address": None,
-                "decimals": 6,
             },
             "SEPOLIA_WMNT": {
                 "asset_key": "SEPOLIA_WMNT",

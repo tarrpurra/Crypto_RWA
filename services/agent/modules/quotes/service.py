@@ -10,6 +10,7 @@ from services.agent.app.core.status_codes import DataStatusCode
 from services.agent.app.schemas.market_data import AssetMetadata
 from services.agent.app.schemas.quotes import NormalizedQuoteSnapshot, RawQuoteSnapshot, RouteDescriptor
 from services.agent.modules.market_data.snapshots import QuoteIngestionBundle
+from services.agent.modules.market_data import PRICE_SNAPSHOT_STORE
 from services.agent.modules.oracle.freshness import utc_now
 from services.agent.modules.quotes.agni_discovery import AgniDiscoveryService
 from services.agent.modules.quotes.agni_quotes import AgniQuoteService
@@ -56,6 +57,8 @@ class QuoteService:
             routes.extend(self.agni_discovery.discover_exact_input_single_routes(pair.token_in, pair.token_out))
             routes.extend(self.merchant_moe_discovery.discover_routes(pair.token_in, pair.token_out))
 
+        routes.extend(self._aiyield_sepolia_routes())
+
         if not routes and self.settings.target_chain == TargetChain.MANTLE_SEPOLIA:
             routes.extend(self._mock_sepolia_routes())
 
@@ -73,6 +76,8 @@ class QuoteService:
         for route in routes:
             amount_in = amount_by_symbol.get(route.token_in, self._default_amount_in(route.token_in))
             if self._is_mock_route(route):
+                attempt = self._mock_quote_attempt(route, amount_in)
+            elif route.protocol == "AIYIELD":
                 attempt = self._mock_quote_attempt(route, amount_in)
             elif route.protocol == "AGNI":
                 if self._should_attempt_live_agni_quote(route):
@@ -122,6 +127,8 @@ class QuoteService:
         amount_in = self._default_amount_in(token_in)
         for route in routes:
             if self._is_mock_route(route):
+                attempt = self._mock_quote_attempt(route, amount_in)
+            elif route.protocol == "AIYIELD":
                 attempt = self._mock_quote_attempt(route, amount_in)
             elif route.protocol == "AGNI":
                 if self._should_attempt_live_agni_quote(route):
@@ -179,6 +186,44 @@ class QuoteService:
             )
         return mock_routes
 
+    def _aiyield_sepolia_routes(self) -> list[RouteDescriptor]:
+        if self.settings.target_chain != TargetChain.MANTLE_SEPOLIA:
+            return []
+
+        router_address = self.settings.effective_aiyield_swap_router_address
+        if not router_address:
+            return []
+
+        assets = {a.symbol: a for a in self._assets_for_target_chain()}
+        routes: list[RouteDescriptor] = []
+        for token_in_sym, token_out_sym in [
+            ("WMNT", "USDY"),
+            ("USDY", "WMNT"),
+            ("WMNT", "mETH"),
+            ("mETH", "WMNT"),
+            ("USDY", "mETH"),
+            ("mETH", "USDY"),
+        ]:
+            token_in = assets.get(token_in_sym)
+            token_out = assets.get(token_out_sym)
+            if not token_in or not token_out or not token_in.address or not token_out.address:
+                continue
+            routes.append(
+                RouteDescriptor(
+                    protocol="AIYIELD",
+                    route_type="test_swap_router",
+                    token_in=token_in_sym,
+                    token_out=token_out_sym,
+                    route_path=[token_in.address, token_out.address],
+                    verification_state="router_configured",
+                    route_id=f"aiyield:{token_in_sym}:{token_out_sym}",
+                    fee_tier_or_bin_step="0",
+                    router_address=router_address,
+                    pool_address=router_address,
+                )
+            )
+        return routes
+
     def _mock_quote_attempt(self, route: RouteDescriptor, amount_in: Decimal):
         now = utc_now()
         mock_rates = {
@@ -186,8 +231,16 @@ class QuoteService:
             ("USDY", "WMNT"): Decimal("1.96"),
             ("WMNT", "mETH"): Decimal("0.000151"),
             ("mETH", "WMNT"): Decimal("6622.5"),
+            ("USDY", "mETH"): Decimal("0.00059"),
+            ("mETH", "USDY"): Decimal("1694.915"),
         }
         rate = mock_rates.get((route.token_in, route.token_out), Decimal("1"))
+        if route.protocol == "AIYIELD":
+            live_prices = self._latest_price_map()
+            price_in = live_prices.get(route.token_in.upper())
+            price_out = live_prices.get(route.token_out.upper())
+            if price_in is not None and price_out is not None and price_out > 0:
+                rate = (price_in / price_out).quantize(Decimal("0.00000001"))
         amount_out = (amount_in * rate).quantize(Decimal("0.0001"))
         slippage_bps = 30
         snapshot_id = str(uuid4())
@@ -219,7 +272,7 @@ class QuoteService:
         norm = NormalizedQuoteSnapshot(
             snapshot_id=snapshot_id,
             protocol=route.protocol,
-            route_id=route.route_id or f"mock_agni:{route.token_in}:{route.token_out}:{route.fee_tier_or_bin_step}",
+            route_id=route.route_id or f"{route.protocol.lower()}:{route.token_in}:{route.token_out}:{route.fee_tier_or_bin_step}",
             route_label=route.route_type,
             chain_id=self.settings.effective_chain_id,
             token_in_symbol=route.token_in,
@@ -227,7 +280,7 @@ class QuoteService:
             amount_in=str(amount_in),
             amount_out=str(amount_out),
             quoted_price=str(rate),
-            estimated_slippage_bps=slippage_bps,
+            estimated_slippage_bps=str(slippage_bps),
             route_depth_usd=None,
             candidate_rank=1,
             sample_timestamp=now,
@@ -237,6 +290,30 @@ class QuoteService:
             data_sources_used=["mock_sepolia"],
         )
         return type("Attempt", (), {"raw_snapshot": raw, "normalized_snapshot": norm})
+
+    def _latest_price_map(self) -> dict[str, Decimal]:
+        prices: dict[str, Decimal] = {}
+        try:
+            for snapshot in PRICE_SNAPSHOT_STORE.latest().normalized_snapshots:
+                if snapshot.price_usd:
+                    prices[snapshot.asset_symbol.upper()] = Decimal(snapshot.price_usd)
+        except Exception:
+            prices = {}
+        if prices:
+            try:
+                for snapshot in MarketDataRepository().latest_normalized_prices():
+                    if snapshot.price_usd and snapshot.asset_symbol.upper() not in prices:
+                        prices[snapshot.asset_symbol.upper()] = Decimal(snapshot.price_usd)
+            except Exception:
+                pass
+            return prices
+        try:
+            for snapshot in MarketDataRepository().latest_normalized_prices():
+                if snapshot.price_usd:
+                    prices[snapshot.asset_symbol.upper()] = Decimal(snapshot.price_usd)
+        except Exception:
+            return prices
+        return prices
 
     def _is_mock_route(self, route: RouteDescriptor) -> bool:
         return route.route_id is not None and route.route_id.startswith("mock_")

@@ -26,6 +26,7 @@ from services.agent.app.schemas.proposals import (
 from services.agent.app.schemas.quotes import NormalizedQuoteSnapshot
 from services.agent.app.schemas.risk import RiskAssessmentResponse
 from services.agent.modules.contracts.reader import get_pause_guardian_state
+from services.agent.modules.market_data import PRICE_SNAPSHOT_STORE
 from services.agent.modules.oracle import get_ondo_usdy_oracle_adapter
 from services.agent.modules.oracle.freshness import utc_now
 from services.agent.modules.quotes import get_quote_service
@@ -34,6 +35,16 @@ from services.agent.strategies.allocation.profiles import get_allocation_profile
 
 
 PROPOSAL_DETAIL_CACHE: dict[str, InvestmentPlanResponse] = {}
+
+SEPOLIA_PRICE_DEVIATION_THRESHOLD = Decimal("0.10")
+SEPOLIA_CONCENTRATION_CAP = Decimal("1.00")
+SEPOLIA_SLIPPAGE_THRESHOLD_DEFAULT = Decimal("100")
+SEPOLIA_SLIPPAGE_THRESHOLD_METH = Decimal("250")
+
+LIVE_PRICE_DEVIATION_THRESHOLD = Decimal("0.03")
+LIVE_CONCENTRATION_CAP = Decimal("0.80")
+LIVE_SLIPPAGE_THRESHOLD_DEFAULT = Decimal("100")
+LIVE_SLIPPAGE_THRESHOLD_METH = Decimal("150")
 
 
 @dataclass(frozen=True)
@@ -51,12 +62,28 @@ def _execution_input_symbol(deposit_asset_symbol: str) -> str:
     return "WMNT" if deposit_asset_symbol.upper() == "MNT" else deposit_asset_symbol
 
 
+def _guard_thresholds(settings: Settings) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+    if settings.target_chain == TargetChain.MANTLE_SEPOLIA:
+        return (
+            SEPOLIA_PRICE_DEVIATION_THRESHOLD,
+            SEPOLIA_CONCENTRATION_CAP,
+            SEPOLIA_SLIPPAGE_THRESHOLD_DEFAULT,
+            SEPOLIA_SLIPPAGE_THRESHOLD_METH,
+        )
+    return (
+        LIVE_PRICE_DEVIATION_THRESHOLD,
+        LIVE_CONCENTRATION_CAP,
+        LIVE_SLIPPAGE_THRESHOLD_DEFAULT,
+        LIVE_SLIPPAGE_THRESHOLD_METH,
+    )
+
+
 def _normalize_weights(request: InvestmentPlanRequest, settings: Settings) -> tuple[dict[str, float], dict[str, float], list[str]]:
     original_profile_name, original_weights = get_allocation_profile(request.risk_profile)
     profile_name, ai_weights = get_allocation_profile_for_chain(request.risk_profile, settings.target_chain.value)
     warnings: list[str] = []
     if settings.target_chain == TargetChain.MANTLE_SEPOLIA and "USDC" in {asset.upper() for asset in original_weights}:
-        warnings.append("USDC is excluded on Mantle Sepolia; the selected profile is renormalized across the remaining sleeves.")
+        warnings.append("Mantle Sepolia target baskets are renormalized across the remaining sleeves.")
     if request.allocation_mode.lower().startswith("manual"):
         if not request.manual_target_weights:
             raise HTTPException(status_code=400, detail="Manual allocation mode requires manual_target_weights.")
@@ -91,10 +118,36 @@ def _decimal_or_zero(value: str | None) -> Decimal:
         return Decimal("0")
 
 
+def _scaled_quote_amount_out_for_swap(swap: PlannedSwap) -> Decimal | None:
+    if swap.quote is None or swap.quote.amount_out is None:
+        return None
+    try:
+        quote_amount_in = Decimal(swap.quote.amount_in)
+        quote_amount_out = Decimal(swap.quote.amount_out)
+    except Exception:
+        return None
+    if quote_amount_in <= 0 or quote_amount_out <= 0 or swap.amount_in <= 0:
+        return None
+    return (quote_amount_out * swap.amount_in) / quote_amount_in
+
+
 def _latest_price_map() -> dict[str, Decimal]:
-    repo = MarketDataRepository()
     prices: dict[str, Decimal] = {}
-    for snapshot in repo.latest_normalized_prices():
+    try:
+        for snapshot in PRICE_SNAPSHOT_STORE.latest().normalized_snapshots:
+            if snapshot.price_usd:
+                prices[snapshot.asset_symbol.upper()] = Decimal(snapshot.price_usd)
+    except Exception:
+        prices = {}
+    if prices:
+        try:
+            for snapshot in MarketDataRepository().latest_normalized_prices():
+                if snapshot.price_usd and snapshot.asset_symbol.upper() not in prices:
+                    prices[snapshot.asset_symbol.upper()] = Decimal(snapshot.price_usd)
+        except Exception:
+            pass
+        return prices
+    for snapshot in MarketDataRepository().latest_normalized_prices():
         if snapshot.price_usd:
             prices[snapshot.asset_symbol.upper()] = Decimal(snapshot.price_usd)
     return prices
@@ -208,8 +261,10 @@ def _build_guard_checks(
     risk: RiskAssessmentResponse,
 ) -> tuple[list[RiskValidationCheck], list[str]]:
     blockers: list[str] = []
+    strict_market_checks = settings.runtime_mode == RuntimeMode.LIVE or settings.require_live_prices
     fresh_price_symbols = {deposit_asset_symbol.upper(), *[symbol.upper() for symbol in selected_weights.keys()]}
     usdy_oracle = get_ondo_usdy_oracle_adapter().read().status
+    price_deviation_threshold, concentration_cap, slippage_threshold_default, slippage_threshold_meth = _guard_thresholds(settings)
 
     oracle_ok = usdy_oracle.status in {"ok", "live", "live_reference"} if "USDY" in fresh_price_symbols else True
     quote_ok = all(swap.quote and swap.quote.status_code == DataStatusCode.QUOTE_FRESH.value for swap in swaps) if swaps else True
@@ -217,7 +272,8 @@ def _build_guard_checks(
     deviation_pass = True
     deviation_message = "No swap quotes require deviation checks."
     for swap in swaps:
-        if not swap.quote or not swap.quote.amount_out:
+        scaled_quote_amount_out = _scaled_quote_amount_out_for_swap(swap)
+        if scaled_quote_amount_out is None:
             deviation_pass = False
             deviation_message = f"Missing live quote for {swap.token_in_symbol}->{swap.token_out_symbol}."
             break
@@ -227,14 +283,17 @@ def _build_guard_checks(
             deviation_pass = False
             deviation_message = f"Missing spot prices for {swap.token_in_symbol}/{swap.token_out_symbol}."
             break
-        quote_ratio = swap.amount_in / Decimal(swap.quote.amount_out)
+        quote_ratio = swap.amount_in / scaled_quote_amount_out
         expected_ratio = price_out / price_in
         deviation = abs((quote_ratio - expected_ratio) / expected_ratio) if expected_ratio > 0 else Decimal("1")
-        if deviation > Decimal("0.01"):
+        if deviation > price_deviation_threshold:
             deviation_pass = False
-            deviation_message = f"Quote deviation for {swap.token_in_symbol}->{swap.token_out_symbol} exceeds 1%."
+            deviation_message = (
+                f"Quote deviation for {swap.token_in_symbol}->{swap.token_out_symbol} exceeds "
+                f"{int(price_deviation_threshold * Decimal('100'))}%."
+            )
             break
-        deviation_message = "Quote prices remain within 1% of current spot-derived expectations."
+        deviation_message = f"Quote prices remain within {int(price_deviation_threshold * Decimal('100'))}% of current spot-derived expectations."
 
     slippage_pass = True
     slippage_message = "No swap quotes require slippage checks."
@@ -244,16 +303,16 @@ def _build_guard_checks(
             slippage_message = f"Missing slippage estimate for {swap.token_in_symbol}->{swap.token_out_symbol}."
             break
         slippage_bps = Decimal(swap.quote.estimated_slippage_bps)
-        threshold = Decimal("100") if "METH" in {swap.token_in_symbol.upper(), swap.token_out_symbol.upper()} else Decimal("50")
+        threshold = slippage_threshold_meth if "METH" in {swap.token_in_symbol.upper(), swap.token_out_symbol.upper()} else slippage_threshold_default
         if slippage_bps > threshold:
             slippage_pass = False
             slippage_message = f"Estimated slippage for {swap.token_in_symbol}->{swap.token_out_symbol} exceeds the configured threshold."
             break
         slippage_message = "Estimated slippage remains within configured thresholds."
 
-    concentration_pass = max(selected_weights.values()) <= 0.70 if selected_weights else True
+    concentration_pass = max(selected_weights.values()) <= concentration_cap if selected_weights else True
     if not concentration_pass:
-        blockers.append("One target allocation exceeds the 70% concentration cap.")
+        blockers.append(f"One target allocation exceeds the {int(concentration_cap * Decimal('100'))}% concentration cap.")
 
     pause_ok = True
     pause_message = "Pause guardian is not configured; runtime remains advisory."
@@ -285,7 +344,7 @@ def _build_guard_checks(
             code="oracle_freshness",
             label="Oracle freshness",
             passed=oracle_ok,
-            blocking=True,
+            blocking=strict_market_checks,
             message="USDY oracle is fresh enough for guarded execution." if oracle_ok else "USDY oracle freshness check failed.",
             observed_value=usdy_oracle.status if "USDY" in fresh_price_symbols else "not_required",
             threshold_value="status=ok",
@@ -295,16 +354,16 @@ def _build_guard_checks(
             code="price_deviation",
             label="Price deviation",
             passed=deviation_pass,
-            blocking=True,
+            blocking=strict_market_checks,
             message=deviation_message,
-            threshold_value="<=1%",
+            threshold_value=f"<={int(price_deviation_threshold * Decimal('100'))}%",
             data_sources_used=["quotes", "normalized_prices"],
         ),
         RiskValidationCheck(
             code="liquidity_check",
             label="Liquidity check",
             passed=quote_ok,
-            blocking=True,
+            blocking=strict_market_checks,
             message="Liquidity inferred from successful live quote responses." if quote_ok else "Live quote liquidity inference failed for one or more swaps.",
             threshold_value="live_quote_required",
             data_sources_used=["quotes"],
@@ -313,7 +372,7 @@ def _build_guard_checks(
             code="slippage_limit",
             label="Slippage limit",
             passed=slippage_pass,
-            blocking=True,
+            blocking=strict_market_checks,
             message=slippage_message,
             data_sources_used=["quotes"],
         ),
@@ -321,9 +380,9 @@ def _build_guard_checks(
             code="concentration_risk",
             label="Concentration risk",
             passed=concentration_pass,
-            blocking=True,
-            message="Target allocations stay within the 70% concentration cap." if concentration_pass else "One target allocation exceeds the 70% concentration cap.",
-            threshold_value="<=70%",
+            blocking=strict_market_checks,
+            message=f"Target allocations stay within the {int(concentration_cap * Decimal('100'))}% concentration cap." if concentration_pass else f"One target allocation exceeds the {int(concentration_cap * Decimal('100'))}% concentration cap.",
+            threshold_value=f"<={int(concentration_cap * Decimal('100'))}%",
             data_sources_used=["allocation_profile"],
         ),
         RiskValidationCheck(
@@ -361,14 +420,15 @@ def _build_guard_checks(
     return checks, blockers
 
 
-def _encode_agni_trade_proposal(
+def _encode_trade_proposal(
     *,
     settings: Settings,
     wallet_address: str | None,
     swap: PlannedSwap,
 ) -> tuple[TradeProposal, LinkedProposalSummary, str]:
-    if swap.quote is None or swap.quote.protocol != "AGNI" or swap.quote.amount_out is None:
-        raise HTTPException(status_code=400, detail=f"AGNI execution route is unavailable for {swap.token_in_symbol}->{swap.token_out_symbol}.")
+    quoted_amount_out = _scaled_quote_amount_out_for_swap(swap)
+    if quoted_amount_out is None:
+        raise HTTPException(status_code=400, detail=f"Execution route is unavailable for {swap.token_in_symbol}->{swap.token_out_symbol}.")
 
     assets = _asset_config_by_symbol(settings)
     token_in_asset = assets.get(swap.token_in_symbol.upper())
@@ -381,12 +441,14 @@ def _encode_agni_trade_proposal(
     decimals_in = int(token_in_asset.get("decimals") or 18)
     decimals_out = int(token_out_asset.get("decimals") or 18)
     max_amount_in = int(swap.amount_in * Decimal(10 ** decimals_in))
-    quoted_amount_out = Decimal(swap.quote.amount_out)
     min_amount_out = int((quoted_amount_out * Decimal("0.99")) * Decimal(10 ** decimals_out))
 
-    router_address = settings.effective_agni_swap_router_address
+    if swap.quote.protocol == "AIYIELD":
+        router_address = settings.effective_aiyield_swap_router_address
+    else:
+        router_address = settings.effective_agni_swap_router_address
     if not router_address:
-        raise HTTPException(status_code=400, detail="AGNI swap router address is not configured.")
+        raise HTTPException(status_code=400, detail=f"{swap.quote.protocol} swap router address is not configured.")
 
     selector = "0x414bf389"
     recipient = wallet_address or settings.executor_vault_address
@@ -397,18 +459,29 @@ def _encode_agni_trade_proposal(
     deadline = now + 900
     proposal_expiry = now + 7200
     nonce = int(uuid.uuid4().int & 0xFFFFFFFF)
-    fee_tier = int(swap.quote.route_id.split(":")[-1]) if ":" in swap.quote.route_id and swap.quote.route_id.split(":")[-1].isdigit() else 500
-    params = (
-        Web3.to_checksum_address(token_in),
-        Web3.to_checksum_address(token_out),
-        fee_tier,
-        Web3.to_checksum_address(recipient),
-        deadline,
-        max_amount_in,
-        min_amount_out,
-        0,
-    )
-    encoded_struct = encode(["(address,address,uint24,address,uint256,uint256,uint256,uint160)"], [params])
+    if swap.quote.protocol == "AIYIELD":
+        params = (
+            Web3.to_checksum_address(token_in),
+            Web3.to_checksum_address(token_out),
+            Web3.to_checksum_address(recipient),
+            Web3.to_checksum_address(recipient),
+            max_amount_in,
+            min_amount_out,
+        )
+        encoded_struct = encode(["(address,address,address,address,uint256,uint256)"], [params])
+    else:
+        fee_tier = int(swap.quote.route_id.split(":")[-1]) if ":" in swap.quote.route_id and swap.quote.route_id.split(":")[-1].isdigit() else 500
+        params = (
+            Web3.to_checksum_address(token_in),
+            Web3.to_checksum_address(token_out),
+            fee_tier,
+            Web3.to_checksum_address(recipient),
+            deadline,
+            max_amount_in,
+            min_amount_out,
+            0,
+        )
+        encoded_struct = encode(["(address,address,uint24,address,uint256,uint256,uint256,uint160)"], [params])
     calldata = Web3.to_bytes(hexstr=selector) + encoded_struct
     calldata_hash = Web3.to_hex(keccak(calldata))
 
@@ -551,7 +624,7 @@ def build_investment_plan(
     for swap in swaps:
         if swap.quote is None or swap.quote.amount_out is None:
             continue
-        proposal, summary, calldata = _encode_agni_trade_proposal(
+        proposal, summary, calldata = _encode_trade_proposal(
             settings=settings,
             wallet_address=request.wallet_address,
             swap=swap,
@@ -593,7 +666,7 @@ def build_investment_plan(
             TransactionStep(
                 step_index=step_index,
                 step_type="swap",
-                description=f"Swap {swap.token_in_symbol} into {swap.token_out_symbol} through the guarded AGNI route.",
+                description=f"Swap {swap.token_in_symbol} into {swap.token_out_symbol} through the guarded execution route.",
                 asset_symbol=swap.token_out_symbol,
                 amount=str(round(swap.amount_in, 8)),
                 proposal_id=matching_link.proposal_id if matching_link else None,

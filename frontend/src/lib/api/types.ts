@@ -114,6 +114,9 @@ export interface RebalanceAction {
   action: string;
   amount: number;
   route_id: string | null;
+  token_in_symbol?: string | null;
+  token_out_symbol?: string | null;
+  swap_pair_label?: string | null;
 }
 
 export interface AllocationDecision {
