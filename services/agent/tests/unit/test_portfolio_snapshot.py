@@ -449,6 +449,50 @@ class PortfolioSnapshotEngineTests(unittest.TestCase):
 
         self.assertEqual(snapshot.metadata["route_depth_status"], "no_routes")
 
+    @patch("services.agent.app.api.portfolio.asyncio.to_thread", new_callable=AsyncMock)
+    @patch("services.agent.app.api.portfolio.get_price_service")
+    @patch("services.agent.app.api.portfolio.Erc20BalanceReader")
+    @patch("services.agent.app.api.portfolio.PortfolioSnapshotRepository")
+    @patch("services.agent.app.api.portfolio.get_settings")
+    def test_current_portfolio_launches_live_reads_in_parallel(
+        self,
+        get_settings,
+        portfolio_repository_cls,
+        balance_reader_cls,
+        get_price_service,
+        to_thread,
+    ) -> None:
+        settings = Settings(
+            target_chain=TargetChain.MANTLE_SEPOLIA,
+            sepolia_meth_address="0x0000000000000000000000000000000000000001",
+            sepolia_usdy_address="0x0000000000000000000000000000000000000002",
+            sepolia_wmnt_address="0x0000000000000000000000000000000000000003",
+        )
+        get_settings.return_value = settings
+        portfolio_repository_cls.return_value.latest_snapshot.return_value = None
+        balance_reader_cls.return_value.read_configured_balances.return_value = [
+            BalanceObservation(
+                asset_key="SEPOLIA_USDY",
+                asset_symbol="USDY",
+                asset_address="0x2",
+                chain_id=5003,
+                balance="100",
+                decimals=18,
+                observed_timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                balance_source="erc20_balanceOf",
+                status="ok",
+                status_code="DATA_FRESH",
+                status_reason="fresh",
+            )
+        ]
+        get_price_service.return_value.fetch_latest_prices = AsyncMock(return_value=MagicMock(normalized_snapshots=[]))
+        to_thread.side_effect = [None, balance_reader_cls.return_value.read_configured_balances.return_value]
+
+        snapshot = asyncio.run(current_portfolio(wallet_address="0xportfolio"))
+
+        self.assertEqual(snapshot.status_code, "DATA_PARTIAL")
+        self.assertEqual(to_thread.await_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

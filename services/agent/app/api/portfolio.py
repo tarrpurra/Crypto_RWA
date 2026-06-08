@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from decimal import Decimal, InvalidOperation
 
@@ -144,38 +145,64 @@ async def current_portfolio(wallet_address: str | None = None, allow_env_fallbac
         _save_snapshot_best_effort(snapshot)
         return snapshot
 
-    persisted_snapshot = None
-    try:
-        persisted_snapshot = PortfolioSnapshotRepository().latest_snapshot(portfolio_address=portfolio_address)
-    except Exception as exc:
-        logger.warning("Portfolio snapshot lookup failed before live refresh: %s", exc)
-
-    try:
-        balances = Erc20BalanceReader(settings.effective_http_rpc_url).read_configured_balances(
+    persisted_snapshot_task = asyncio.to_thread(
+        lambda: PortfolioSnapshotRepository().latest_snapshot(portfolio_address=portfolio_address),
+    )
+    balances_task = asyncio.to_thread(
+        lambda: Erc20BalanceReader(settings.effective_http_rpc_url).read_configured_balances(
             portfolio_address=portfolio_address,
             asset_registry=settings.active_portfolio_asset_registry,
             chain_id=settings.effective_chain_id,
+        ),
+    )
+    price_task = get_price_service().fetch_latest_prices()
+
+    persisted_snapshot = None
+    balances = []
+    price_bundle = None
+    try:
+        persisted_snapshot, balances, price_bundle = await asyncio.gather(
+            persisted_snapshot_task,
+            balances_task,
+            price_task,
         )
     except Exception as exc:
-        snapshot = PortfolioSnapshotEngine().build_snapshot(
-            balances=[],
-            prices=[],
-            portfolio_address=portfolio_address,
-            chain_id=settings.effective_chain_id,
-            base_currency=settings.portfolio_base_currency,
-            target_weights=settings.parsed_portfolio_target_weights,
-            missing_reason=f"Portfolio balance source could not be initialized: {exc}",
-        )
-        _save_snapshot_best_effort(snapshot)
-        return snapshot
+        logger.warning("Portfolio live refresh failed: %s", exc)
+
+    if persisted_snapshot is None:
+        try:
+            persisted_snapshot = await asyncio.to_thread(
+                lambda: PortfolioSnapshotRepository().latest_snapshot(portfolio_address=portfolio_address),
+            )
+        except Exception as exc:
+            logger.warning("Portfolio snapshot lookup failed before live refresh: %s", exc)
+
+    if not balances:
+        try:
+            balances = await asyncio.to_thread(
+                lambda: Erc20BalanceReader(settings.effective_http_rpc_url).read_configured_balances(
+                    portfolio_address=portfolio_address,
+                    asset_registry=settings.active_portfolio_asset_registry,
+                    chain_id=settings.effective_chain_id,
+                )
+            )
+        except Exception as exc:
+            snapshot = PortfolioSnapshotEngine().build_snapshot(
+                balances=[],
+                prices=[],
+                portfolio_address=portfolio_address,
+                chain_id=settings.effective_chain_id,
+                base_currency=settings.portfolio_base_currency,
+                target_weights=settings.parsed_portfolio_target_weights,
+                missing_reason=f"Portfolio balance source could not be initialized: {exc}",
+            )
+            _save_snapshot_best_effort(snapshot)
+            return snapshot
 
     prices = []
-    if balances:
-        price_bundle = None
+    if price_bundle is None:
         try:
             price_bundle = await get_price_service().fetch_latest_prices()
-            prices = price_bundle.normalized_snapshots
-            _save_prices_best_effort(price_bundle)
         except Exception as exc:
             logger.warning("Live price refresh failed for portfolio valuation: %s", exc)
             persisted_prices = MarketDataRepository().latest_normalized_prices()
@@ -184,6 +211,9 @@ async def current_portfolio(wallet_address: str | None = None, allow_env_fallbac
                 logger.info("Using persisted normalized prices for portfolio valuation after live refresh failure.")
             else:
                 logger.warning("No persisted normalized prices were available, continuing with an empty price set.")
+    if price_bundle is not None:
+        prices = price_bundle.normalized_snapshots
+        _save_prices_best_effort(price_bundle)
 
     snapshot = PortfolioSnapshotEngine().build_snapshot(
         balances=balances,

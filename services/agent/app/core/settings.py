@@ -157,7 +157,7 @@ class Settings(BaseSettings):
 
     simulation_fallback_enabled: bool = True
     ai_reasoning_enabled: bool = True
-    ai_decision_maker_enabled: bool = True
+    ai_decision_maker_enabled: bool = False
     ai_reasoning_provider: str = "ollama"
     ai_reasoning_model: str = "qwen2.5:3b"
     ollama_url: str = "http://host.docker.internal:11434"

@@ -4,13 +4,13 @@ import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
-import YieldMindOrb from "@/components/intro/YieldMindOrb";
+
 import { cn } from "@/lib/utils";
 
 const navLinks = [
-  { label: "Product", href: "#features" },
-  { label: "Dashboard", href: "/dashboard" },
-  { label: "Docs", href: "#" },
+  { label: "How It Works", href: "#how-it-works" },
+  { label: "Glass Box", href: "#glass-box" },
+  { label: "Human vs AI", href: "#human-vs-ai" },
 ];
 
 const easeOut = [0.23, 1, 0.32, 1] as const;
@@ -73,7 +73,7 @@ export function LandingNav({ isVisible, isSettled, isLaunching }: LandingNavProp
                 className="h-10 w-10 overflow-hidden rounded-full"
               >
                 {brandReady ? (
-                  <YieldMindOrb className="h-full w-full" settled />
+                  <img src="/master_logo.png" alt="" aria-hidden="true" draggable={false} className="h-full w-full object-contain" />
                 ) : null}
               </motion.div>
               <div className="overflow-hidden">
@@ -141,11 +141,19 @@ export function LandingNav({ isVisible, isSettled, isLaunching }: LandingNavProp
               }}
               className="hidden items-center gap-4 md:flex"
             >
+              <a
+                href="https://explorer.sepolia.mantle.xyz"
+                target="_blank"
+                rel="noreferrer"
+                className="border border-lp-border bg-transparent px-5 py-2 text-sm font-medium text-lp-fg-secondary transition-all duration-200 hover:border-lp-gold/40 hover:text-lp-fg"
+              >
+                Mantlescan &uarr;
+              </a>
               <Link
                 to="/dashboard"
                 className="border-2 border-lp-gold bg-lp-gold px-6 py-2.5 text-sm font-semibold text-lp-bg transition-opacity duration-200 hover:opacity-90 active:scale-[0.98]"
               >
-                Get started
+                Launch App &rarr;
               </Link>
             </motion.div>
           </div>
@@ -170,7 +178,7 @@ export function LandingNav({ isVisible, isSettled, isLaunching }: LandingNavProp
               onClick={() => setMobileOpen(false)}
               className="mt-2 inline-block border-2 border-lp-gold bg-lp-gold px-6 py-2.5 text-sm font-semibold text-lp-bg"
             >
-              Get started
+              Launch App &rarr;
             </Link>
           </div>
         </div>

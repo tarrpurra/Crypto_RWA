@@ -73,6 +73,8 @@ class ProposalListItem(BaseModel):
     nonce: int
     status_code: str
     risk_snapshot_id: str | None = None
+    approval_enabled: bool | None = None
+    approval_blockers: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 

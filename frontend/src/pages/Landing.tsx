@@ -5,9 +5,12 @@ import { motion, useReducedMotion } from "framer-motion";
 import YieldMindIntro from "@/components/intro/YieldMindIntro";
 import { LandingNav } from "@/components/landing/LandingNav";
 import { HeroSection } from "@/components/landing/HeroSection";
-import { MetricsBar } from "@/components/landing/MetricsBar";
-import { FeatureGrid } from "@/components/landing/FeatureGrid";
-import { PerformanceChart } from "@/components/landing/PerformanceChart";
+import { Ticker } from "@/components/landing/Ticker";
+import { ProblemSection } from "@/components/landing/ProblemSection";
+import { HowItWorksSection } from "@/components/landing/HowItWorksSection";
+import { BuiltOnSection } from "@/components/landing/BuiltOnSection";
+import { GlassBoxSection } from "@/components/landing/GlassBoxSection";
+import { HumanVsAISection } from "@/components/landing/HumanVsAISection";
 import { FinalCta } from "@/components/landing/FinalCta";
 import { Footer } from "@/components/landing/Footer";
 import { DitheringShader } from "@/components/ui/dithering-shader";
@@ -20,9 +23,12 @@ const easeOut = [0.23, 1, 0.32, 1] as const;
 const activationOrigin = "50% 50%";
 const revealItems = [
   { key: "hero", node: <HeroSection /> },
-  { key: "metrics", node: <MetricsBar /> },
-  { key: "features", node: <FeatureGrid /> },
-  { key: "chart", node: <PerformanceChart /> },
+  { key: "ticker", node: <Ticker /> },
+  { key: "problem", node: <ProblemSection /> },
+  { key: "how-it-works", node: <HowItWorksSection /> },
+  { key: "built-on", node: <BuiltOnSection /> },
+  { key: "glass-box", node: <GlassBoxSection /> },
+  { key: "human-vs-ai", node: <HumanVsAISection /> },
   { key: "cta", node: <FinalCta /> },
   { key: "footer", node: <Footer /> },
 ] as const;

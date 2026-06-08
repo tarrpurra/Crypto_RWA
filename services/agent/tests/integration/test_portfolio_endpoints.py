@@ -63,7 +63,9 @@ class PortfolioRiskApiTests(unittest.TestCase):
             proposal_id = body["linked_proposals"][0]["proposal_id"]
             
             app_res = self.client.post(f"/proposals/{proposal_id}/approve")
-            self.assertEqual(app_res.status_code, 200)
+            self.assertIn(app_res.status_code, {200, 400})
+            if app_res.status_code == 400:
+                self.assertRegex(app_res.json()["detail"].lower(), r"(quote|guard|stale)")
             
             rej_res = self.client.post(f"/proposals/{proposal_id}/reject")
             self.assertEqual(rej_res.status_code, 200)

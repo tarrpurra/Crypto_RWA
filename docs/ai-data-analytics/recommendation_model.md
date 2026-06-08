@@ -70,6 +70,12 @@ Recommended top-level status values:
 - use `status_label` for frontend display
 - use `status_reason` for human explanation
 
+Status namespaces are layered:
+
+- allocation responses use risk-oriented codes
+- proposal creation and queue management use proposal lifecycle codes
+- execution readiness and submission use execution codes
+
 ## Locked Pricing Strategy
 
 Use a multi-source pricing strategy.
@@ -208,6 +214,8 @@ Hard guard failure = RISK_VETO
 ```
 
 ### Proposal Statuses
+
+Proposal lifecycle codes are only for `/proposals/*` queue state and approval history.
 
 ```text
 PROPOSAL_DRAFT

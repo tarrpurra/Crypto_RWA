@@ -1,0 +1,23 @@
+.circular-text {
+  margin: 0 auto;
+  border-radius: 50%;
+  width: 200px;
+  height: 200px;
+  position: relative;
+  font-weight: 700;
+  color: #D6B83F;
+  text-align: center;
+}
+
+.circular-text span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1.2em;
+  height: 1em;
+  margin-left: -0.6em;
+  margin-top: -0.5em;
+  font-size: 17px;
+  font-family: 'Space Grotesk', sans-serif;
+  text-shadow: 0 0 8px rgba(214, 184, 63, 0.25);
+}

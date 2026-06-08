@@ -24,13 +24,12 @@ The service has working scaffolding and several local-safe features, but the liv
 - Allocation recommendations exist through `/allocation/recommendation`.
 - AI reasoning exists through `/decisions`.
 - Proposal creation and approval queue routes exist through `/proposals/*`.
+- Proposal plan generation now uses execution-oriented status codes for ready, blocked, and skipped states instead of leaking proposal lifecycle codes into execution responses.
 - Sepolia-specific USDY, mETH, WMNT, and MNT flow work has started.
 
 ### Broken Or Inconsistent
 
 - Some legacy tests still assert the older risk snapshot shape and should be refreshed around the adapter behavior.
-- Proposal creation now uses the shared context, but proposal guard responses still need a final status-code cleanup pass.
-- Allocation responses can return proposal-oriented status codes such as `PROPOSAL_DRAFT`, which mixes allocation and proposal contracts.
 - AI decision-maker mode can override the deterministic allocation action in parser logic, which conflicts with the locked rule that AI must explain, not bypass controls.
 - Runtime AI state is split between static settings and `runtime_config.AI_DECISION_MAKER_ENABLED`, so endpoints can report and behave differently.
 - Legacy `/portfolio/snapshot` and `/risk/snapshot` are deprecated but still force env fallback for temporary compatibility.
@@ -110,6 +109,14 @@ Reports and proposals:
 
 The repaired service should have one deterministic decision flow. Every recommendation, report, and proposal must pass through it.
 
+### Status Code Namespaces
+
+| Layer | Codes |
+| --- | --- |
+| Allocation | `RISK_NORMAL`, `RISK_CAUTION`, `RISK_REBALANCE_ONLY`, `RISK_REDUCE_ONLY`, `RISK_PAUSE_REQUIRED`, `RISK_VETO` |
+| Proposal | `PROPOSAL_DRAFT`, `PROPOSAL_PENDING_APPROVAL`, `PROPOSAL_APPROVED`, `PROPOSAL_REJECTED`, `PROPOSAL_EXPIRED` |
+| Execution | `EXECUTION_READY`, `EXECUTION_SUBMITTED`, `EXECUTION_CONFIRMED`, `EXECUTION_FAILED`, `EXECUTION_BLOCKED`, `EXECUTION_SKIPPED`, `EXECUTION_SIMULATED` |
+
 1. Resolve scope.
    - If `wallet_address` is provided, read the connected wallet portfolio.
    - If deposit scope is provided, build an investment-scope preview from `deposit_asset_symbol`, `deposit_amount`, `risk_profile`, and `allocation_mode`.
@@ -180,7 +187,7 @@ Make `RiskEngine.evaluate()` the only canonical risk engine for current applicat
   - scoring method
   - bucket weights
 - [ ] Refresh tests that directly assert legacy `RiskSnapshot` internals.
-- [ ] Finish proposal and allocation status namespace cleanup.
+- [x] Finish proposal and allocation status namespace cleanup.
 
 ### Hard Veto Rules
 

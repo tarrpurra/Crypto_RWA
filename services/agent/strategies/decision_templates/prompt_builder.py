@@ -15,9 +15,34 @@ def build_allocation_prompt(
     risk_score: float,
     risk_notes: list[str],
     profile_name: str,
+    portfolio_balances: list[dict[str, object]] | None = None,
 ) -> str:
     target_lines = [f'    "{asset}": {weight}' for asset, weight in target_weights.items()]
     risk_notes_str = "\n".join(f"  - {note}" for note in risk_notes)
+    holdings_lines = ""
+    if portfolio_balances:
+        rendered_holdings: list[str] = []
+        for balance in portfolio_balances:
+            asset = str(balance.get("asset_symbol") or balance.get("asset") or "").strip()
+            if not asset:
+                continue
+            try:
+                asset_balance = float(balance.get("balance") or 0)
+            except Exception:
+                asset_balance = 0.0
+            try:
+                value_usd = float(balance.get("value_usd") or 0)
+            except Exception:
+                value_usd = 0.0
+            try:
+                weight = float(balance.get("weight") or 0)
+            except Exception:
+                weight = 0.0
+            rendered_holdings.append(
+                f"  - {asset}: {asset_balance:.4f} (${value_usd:.2f}, {weight * 100:.1f}% of portfolio)"
+            )
+        if rendered_holdings:
+            holdings_lines = "\n## Current Wallet Holdings\n" + "\n".join(rendered_holdings) + "\n"
 
     return f"""You are the AI Allocation Engine of AIxRWA. Generate an allocation plan for a scoped investment.
 
@@ -31,6 +56,7 @@ Input:
 - Risk status: {risk_status} (score: {risk_score})
 - Risk notes:
 {risk_notes_str}
+{holdings_lines}
 
 Rules:
 1. Allocate the deposit across target assets according to the profile weights.
@@ -39,6 +65,7 @@ Rules:
 4. If no significant risk, set recommended_action to "REBALANCE".
 5. If everything is already aligned, set recommended_action to "HOLD".
 6. The retained deposit asset amount is determined by its target weight.
+7. When current wallet holdings are provided, treat them as real swap context and prefer routes that recognize existing exposures.
 
 Respond with ONLY valid JSON:
 {{
@@ -93,7 +120,11 @@ def build_reasoning_prompt(
         {
             "asset": a.asset_symbol,
             "action": a.action,
-            "amount": a.amount
+            "amount": a.amount,
+            "route_id": a.route_id,
+            "token_in_symbol": a.token_in_symbol,
+            "token_out_symbol": a.token_out_symbol,
+            "swap_pair_label": a.swap_pair_label,
         }
         for a in rebalance_actions
     ]
@@ -107,18 +138,20 @@ def build_reasoning_prompt(
     }
 
     if ai_decision_maker:
-        prompt = f"""You are the AI Decision Maker of AIxRWA, a risk-managed portfolio allocator on Mantle.
-Your role is to evaluate the portfolio, risk, and market state below and explain whether full-access automation should proceed.
+        prompt = f"""You are the AI Decision Layer and AI Decision Maker of AIxRWA, a risk-managed portfolio allocator on Mantle.
+Your role is to evaluate the portfolio, risk, and market state below and explain what the system should do next within deterministic guardrails.
 
 Context:
 {json.dumps(context, indent=2)}
 
 Decision rules:
-- The deterministic engine decides: {decision.recommended_action}
-- You may suggest an action for operator visibility, but you cannot override deterministic risk, allocation, or proposal guards.
+- The deterministic engine remains authoritative for the final recommendation: {decision.recommended_action}
+- You may suggest an alternate action for operator visibility, but it is advisory only.
+- The AI cannot override the deterministic plan; it can only suggest alternatives.
+- When a rebalance action includes token-in/token-out data, treat that swap route as the concrete execution path context.
 - Valid suggested actions: "HOLD" (no trades), "REBALANCE" (execute proposed trades), "PAUSE" (stop all trading).
-- Consider all risk factors including oracle freshness, depeg risk, liquidity/slippage, and concentration limits.
-- You must still respect hard risk constraints: if risk_band is RISK_VETO or RISK_PAUSE_REQUIRED, you must choose PAUSE.
+- Consider all risk factors including oracle freshness, depeg risk, liquidity/slippage, concentration limits, and execution readiness.
+- Treat hard risk states as non-negotiable guard rails, not as a license to override the deterministic plan.
 
 Please generate a JSON object matching this schema:
 {{
@@ -128,7 +161,7 @@ Please generate a JSON object matching this schema:
   "notes": [
     "Note 1: key risk observation",
     "Note 2: market condition note",
-    "Note 3: adjustment rationale if overriding deterministic recommendation"
+    "Note 3: adjustment rationale or suggested alternative"
   ]
 }}
 

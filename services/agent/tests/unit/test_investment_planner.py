@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import unittest
 from decimal import Decimal
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from services.agent.app.core.settings import Settings
 from services.agent.app.core.status_codes import RuntimeMode, TargetChain
-from services.agent.app.schemas.portfolio import PortfolioSnapshotResponse
+from services.agent.app.schemas.allocation import RebalanceAction
+from services.agent.app.schemas.portfolio import PortfolioPosition, PortfolioSnapshotResponse
 from services.agent.app.schemas.proposals import (
     ExecutionPayloadSchema,
     InvestmentPlanRequest,
@@ -18,7 +20,14 @@ from services.agent.app.schemas.risk import RiskAssessmentResponse
 from services.agent.app.core.status_codes import DataStatusCode
 from services.agent.app.schemas.quotes import NormalizedQuoteSnapshot
 from services.agent.modules.oracle.freshness import utc_now
-from services.agent.modules.proposals.investment_planner import PlannedSwap, _build_guard_checks, _build_planned_swaps, _encode_trade_proposal, build_investment_plan
+from services.agent.modules.proposals.investment_planner import (
+    PlannedSwap,
+    _build_guard_checks,
+    _build_planned_swaps,
+    _build_rebalance_swaps,
+    _encode_trade_proposal,
+    build_investment_plan,
+)
 
 
 class InvestmentPlannerTests(unittest.TestCase):
@@ -73,6 +82,22 @@ class InvestmentPlannerTests(unittest.TestCase):
             raw_snapshot=SimpleNamespace(raw_payload_json={}),
         )
 
+    def _fresh_attempt(self, token_in: str, token_out: str, *, gas_estimate: str = "123") -> SimpleNamespace:
+        fresh_quote = self._fresh_quote(token_in, token_out).model_copy(
+            update={
+                "amount_in": "10",
+                "amount_out": "9.8",
+                "quoted_price": "0.98",
+                "freshness_status": "fresh",
+                "status_code": DataStatusCode.QUOTE_FRESH.value,
+                "status_reason": "Live quote is fresh.",
+            }
+        )
+        return SimpleNamespace(
+            normalized_snapshot=fresh_quote,
+            raw_snapshot=SimpleNamespace(raw_payload_json={"gas_estimate": gas_estimate}),
+        )
+
     @patch("services.agent.modules.proposals.investment_planner.get_quote_service")
     def test_build_planned_swaps_uses_persisted_quote_when_live_attempt_is_unusable(self, mock_get_quote_service) -> None:
         quote_service = MagicMock()
@@ -91,6 +116,174 @@ class InvestmentPlannerTests(unittest.TestCase):
         self.assertTrue(all(swap.quote is not None for swap in swaps))
         self.assertTrue(all(swap.quote.status_code == DataStatusCode.QUOTE_FRESH.value for swap in swaps if swap.quote))
         self.assertEqual([swap.quote.token_out_symbol for swap in swaps if swap.quote], ["USDC", "USDY", "mETH"])
+
+    @patch("services.agent.modules.proposals.investment_planner.get_quote_service")
+    def test_build_planned_swaps_skips_dust_legs(self, mock_get_quote_service) -> None:
+        quote_service = MagicMock()
+        quote_service.best_quote_attempt_for_pair.side_effect = AssertionError("dust swap should not reach live quote lookup")
+        quote_service.best_quote_for_pair.side_effect = AssertionError("dust swap should not reach persisted quote lookup")
+        mock_get_quote_service.return_value = quote_service
+
+        swaps = _build_planned_swaps(
+            deposit_asset_symbol="MNT",
+            deposit_amount=Decimal("0.5"),
+            target_weights={"USDY": 1.0},
+            prices={"WMNT": Decimal("1"), "USDY": Decimal("1")},
+        )
+
+        self.assertEqual(swaps, [])
+        quote_service.best_quote_attempt_for_pair.assert_not_called()
+        quote_service.best_quote_for_pair.assert_not_called()
+
+    @patch("services.agent.modules.proposals.investment_planner.get_quote_service")
+    def test_build_rebalance_swaps_uses_held_asset_route_for_buy_actions(self, mock_get_quote_service) -> None:
+        quote_service = MagicMock()
+        quote_service.best_quote_attempt_for_pair.return_value = self._fresh_attempt("USDY", "mETH")
+        quote_service.best_quote_for_pair.return_value = self._fresh_quote("USDY", "mETH")
+        mock_get_quote_service.return_value = quote_service
+
+        portfolio = PortfolioSnapshotResponse(
+            snapshot_id="portfolio-held-assets",
+            generated_at=self.now,
+            portfolio_address="0xwallet",
+            chain_id=5003,
+            base_currency="USD",
+            total_value_usd="2250",
+            positions=[
+                PortfolioPosition(
+                    asset_key="USDY",
+                    asset_symbol="USDY",
+                    chain_id=5003,
+                    balance="1000",
+                    balance_source="test_fixture",
+                    price_usd="1",
+                    value_usd="1000",
+                    weight="0.444444",
+                    target_weight="0.25",
+                    weight_drift="0.194444",
+                    drift_status="drifted",
+                    valuation_status="valued",
+                    status_code=DataStatusCode.DATA_FRESH.value,
+                    status_reason="valued",
+                ),
+                PortfolioPosition(
+                    asset_key="METH",
+                    asset_symbol="mETH",
+                    chain_id=5003,
+                    balance="0.5",
+                    balance_source="test_fixture",
+                    price_usd="2500",
+                    value_usd="1250",
+                    weight="0.555556",
+                    target_weight="0.75",
+                    weight_drift="-0.194444",
+                    drift_status="drifted",
+                    valuation_status="valued",
+                    status_code=DataStatusCode.DATA_FRESH.value,
+                    status_reason="valued",
+                ),
+            ],
+            data_sources_used=["test_fixture"],
+            status="ok",
+            status_code=DataStatusCode.DATA_FRESH.value,
+            status_label=DataStatusCode.DATA_FRESH.value,
+            status_reason="held assets available",
+        )
+
+        swaps = _build_rebalance_swaps(
+            rebalance_actions=[
+                RebalanceAction(
+                    asset_symbol="mETH",
+                    action="BUY",
+                    amount=1.0,
+                    token_in_symbol="USDY",
+                    token_out_symbol="mETH",
+                    swap_pair_label="USDY -> mETH",
+                )
+            ],
+            portfolio=portfolio,
+            prices={"USDY": Decimal("1"), "mETH": Decimal("2500")},
+        )
+
+        self.assertEqual(len(swaps), 1)
+        self.assertEqual(swaps[0].token_in_symbol, "USDY")
+        self.assertEqual(swaps[0].token_out_symbol, "mETH")
+        self.assertEqual(swaps[0].amount_in, Decimal("2500"))
+        self.assertEqual(swaps[0].quote.status_code, DataStatusCode.QUOTE_FRESH.value)
+        self.assertEqual(swaps[0].target_asset_symbol, "mETH")
+
+    @patch("services.agent.modules.proposals.investment_planner.get_quote_service")
+    def test_build_rebalance_swaps_skips_dust_legs(self, mock_get_quote_service) -> None:
+        quote_service = MagicMock()
+        quote_service.best_quote_attempt_for_pair.return_value = self._fresh_attempt("USDY", "mETH")
+        quote_service.best_quote_for_pair.return_value = self._fresh_quote("USDY", "mETH")
+        mock_get_quote_service.return_value = quote_service
+
+        portfolio = PortfolioSnapshotResponse(
+            snapshot_id="portfolio-held-assets",
+            generated_at=self.now,
+            portfolio_address="0xwallet",
+            chain_id=5003,
+            base_currency="USD",
+            total_value_usd="2250",
+            positions=[
+                PortfolioPosition(
+                    asset_key="USDY",
+                    asset_symbol="USDY",
+                    chain_id=5003,
+                    balance="1000",
+                    balance_source="test_fixture",
+                    price_usd="1",
+                    value_usd="1000",
+                    weight="0.444444",
+                    target_weight="0.25",
+                    weight_drift="0.194444",
+                    drift_status="drifted",
+                    valuation_status="valued",
+                    status_code=DataStatusCode.DATA_FRESH.value,
+                    status_reason="valued",
+                ),
+                PortfolioPosition(
+                    asset_key="METH",
+                    asset_symbol="mETH",
+                    chain_id=5003,
+                    balance="0.5",
+                    balance_source="test_fixture",
+                    price_usd="2500",
+                    value_usd="1250",
+                    weight="0.555556",
+                    target_weight="0.75",
+                    weight_drift="-0.194444",
+                    drift_status="drifted",
+                    valuation_status="valued",
+                    status_code=DataStatusCode.DATA_FRESH.value,
+                    status_reason="valued",
+                ),
+            ],
+            data_sources_used=["test_fixture"],
+            status="ok",
+            status_code=DataStatusCode.DATA_FRESH.value,
+            status_label=DataStatusCode.DATA_FRESH.value,
+            status_reason="held assets available",
+        )
+
+        swaps = _build_rebalance_swaps(
+            rebalance_actions=[
+                RebalanceAction(
+                    asset_symbol="mETH",
+                    action="BUY",
+                    amount=0.0001,
+                    token_in_symbol="USDY",
+                    token_out_symbol="mETH",
+                    swap_pair_label="USDY -> mETH",
+                )
+            ],
+            portfolio=portfolio,
+            prices={"USDY": Decimal("1"), "mETH": Decimal("2500")},
+        )
+
+        self.assertEqual(swaps, [])
+        quote_service.best_quote_attempt_for_pair.assert_not_called()
 
     @patch("services.agent.modules.proposals.investment_planner.get_ondo_usdy_oracle_adapter")
     def test_guard_checks_stay_advisory_in_monitor_only_mode(self, mock_oracle_adapter) -> None:
@@ -123,9 +316,9 @@ class InvestmentPlannerTests(unittest.TestCase):
                 route_depth_usd="100000",
                 candidate_rank=1,
                 sample_timestamp=self.now,
-                freshness_status="stale",
-                status_code=DataStatusCode.QUOTE_STALE.value,
-                status_reason="Quote is stale.",
+                freshness_status="fresh",
+                status_code=DataStatusCode.QUOTE_FRESH.value,
+                status_reason="Quote is fresh.",
                 data_sources_used=["agni_live_quote"],
             ),
             gas_estimate=Decimal("1"),
@@ -168,6 +361,72 @@ class InvestmentPlannerTests(unittest.TestCase):
         self.assertTrue(any(check.code == "price_deviation" and not check.blocking for check in checks))
         self.assertTrue(any(check.code == "slippage_limit" and not check.blocking for check in checks))
         self.assertTrue(any(check.code == "concentration_risk" and not check.blocking for check in checks))
+
+    @patch("services.agent.modules.proposals.investment_planner.get_pause_guardian_state")
+    @patch("services.agent.modules.proposals.investment_planner.get_ondo_usdy_oracle_adapter")
+    def test_guard_checks_block_stale_quotes_by_age(self, mock_get_ondo_oracle, mock_get_pause_guardian_state) -> None:
+        mock_ondo_adapter = MagicMock()
+        mock_ondo_adapter.read.return_value = SimpleNamespace(status=SimpleNamespace(status="ok"))
+        mock_get_ondo_oracle.return_value = mock_ondo_adapter
+        mock_get_pause_guardian_state.return_value = {"paused": False}
+
+        settings = Settings(
+            target_chain=TargetChain.MANTLE_SEPOLIA,
+            runtime_mode=RuntimeMode.SIMULATION,
+        )
+        stale_quote = self._fresh_quote("WMNT", "USDY").model_copy(
+            update={
+                "sample_timestamp": self.now - timedelta(seconds=31),
+                "status_code": DataStatusCode.QUOTE_STALE.value,
+                "freshness_status": "stale",
+                "status_reason": "Quote is stale.",
+            },
+        )
+        swaps = [
+            PlannedSwap(
+                target_asset_symbol="USDY",
+                amount_in=Decimal("100"),
+                token_in_symbol="WMNT",
+                token_out_symbol="USDY",
+                quote=stale_quote,
+                gas_estimate=Decimal("1"),
+                uses_native_value=False,
+            )
+        ]
+
+        checks, blockers = _build_guard_checks(
+            settings=settings,
+            deposit_asset_symbol="MNT",
+            selected_weights={"USDY": 0.75, "mETH": 0.25},
+            prices={"WMNT": Decimal("1"), "USDY": Decimal("1"), "mETH": Decimal("2500")},
+            swaps=swaps,
+            risk=RiskAssessmentResponse(
+                asset="portfolio",
+                recommended_action="REBALANCE",
+                risk_score=25.0,
+                risk_band="RISK_REBALANCE_ONLY",
+                confidence=0.9,
+                reasoning_summary="Rebalance recommended.",
+                data_sources_used=[],
+                hard_veto_status="inactive",
+                required_human_approval_status="not_required",
+                status="ok",
+                status_code="DATA_FRESH",
+                status_label="DATA_FRESH",
+                status_reason="Risk engine permits rebalance.",
+                generated_at=self.now,
+                runtime_mode="simulation",
+                target_chain="mantle_sepolia",
+                freshness_status="fresh",
+                buckets=[],
+                notes=[],
+                metadata={},
+            ),
+        )
+
+        freshness_check = next(check for check in checks if check.code == "quote_freshness")
+        self.assertFalse(freshness_check.passed)
+        self.assertTrue(any("stale" in blocker.lower() for blocker in blockers))
 
     @patch("services.agent.modules.proposals.investment_planner._encode_trade_proposal")
     @patch("services.agent.modules.proposals.investment_planner._build_guard_checks")
@@ -214,7 +473,7 @@ class InvestmentPlannerTests(unittest.TestCase):
                 proposalExpiry=1234567990,
                 nonce=1,
             ),
-            status_code="PROPOSAL_PENDING_APPROVAL",
+            status_code="EXECUTION_READY",
             risk_snapshot_id=None,
             created_at=self.now,
             updated_at=self.now,
@@ -228,7 +487,7 @@ class InvestmentPlannerTests(unittest.TestCase):
                 token_in_symbol="WMNT",
                 token_out_symbol="USDC",
                 amount=100.0,
-                status_code="PROPOSAL_PENDING_APPROVAL",
+                status_code="EXECUTION_READY",
             ),
             "0x1234",
         )
@@ -301,6 +560,219 @@ class InvestmentPlannerTests(unittest.TestCase):
 
     @patch("services.agent.modules.proposals.investment_planner._encode_trade_proposal")
     @patch("services.agent.modules.proposals.investment_planner._build_guard_checks")
+    @patch("services.agent.modules.proposals.investment_planner._build_rebalance_swaps")
+    @patch("services.agent.modules.proposals.investment_planner._build_planned_swaps")
+    @patch("services.agent.modules.proposals.investment_planner.compute_rebalance")
+    @patch("services.agent.modules.proposals.investment_planner._latest_price_map")
+    def test_build_investment_plan_prefers_rebalance_path_for_held_assets(
+        self,
+        mock_latest_prices,
+        mock_compute_rebalance,
+        mock_build_planned_swaps,
+        mock_build_rebalance_swaps,
+        mock_build_guard_checks,
+        mock_encode_proposal,
+    ) -> None:
+        mock_latest_prices.return_value = {"MNT": Decimal("1"), "WMNT": Decimal("1"), "USDY": Decimal("1"), "mETH": Decimal("2500")}
+        mock_compute_rebalance.return_value = (
+            SimpleNamespace(recommended_action="REBALANCE"),
+            [
+                RebalanceAction(
+                    asset_symbol="mETH",
+                    action="BUY",
+                    amount=1.0,
+                    token_in_symbol="USDY",
+                    token_out_symbol="mETH",
+                    swap_pair_label="USDY -> mETH",
+                )
+            ],
+        )
+        mock_build_planned_swaps.return_value = [
+            PlannedSwap(
+                target_asset_symbol="USDC",
+                amount_in=Decimal("100"),
+                token_in_symbol="WMNT",
+                token_out_symbol="USDC",
+                quote=self._fresh_quote("WMNT", "USDC"),
+                gas_estimate=Decimal("1"),
+                uses_native_value=False,
+            )
+        ]
+        mock_build_rebalance_swaps.return_value = [
+            PlannedSwap(
+                target_asset_symbol="mETH",
+                amount_in=Decimal("250"),
+                token_in_symbol="USDY",
+                token_out_symbol="mETH",
+                quote=self._fresh_quote("USDY", "mETH"),
+                gas_estimate=Decimal("1"),
+                uses_native_value=False,
+            )
+        ]
+        mock_build_guard_checks.return_value = ([], [])
+
+        proposal = TradeProposal(
+            proposal_id="0xproposal",
+            plan_hash="0xplan",
+            wallet_or_vault="0xwallet",
+            payload=ExecutionPayloadSchema(
+                proposalId="0xproposal",
+                planHash="0xplan",
+                router="0xrouter",
+                selector="0x414bf389",
+                calldataHash="0xcalldatahash",
+                tokenIn="0xusdytoken",
+                tokenOut="0xmethoken",
+                recipient="0xrecipient",
+                maxAmountIn=250,
+                minAmountOut=245,
+                nativeValue=0,
+                deadline=1234567890,
+                proposalExpiry=1234567990,
+                nonce=1,
+            ),
+            status_code="EXECUTION_READY",
+            risk_snapshot_id=None,
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        mock_encode_proposal.return_value = (
+            proposal,
+            LinkedProposalSummary(
+                proposal_id="0xproposal",
+                asset_symbol="mETH",
+                action="BUY",
+                token_in_symbol="USDY",
+                token_out_symbol="mETH",
+                amount=1.0,
+                status_code="EXECUTION_READY",
+            ),
+            "0x1234",
+        )
+
+        settings = Settings(
+            target_chain=TargetChain.MANTLE_SEPOLIA,
+            ai_decision_maker_enabled=True,
+            native_mnt_enabled=True,
+            sepolia_wmnt_address="0x0000000000000000000000000000000000000001",
+            sepolia_usdy_address="0x0000000000000000000000000000000000000002",
+            sepolia_meth_address="0x0000000000000000000000000000000000000003",
+        )
+        preview_portfolio = PortfolioSnapshotResponse(
+            snapshot_id="portfolio-preview",
+            generated_at=self.now,
+            portfolio_address="0xwallet",
+            chain_id=5003,
+            base_currency="USD",
+            total_value_usd="100",
+            positions=[],
+            data_sources_used=[],
+            status="ok",
+            status_code="DATA_FRESH",
+            status_label="DATA_FRESH",
+            status_reason="Portfolio is ready.",
+            metadata={},
+        )
+        actual_portfolio = PortfolioSnapshotResponse(
+            snapshot_id="portfolio-actual",
+            generated_at=self.now,
+            portfolio_address="0xwallet",
+            chain_id=5003,
+            base_currency="USD",
+            total_value_usd="2250",
+            positions=[
+                PortfolioPosition(
+                    asset_key="USDY",
+                    asset_symbol="USDY",
+                    chain_id=5003,
+                    balance="1000",
+                    balance_source="test_fixture",
+                    price_usd="1",
+                    value_usd="1000",
+                    weight="0.444444",
+                    target_weight="0.25",
+                    weight_drift="0.194444",
+                    drift_status="drifted",
+                    valuation_status="valued",
+                    status_code=DataStatusCode.DATA_FRESH.value,
+                    status_reason="valued",
+                ),
+                PortfolioPosition(
+                    asset_key="METH",
+                    asset_symbol="mETH",
+                    chain_id=5003,
+                    balance="0.5",
+                    balance_source="test_fixture",
+                    price_usd="2500",
+                    value_usd="1250",
+                    weight="0.555556",
+                    target_weight="0.75",
+                    weight_drift="-0.194444",
+                    drift_status="drifted",
+                    valuation_status="valued",
+                    status_code=DataStatusCode.DATA_FRESH.value,
+                    status_reason="valued",
+                ),
+            ],
+            data_sources_used=["test_fixture"],
+            status="ok",
+            status_code=DataStatusCode.DATA_FRESH.value,
+            status_label=DataStatusCode.DATA_FRESH.value,
+            status_reason="Wallet holdings are ready.",
+            metadata={},
+        )
+        risk = RiskAssessmentResponse(
+            asset="portfolio",
+            recommended_action="REBALANCE",
+            risk_score=27.5,
+            risk_band="RISK_REBALANCE_ONLY",
+            confidence=0.9,
+            reasoning_summary="Rebalance recommended.",
+            data_sources_used=[],
+            hard_veto_status="inactive",
+            required_human_approval_status="not_required",
+            status="ok",
+            status_code=DataStatusCode.DATA_FRESH.value,
+            status_label=DataStatusCode.DATA_FRESH.value,
+            status_reason="Risk engine permits rebalance.",
+            generated_at=self.now,
+            runtime_mode="monitor_only",
+            target_chain="mantle_sepolia",
+            freshness_status="fresh",
+            buckets=[],
+            notes=[],
+            metadata={},
+        )
+        request = InvestmentPlanRequest(
+            wallet_address="0xwallet",
+            deposit_asset_symbol="MNT",
+            deposit_amount=100.0,
+            risk_profile="Balanced",
+            allocation_mode="AI Suggested",
+        )
+
+        response, proposal_pairs = build_investment_plan(
+            settings=settings,
+            request=request,
+            portfolio=preview_portfolio,
+            actual_portfolio=actual_portfolio,
+            risk=risk,
+        )
+
+        self.assertEqual(response.metadata["swap_path"], "rebalance")
+        self.assertTrue(response.approval_enabled)
+        self.assertEqual(response.status_code, "EXECUTION_READY")
+        self.assertTrue(any("advisory" in message.lower() for message in response.warning_messages))
+        self.assertTrue(proposal_pairs)
+        self.assertEqual(response.linked_proposals[0].token_in_symbol, "USDY")
+        self.assertEqual(response.linked_proposals[0].token_out_symbol, "mETH")
+        self.assertTrue(response.transaction_steps)
+        self.assertNotEqual(response.transaction_steps[0].step_type, "wrap")
+        mock_build_planned_swaps.assert_not_called()
+        mock_build_rebalance_swaps.assert_called_once()
+
+    @patch("services.agent.modules.proposals.investment_planner._encode_trade_proposal")
+    @patch("services.agent.modules.proposals.investment_planner._build_guard_checks")
     @patch("services.agent.modules.proposals.investment_planner._build_planned_swaps")
     @patch("services.agent.modules.proposals.investment_planner._latest_price_map")
     def test_build_investment_plan_strips_usdc_from_sepolia_ai_profile(
@@ -334,7 +806,7 @@ class InvestmentPlannerTests(unittest.TestCase):
                     proposalExpiry=1234567990,
                     nonce=1,
                 ),
-                status_code="PROPOSAL_PENDING_APPROVAL",
+                status_code="EXECUTION_READY",
                 risk_snapshot_id=None,
                 created_at=self.now,
                 updated_at=self.now,
@@ -346,7 +818,7 @@ class InvestmentPlannerTests(unittest.TestCase):
                 token_in_symbol="WMNT",
                 token_out_symbol="USDY",
                 amount=100.0,
-                status_code="PROPOSAL_PENDING_APPROVAL",
+                status_code="EXECUTION_READY",
             ),
             "0x1234",
         )
@@ -575,7 +1047,7 @@ class InvestmentPlannerTests(unittest.TestCase):
             swap=swap,
         )
 
-        expected_min_amount_out = int((Decimal("4.7231") * Decimal("20.64") * Decimal("0.99")) * Decimal(10 ** 18))
+        expected_min_amount_out = int((Decimal("4.7231") * Decimal("20.64") * Decimal("0.50")) * Decimal(10 ** 18))
         self.assertEqual(proposal.payload.maxAmountIn, int(Decimal("206.4") * Decimal(10 ** 18)))
         self.assertEqual(proposal.payload.minAmountOut, expected_min_amount_out)
         self.assertEqual(summary.token_in_symbol, "WMNT")

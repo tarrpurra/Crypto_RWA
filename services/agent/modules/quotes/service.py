@@ -11,7 +11,7 @@ from services.agent.app.schemas.market_data import AssetMetadata
 from services.agent.app.schemas.quotes import NormalizedQuoteSnapshot, RawQuoteSnapshot, RouteDescriptor
 from services.agent.modules.market_data.snapshots import QuoteIngestionBundle
 from services.agent.modules.market_data import PRICE_SNAPSHOT_STORE
-from services.agent.modules.oracle.freshness import utc_now
+from services.agent.modules.oracle.freshness import age_seconds, utc_now
 from services.agent.modules.quotes.agni_discovery import AgniDiscoveryService
 from services.agent.modules.quotes.agni_quotes import AgniQuoteService
 from services.agent.modules.quotes.merchant_moe_discovery import MerchantMoeDiscoveryService
@@ -67,8 +67,8 @@ class QuoteService:
         self._cached_routes_expires_at = now + timedelta(seconds=self.settings.route_cache_ttl_seconds)
         return list(routes)
 
-    def sample_latest_quotes(self) -> QuoteIngestionBundle:
-        routes = self.discover_routes()
+    def sample_latest_quotes(self, routes: list[RouteDescriptor] | None = None) -> QuoteIngestionBundle:
+        routes = routes if routes is not None else self.discover_routes()
         raw_snapshots: list[RawQuoteSnapshot] = []
         normalized_snapshots: list[NormalizedQuoteSnapshot] = []
         amount_by_symbol = {pair.token_in.symbol: pair.amount_in for pair in self._quote_pairs()}
@@ -105,8 +105,8 @@ class QuoteService:
     def best_quote_for_pair(self, token_in: str, token_out: str) -> NormalizedQuoteSnapshot | None:
         quotes = self.latest_quotes_for_pair(token_in, token_out)
         if quotes:
-            best_live = quotes[0]
-            if best_live.status_code == DataStatusCode.QUOTE_FRESH.value:
+            best_live = self._with_quote_freshness(quotes[0])
+            if best_live.status_code in {DataStatusCode.QUOTE_FRESH.value, DataStatusCode.QUOTE_STALE.value}:
                 return best_live
 
         try:
@@ -114,8 +114,8 @@ class QuoteService:
         except Exception:
             persisted = None
         if persisted is not None:
-            return persisted
-        return quotes[0] if quotes else None
+            return self._with_quote_freshness(persisted)
+        return self._with_quote_freshness(quotes[0]) if quotes else None
 
     def best_quote_attempt_for_pair(self, token_in: str, token_out: str):
         routes = [
@@ -317,6 +317,31 @@ class QuoteService:
 
     def _is_mock_route(self, route: RouteDescriptor) -> bool:
         return route.route_id is not None and route.route_id.startswith("mock_")
+
+    def _with_quote_freshness(self, quote: NormalizedQuoteSnapshot | None) -> NormalizedQuoteSnapshot | None:
+        if quote is None:
+            return None
+
+        freshness_limit = max(1, int(self.settings.dex_quote_fresh_limit_seconds))
+        quote_age = age_seconds(quote.sample_timestamp, utc_now())
+        if quote_age is None:
+            return quote.model_copy(
+                update={
+                    "freshness_status": "stale",
+                    "status_code": DataStatusCode.QUOTE_STALE.value,
+                    "status_reason": "Quote freshness timestamp is missing.",
+                }
+            )
+        if quote_age > freshness_limit or quote.status_code == DataStatusCode.QUOTE_STALE.value or quote.freshness_status == "stale":
+            return quote.model_copy(
+                update={
+                    "freshness_status": "stale",
+                    "status_code": DataStatusCode.QUOTE_STALE.value,
+                    "status_reason": f"Quote is stale at {quote_age} seconds old.",
+                }
+            )
+
+        return quote
 
     def _quote_pairs(self) -> list[QuotePair]:
         assets = self._assets_for_target_chain()

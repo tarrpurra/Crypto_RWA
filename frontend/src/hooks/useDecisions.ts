@@ -20,8 +20,9 @@ export function useDecisions() {
               allocation_mode: scope.allocationMode,
             }
           : null,
-      ),
+    ),
     enabled: Boolean(effectiveWalletAddress),
+    staleTime: 30_000,
     refetchInterval: 30_000,
   });
 }

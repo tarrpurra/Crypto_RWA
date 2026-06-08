@@ -3,115 +3,140 @@
 import { Link } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import { ArrowRight } from "lucide-react";
-
-const portfolioSleeves = [
-  { label: "Stable Reserve", allocation: "20-30%", color: "bg-lp-fg" },
-  { label: "Ondo USDY", allocation: "35-50%", color: "bg-lp-fg/70" },
-  { label: "mETH Growth", allocation: "20-35%", color: "bg-lp-fg/40" },
-];
-
-const allocationProfiles = [
-  { label: "Defensive", stable: "40-50%", usdy: "35-45%", meth: "10-20%" },
-  { label: "Balanced", stable: "20-30%", usdy: "35-50%", meth: "20-35%" },
-  { label: "Yield-Seeking", stable: "10-20%", usdy: "40-55%", meth: "25-40%" },
-];
+import { DashboardMockup } from "./DashboardMockup";
+import DecryptedText from "@/components/ui/DecryptedText";
 
 export function HeroSection() {
   const reduce = useReducedMotion();
 
   return (
     <section className="relative min-h-[100dvh] overflow-hidden pt-20">
-      <div className="mx-auto max-w-screen-2xl px-6 pb-20 pt-16 lg:px-8">
-        <div className="grid items-center gap-12 lg:grid-cols-12">
-          <div className="max-w-2xl lg:col-span-7">
+      {/* Background grid */}
+      <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+        <div
+          className="absolute -left-[18%] -top-[20%] h-[720px] w-[720px] rounded-full"
+          style={{
+            background: "radial-gradient(circle, rgba(212,150,42,0.09) 0%, transparent 70%)",
+            animation: "drift1 16s linear infinite",
+          }}
+        />
+        <div
+          className="absolute -bottom-[10%] -right-[8%] h-[520px] w-[520px] rounded-full"
+          style={{
+            background: "radial-gradient(circle, rgba(138,112,56,0.07) 0%, transparent 70%)",
+            animation: "drift2 20s linear infinite",
+          }}
+        />
+        <div
+          className="absolute inset-0 opacity-20"
+          style={{
+            backgroundImage:
+              "linear-gradient(hsl(var(--lp-border)) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--lp-border)) 1px, transparent 1px)",
+            backgroundSize: "52px 52px",
+          }}
+        />
+      </div>
+      <div className="relative z-10 mx-auto max-w-screen-2xl px-6 pb-20 pt-16 lg:px-8">
+        <div className="grid items-center gap-14 lg:grid-cols-2">
+          {/* Left */}
+          <div>
             <motion.div
-              initial={reduce ? false : { opacity: 0, y: 20 }}
+              initial={reduce ? false : { opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+              transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
             >
-              <div className="mb-8 inline-flex items-center gap-2 border border-lp-border-muted bg-lp-surface px-4 py-1.5">
-                <span className="text-sm font-medium text-lp-fg-secondary">
-                  Built on Mantle Network
+              <div className="mb-6 inline-flex items-center gap-1.5 rounded-full border border-lp-gold/20 bg-lp-gold/10 px-3.5 py-1">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-lp-gold opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-lp-gold" />
+                </span>
+                <span className="font-sans text-[12px] font-medium text-lp-gold">
+                  Mantle Turing Test 2026 · AI × RWA Track · Live on Sepolia
                 </span>
               </div>
             </motion.div>
 
             <motion.h1
-              initial={reduce ? false : { opacity: 0, y: 24 }}
+              initial={reduce ? false : { opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
-              className="font-display text-4xl font-semibold leading-none tracking-tighter text-lp-fg md:text-5xl lg:text-6xl"
+              className="font-display text-4xl font-bold leading-none tracking-tighter text-lp-fg md:text-5xl lg:text-[clamp(34px,4.2vw,58px)]"
             >
-              Risk-gated yield
+              The AI That Never
               <br />
-              for real-world assets.
+              <DecryptedText
+                text="Sleeps on Your Yield"
+                animateOn="view"
+                revealDirection="center"
+                sequential
+                speed={160}
+                useOriginalCharsOnly
+                className="text-lp-gold"
+                parentClassName="text-lp-gold"
+                encryptedClassName="text-lp-gold/30"
+              />
             </motion.h1>
 
             <motion.p
-              initial={reduce ? false : { opacity: 0, y: 24 }}
+              initial={reduce ? false : { opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
-              className="mt-6 max-w-md text-lg leading-relaxed text-lp-fg-secondary md:text-xl"
+              className="mt-5 max-w-[480px] text-[16px] leading-relaxed text-lp-fg-secondary md:text-[16px]"
             >
-              A transparent portfolio operations terminal for Mantle Network. Deterministic allocation profiles, real-time risk scoring with hard veto thresholds, and multi-sig on-chain governance via Ondo USDY, mETH, and stable reserve sleeves.
+              Autonomous USDY + mETH optimisation on Mantle L2.
+              Every decision logged on-chain via ERC-8004.
+              Human vs AI benchmarked. Permanently verifiable.
             </motion.p>
 
             <motion.div
-              initial={reduce ? false : { opacity: 0, y: 24 }}
+              initial={reduce ? false : { opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
-              className="mt-10 flex flex-col gap-4 sm:flex-row sm:items-center"
+              className="mt-8 flex flex-wrap gap-2.5"
             >
               <Link
                 to="/dashboard"
-                className="group flex w-full items-center justify-center gap-3 border-2 border-lp-gold bg-lp-gold px-9 py-4 font-semibold text-lp-bg transition-all duration-300 hover:opacity-90 active:scale-[0.98] sm:w-auto"
+                className="group flex h-[50px] items-center gap-2 rounded-lg bg-lp-gold px-[30px] font-display text-[14px] font-semibold text-lp-bg shadow-[0_0_28px_hsl(var(--lp-gold)/0.22)] transition-all duration-200 hover:bg-[#E0A83C] hover:-translate-y-0.5 active:scale-[0.98]"
               >
-                <span>Launch dashboard</span>
-                <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+                <span>Launch App &rarr;</span>
               </Link>
+              <a
+                href="https://explorer.sepolia.mantle.xyz"
+                target="_blank"
+                rel="noreferrer"
+                className="flex h-[50px] items-center gap-1.5 rounded-lg border border-lp-border bg-transparent px-[22px] font-sans text-[14px] font-medium text-lp-fg-secondary transition-all duration-200 hover:border-lp-gold/40 hover:text-lp-fg"
+              >
+                View on Mantlescan &uarr;
+              </a>
+            </motion.div>
+
+            <motion.div
+              initial={reduce ? false : { opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.4, ease: [0.16, 1, 0.3, 1] }}
+              className="mt-6 flex gap-6 border-t border-lp-border pt-5"
+            >
+              {[
+                ["ERC-8004", "On-chain identity"],
+                ["Pyth + Ondo", "Live oracles"],
+                ["~$0.01", "Per rebalance"],
+              ].map(([v, l]) => (
+                <div key={v}>
+                  <div className="font-display text-[15px] font-bold text-lp-gold">{v}</div>
+                  <div className="mt-0.5 font-sans text-[11px] text-lp-fg-secondary">{l}</div>
+                </div>
+              ))}
             </motion.div>
           </div>
 
+          {/* Right — dashboard mockup */}
           <motion.div
             initial={reduce ? false : { opacity: 0, x: 40 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.8, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
-            className="relative lg:col-span-5"
+            className="flex justify-center"
           >
-            <div className="mx-auto max-w-[420px] space-y-4">
-              <div className="border border-lp-border-muted bg-lp-surface p-6 border-l-4 border-lp-gold">
-                <p className="text-[10px] font-medium uppercase tracking-[1.5px] text-lp-gold mb-4">
-                  3-Sleeve Portfolio Model
-                </p>
-                <div className="space-y-3">
-                  {portfolioSleeves.map((sleeve) => (
-                    <div key={sleeve.label} className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className={`h-2.5 w-2.5 ${sleeve.color}`} />
-                        <span className="text-sm text-lp-fg-secondary">{sleeve.label}</span>
-                      </div>
-                      <span className="font-mono text-sm text-lp-fg">{sleeve.allocation}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="border border-lp-border-muted bg-lp-surface p-6 border-l-4 border-lp-gold">
-                <p className="text-[10px] font-medium uppercase tracking-[1.5px] text-lp-gold mb-4">
-                  Allocation Profiles
-                </p>
-                <div className="space-y-3">
-                  {allocationProfiles.map((profile) => (
-                    <div key={profile.label} className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-lp-fg">{profile.label}</span>
-                      <span className="text-xs text-lp-fg-muted">
-                        S: {profile.stable} / U: {profile.usdy} / M: {profile.meth}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
+            <DashboardMockup />
           </motion.div>
         </div>
       </div>

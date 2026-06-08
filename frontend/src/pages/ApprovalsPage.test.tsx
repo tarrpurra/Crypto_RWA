@@ -17,6 +17,8 @@ const approvalsState = vi.hoisted(() => ({
     selector?: string;
     deadline?: number;
     native_value?: string;
+    approval_enabled?: boolean | null;
+    approval_blockers?: string[];
   }>,
   settings: {
     ai_decision_maker_enabled: true,
@@ -100,6 +102,23 @@ beforeEach(() => {
       selector: "0x12345678",
       deadline: 1770000000,
       native_value: "0",
+      approval_enabled: true,
+      approval_blockers: [],
+    },
+    {
+      proposal_id: "proposal-002",
+      token_in: "0x0931F3Eece8483A0BbbA8b13d1007cAB15a07C1a",
+      token_out: "0x67A1f4A939b477A6b7c5BF94D97E45dE87E608eF",
+      max_amount_in: "1000000000000000000",
+      min_amount_out: "980000000000000000",
+      status_code: "PROPOSAL_EXECUTED",
+      created_at: "2026-06-07T15:52:50.000Z",
+      router: "0xrouter",
+      selector: "0x12345678",
+      deadline: 1770003600,
+      native_value: "0",
+      approval_enabled: true,
+      approval_blockers: [],
     },
   ];
   approvalsState.settings = {
@@ -145,5 +164,26 @@ describe("ApprovalsPage", () => {
     expect(screen.getByText(/5\.049 USDY/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /review/i })).toBeInTheDocument();
     expect(screen.getAllByText(/Full access AI is handling approval and execution automatically/i)).toHaveLength(1);
+    expect(screen.queryByText(/Swap USDY/i)).not.toBeInTheDocument();
+  });
+
+  it("blocks approval when the proposal carries stale quote blockers", () => {
+    approvalsState.settings = {
+      ...approvalsState.settings,
+      ai_decision_maker_enabled: false,
+    };
+    approvalsState.proposals = [
+      {
+        ...approvalsState.proposals[0],
+        approval_enabled: false,
+        approval_blockers: ["Quote for WMNT->USDY is stale at 45 seconds old."],
+      },
+    ];
+
+    render(<ApprovalsPage />);
+
+    expect(screen.getByText(/approval blocked/i)).toBeInTheDocument();
+    expect(screen.getByText(/stale at 45 seconds old/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^approve$/i })).toBeDisabled();
   });
 });

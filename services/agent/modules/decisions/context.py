@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from decimal import Decimal
 from uuid import uuid4
@@ -25,6 +26,8 @@ class DecisionContext:
     settings: Settings
     portfolio_response: PortfolioSnapshotResponse
     portfolio: PortfolioSnapshot
+    actual_portfolio_response: PortfolioSnapshotResponse | None
+    actual_portfolio: PortfolioSnapshot | None
     risk_assessment: RiskAssessmentResponse
     risk_snapshot: RiskSnapshot
     prices: list[NormalizedPriceSnapshot]
@@ -72,6 +75,54 @@ def _latest_market_context_best_effort() -> tuple[list[NormalizedPriceSnapshot] 
         return repo.latest_normalized_prices(), repo.latest_normalized_quotes()
     except Exception:
         return None, None
+
+
+async def _latest_market_context_best_effort_async() -> tuple[list[NormalizedPriceSnapshot] | None, list[NormalizedQuoteSnapshot] | None]:
+    return await asyncio.to_thread(_latest_market_context_best_effort)
+
+
+async def _current_portfolio_best_effort(
+    wallet_address: str | None,
+    allow_env_fallback: bool,
+) -> PortfolioSnapshotResponse | None:
+    if not wallet_address:
+        return None
+    try:
+        return await current_portfolio(
+            wallet_address=wallet_address,
+            allow_env_fallback=allow_env_fallback,
+        )
+    except Exception:
+        return None
+
+
+def _portfolio_snapshot_from_response(snapshot: PortfolioSnapshotResponse) -> PortfolioSnapshot:
+    """
+    Convert a live portfolio response into a lightweight decision snapshot.
+
+    Unlike internal_snapshot_from_response(), this preserves positions even when
+    the live response is partial so the reasoning layer can still see current
+    holdings such as WMNT.
+    """
+    return PortfolioSnapshot(
+        snapshot_id=snapshot.snapshot_id,
+        wallet_or_vault=snapshot.portfolio_address or "UNCONFIGURED",
+        total_value_usd=float(snapshot.total_value_usd or "0"),
+        balances=[
+            AssetBalance(
+                asset_symbol=position.asset_symbol,
+                balance=float(position.balance or 0),
+                value_usd=float(position.value_usd or 0),
+                weight=float(position.weight or 0),
+                price_usd=float(position.price_usd or 0),
+            )
+            for position in snapshot.positions
+        ],
+        weights={position.asset_symbol: float(position.weight or 0) for position in snapshot.positions},
+        status_code=snapshot.status_code,
+        status_reason=snapshot.status_reason,
+        created_at=snapshot.generated_at,
+    )
 
 
 def _quote_validation_status(quotes: list[NormalizedQuoteSnapshot] | None) -> str:
@@ -208,13 +259,21 @@ async def build_decision_context(
     is_scoped = bool(deposit_asset_symbol and deposit_amount is not None and risk_profile)
 
     if is_scoped:
-        portfolio_response, target_weights, canonical_profile = _build_scoped_portfolio(
+        portfolio_task = asyncio.to_thread(
+            _build_scoped_portfolio,
             deposit_asset_symbol=deposit_asset_symbol,
             deposit_amount=deposit_amount,
             risk_profile=risk_profile,
             wallet_address=wallet_address,
             allocation_mode=allocation_mode or "AI Suggested",
             settings=settings,
+        )
+        market_task = _latest_market_context_best_effort_async()
+        actual_portfolio_task = _current_portfolio_best_effort(wallet_address, allow_env_fallback)
+        (portfolio_response, target_weights, canonical_profile), market_context, actual_portfolio_response = await asyncio.gather(
+            portfolio_task,
+            market_task,
+            actual_portfolio_task,
         )
         total_value = float(portfolio_response.total_value_usd or "0")
         portfolio = PortfolioSnapshot(
@@ -236,16 +295,28 @@ async def build_decision_context(
             status_reason=portfolio_response.status_reason,
             created_at=utc_now(),
         )
+        actual_portfolio = (
+            _portfolio_snapshot_from_response(actual_portfolio_response)
+            if actual_portfolio_response is not None
+            else None
+        )
         effective_profile = _active_profile_name(settings, canonical_profile)
     else:
-        portfolio_response = await current_portfolio(
+        portfolio_task = current_portfolio(
             wallet_address=wallet_address,
             allow_env_fallback=allow_env_fallback,
         )
+        market_task = _latest_market_context_best_effort_async()
+        portfolio_response, market_context = await asyncio.gather(
+            portfolio_task,
+            market_task,
+        )
         portfolio = internal_snapshot_from_response(portfolio_response)
+        actual_portfolio_response = portfolio_response
+        actual_portfolio = _portfolio_snapshot_from_response(portfolio_response)
         effective_profile = _active_profile_name(settings, profile_name)
 
-    prices, quotes = _latest_market_context_best_effort()
+    prices, quotes = market_context
     risk_assessment = RiskEngine().evaluate(
         portfolio=portfolio_response,
         runtime_mode=settings.runtime_mode,
@@ -259,6 +330,8 @@ async def build_decision_context(
         settings=settings,
         portfolio_response=portfolio_response,
         portfolio=portfolio,
+        actual_portfolio_response=actual_portfolio_response,
+        actual_portfolio=actual_portfolio,
         risk_assessment=risk_assessment,
         risk_snapshot=risk_assessment_to_snapshot(risk_assessment),
         prices=prices or [],

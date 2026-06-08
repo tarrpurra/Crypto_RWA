@@ -24,7 +24,7 @@ from services.agent.modules.oracle.freshness import utc_now
 from services.agent.modules.proposals.investment_planner import build_investment_plan, get_cached_plan_for_proposal
 from services.agent.repositories.db.investment_plan_repository import InvestmentPlanRepository
 from services.agent.repositories.db.market_repository import MarketDataRepository
-from services.agent.repositories.db.models import TradeProposalRecord
+from services.agent.repositories.db.models import InvestmentPlanRecord, TradeProposalRecord
 from services.agent.repositories.db.session import create_session, init_db
 from services.agent.risk.engine import RiskEngine
 from services.agent.modules.quotes import get_quote_service
@@ -115,7 +115,8 @@ async def get_latest_decisions(
     from services.agent.modules.decisions import build_decision_context
     context = await build_decision_context(wallet_address=wallet_address)
     decision, actions = compute_rebalance(context.portfolio, context.risk_snapshot, context.profile_name)
-    response = await generate_recommendation_reasoning(context.portfolio, context.risk_snapshot, decision, actions)
+    reasoning_portfolio = context.actual_portfolio or context.portfolio
+    response = await generate_recommendation_reasoning(reasoning_portfolio, context.risk_snapshot, decision, actions)
     logger.info(
         "Decision recommendation completed: status=%s status_code=%s recommended_action=%s",
         response.status,
@@ -150,6 +151,7 @@ async def create_investment_plan(request: InvestmentPlanRequest) -> InvestmentPl
         settings=settings,
         request=request,
         portfolio=context.portfolio_response,
+        actual_portfolio=context.actual_portfolio_response,
         risk=context.risk_assessment,
     )
     logger.info(
@@ -183,6 +185,19 @@ async def get_investment_plan_for_proposal(proposal_id: str) -> InvestmentPlanRe
 @router.post("/proposals/{proposal_id}/approve", response_model=ProposalMutationResponse)
 async def approve_proposal(proposal_id: str) -> ProposalMutationResponse:
     init_db()
+    with create_session() as session:
+        from sqlalchemy import select
+
+        record = session.scalar(select(TradeProposalRecord).where(TradeProposalRecord.proposal_id == proposal_id))
+        if not record:
+            raise HTTPException(status_code=404, detail=f"Proposal not found: {proposal_id}")
+    cached_plan = InvestmentPlanRepository().get_plan_for_proposal(proposal_id)
+    if cached_plan is not None and (not cached_plan.approval_enabled or cached_plan.approval_blockers):
+        blockers = cached_plan.approval_blockers or [cached_plan.status_reason]
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot approve: {'; '.join(blockers)}",
+        )
     with create_session() as session:
         from sqlalchemy import select
 
@@ -234,6 +249,8 @@ async def list_proposals(status: str | None = None) -> ProposalListResponse:
         if status:
             query = query.where(TradeProposalRecord.status_code == status)
         records = session.scalars(query).all()
+        plan_records = session.scalars(select(InvestmentPlanRecord)).all()
+        plan_json_by_proposal_id = {record.proposal_id: record.plan_json for record in plan_records}
 
     items = [
         ProposalListItem(
@@ -253,6 +270,8 @@ async def list_proposals(status: str | None = None) -> ProposalListResponse:
             nonce=record.nonce,
             status_code=record.status_code,
             risk_snapshot_id=record.risk_snapshot_id,
+            approval_enabled=(plan_json_by_proposal_id.get(record.proposal_id) or {}).get("approval_enabled"),
+            approval_blockers=list((plan_json_by_proposal_id.get(record.proposal_id) or {}).get("approval_blockers") or []),
             created_at=record.created_at,
             updated_at=record.updated_at,
         )
@@ -287,6 +306,19 @@ async def execute_proposal(proposal_id: str) -> ProposalExecuteResponse:
         if not record.calldata:
             raise HTTPException(status_code=500, detail="Proposal calldata is missing from the record.")
 
+    cached_plan = InvestmentPlanRepository().get_plan_for_proposal(proposal_id)
+    if cached_plan is not None and (not cached_plan.approval_enabled or cached_plan.approval_blockers):
+        blockers = cached_plan.approval_blockers or [cached_plan.status_reason]
+        logger.warning(
+            "Proposal execution blocked by cached plan approval state: proposal_id=%s reasons=%s",
+            proposal_id,
+            blockers,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Execution blocked: {'; '.join(blockers)}.",
+        )
+
     portfolio = await current_portfolio(wallet_address=record.wallet_or_vault)
     quote_service = get_quote_service()
     address_to_symbol = _address_to_symbol_map(settings)
@@ -315,7 +347,7 @@ async def execute_proposal(proposal_id: str) -> ProposalExecuteResponse:
         prices = None
         quotes = None
     quote_validation_status = (
-        DataStatusCode.QUOTE_FRESH.value
+        quote.status_code
         if quote is not None and quote.amount_out is not None and quote.protocol is not None
         else DataStatusCode.DATA_MISSING.value
     )
@@ -338,6 +370,8 @@ async def execute_proposal(proposal_id: str) -> ProposalExecuteResponse:
         block_reasons.append(f"portfolio data status is {data_status}")
     if quote is None or quote.amount_out is None or quote.protocol is None:
         block_reasons.append("no swap route available for the required pair")
+    elif quote.status_code != DataStatusCode.QUOTE_FRESH.value:
+        block_reasons.append(f"live quote for {token_in_symbol}->{token_out_symbol} is stale or unverified: {quote.status_reason}")
 
     if block_reasons:
         logger.warning(

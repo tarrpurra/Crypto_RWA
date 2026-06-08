@@ -26,6 +26,11 @@ function formatRawAmount(value: string | null | undefined, decimals = 18) {
 }
 
 const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
+const ACTIVE_QUEUE_STATUSES = new Set([
+  "PROPOSAL_PENDING_APPROVAL",
+  "PROPOSAL_APPROVED",
+  "PROPOSAL_EXECUTING",
+]);
 
 function shortAddress(value: string) {
   return value.length > 10 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value;
@@ -89,6 +94,8 @@ function ProposalActionCard({
     selector?: string;
     deadline?: number;
     native_value?: string;
+    approval_enabled?: boolean | null;
+    approval_blockers?: string[];
   };
   working: boolean;
   onApprove: (id: string) => void;
@@ -101,6 +108,9 @@ function ProposalActionCard({
 }) {
   const isPending = proposal.status_code === "PROPOSAL_PENDING_APPROVAL";
   const isApproved = proposal.status_code === "PROPOSAL_APPROVED";
+  const approvalEnabled = proposal.approval_enabled ?? true;
+  const approvalBlockers = proposal.approval_blockers ?? [];
+  const approvalBlocked = !approvalEnabled || approvalBlockers.length > 0;
   const tokenInLabel = resolveTokenLabel(proposal.token_in, tokenLabelsByAddress);
   const tokenOutLabel = resolveTokenLabel(proposal.token_out, tokenLabelsByAddress);
   const tokenInDecimals = tokenDecimalsByAddress.get(proposal.token_in.toLowerCase()) ?? 18;
@@ -148,6 +158,16 @@ function ProposalActionCard({
               <p className="mt-1 text-sm text-muted-foreground">{new Date(proposal.created_at).toLocaleString()}</p>
             </div>
           </div>
+          {approvalBlocked && (
+            <div className="mt-3 rounded border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+              <p className="font-medium">Approval blocked</p>
+              <p className="mt-1">
+                {approvalBlockers.length > 0
+                  ? approvalBlockers[0]
+                  : "Live quote freshness or guard checks are not satisfied yet."}
+              </p>
+            </div>
+          )}
         </div>
         <div className="flex flex-col gap-2">
           <Button variant="outline" size="sm" onClick={() => onInspect(proposal.proposal_id)}>
@@ -156,7 +176,7 @@ function ProposalActionCard({
           </Button>
           {!aiDecisionMakerEnabled && isPending && (
             <>
-              <Button size="sm" onClick={() => onApprove(proposal.proposal_id)} disabled={working}>
+              <Button size="sm" onClick={() => onApprove(proposal.proposal_id)} disabled={working || approvalBlocked}>
                 Approve
               </Button>
               <Button size="sm" variant="destructive" onClick={() => onReject(proposal.proposal_id)} disabled={working}>
@@ -165,7 +185,7 @@ function ProposalActionCard({
             </>
           )}
           {!aiDecisionMakerEnabled && isApproved && (
-            <Button size="sm" onClick={() => onExecute(proposal.proposal_id)} disabled={working}>
+            <Button size="sm" onClick={() => onExecute(proposal.proposal_id)} disabled={working || approvalBlocked}>
               Execute
             </Button>
           )}
@@ -185,6 +205,10 @@ export default function ApprovalsPage() {
   const executeMutation = useExecuteProposal();
   const { appendEntry, getEntriesForProposal } = useProposalActivity();
   const proposals = useMemo(() => proposalsQuery.data?.proposals ?? [], [proposalsQuery.data?.proposals]);
+  const queueProposals = useMemo(
+    () => proposals.filter((proposal) => ACTIVE_QUEUE_STATUSES.has(proposal.status_code)),
+    [proposals],
+  );
   const aiDecisionMakerEnabled = settingsQuery.data?.ai_decision_maker_enabled ?? false;
   const tokenLabelsByAddress = useMemo(() => {
     const labels = new Map<string, string>();
@@ -230,9 +254,12 @@ export default function ApprovalsPage() {
     [proposals, selectedProposalId],
   );
   const proposalDetail = proposalDetailQuery.data;
+  const selectedApprovalEnabled = selectedProposal?.approval_enabled ?? proposalDetail?.approval_enabled ?? true;
+  const selectedApprovalBlockers = selectedProposal?.approval_blockers ?? proposalDetail?.approval_blockers ?? [];
+  const selectedApprovalBlocked = !selectedApprovalEnabled || selectedApprovalBlockers.length > 0;
 
-  const pendingCount = proposals.filter((p) => p.status_code === "PROPOSAL_PENDING_APPROVAL").length;
-  const approvedCount = proposals.filter((p) => p.status_code === "PROPOSAL_APPROVED").length;
+  const pendingCount = queueProposals.filter((p) => p.status_code === "PROPOSAL_PENDING_APPROVAL").length;
+  const approvedCount = queueProposals.filter((p) => p.status_code === "PROPOSAL_APPROVED").length;
   const executedCount = proposals.filter((p) => p.status_code === "PROPOSAL_EXECUTED").length;
   const working = approveMutation.isPending || rejectMutation.isPending || executeMutation.isPending;
   const proposalActivity = getEntriesForProposal(selectedProposalId);
@@ -296,7 +323,7 @@ export default function ApprovalsPage() {
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <MetricPanel
           label="Queue"
-          value={`${proposals.length} Total`}
+          value={`${queueProposals.length} Total`}
           detail={proposalsQuery.data?.status_reason ?? "Reading /proposals for the current approval queue."}
           tone={toneFromStatus(proposalsQuery.data?.status)}
         />
@@ -338,7 +365,7 @@ export default function ApprovalsPage() {
               {proposalsQuery.isLoading ? "Loading proposals..." : "No proposals in the queue."}
             </p>
           )}
-          {proposals.map((proposal) => (
+          {queueProposals.map((proposal) => (
             <ProposalActionCard
               key={proposal.proposal_id}
             proposal={proposal}
@@ -351,7 +378,12 @@ export default function ApprovalsPage() {
             tokenLabelsByAddress={tokenLabelsByAddress}
             tokenDecimalsByAddress={tokenDecimalsByAddress}
           />
-        ))}
+          ))}
+          {proposals.length > 0 && queueProposals.length === 0 && !proposalsQuery.isLoading && (
+            <p className="text-sm text-muted-foreground">
+              No active approval queue items are available right now.
+            </p>
+          )}
         </div>
       </section>
 
@@ -462,6 +494,16 @@ export default function ApprovalsPage() {
                     : "Approve only after checking the pair, amount bounds, guard checks, and whether the proposal is still pending."}
                 </p>
               </div>
+              {selectedApprovalBlocked && (
+                <div className="grid gap-2 rounded border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
+                  <p className="font-medium">Approval blocked</p>
+                  {selectedApprovalBlockers.length > 0 ? (
+                    selectedApprovalBlockers.map((blocker) => <p key={blocker}>{blocker}</p>)
+                  ) : (
+                    <p>Live quote freshness or guard checks are not satisfied yet.</p>
+                  )}
+                </div>
+              )}
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" onClick={() => setShowRiskDialog(true)} disabled={!proposalDetail?.risk_assessment && !riskQuery.data}>
                   View risk details
@@ -470,7 +512,7 @@ export default function ApprovalsPage() {
                   <>
                     <Button
                       onClick={() => handleApprove(selectedProposal.proposal_id)}
-                      disabled={working || selectedProposal.status_code !== "PROPOSAL_PENDING_APPROVAL"}
+                      disabled={working || selectedProposal.status_code !== "PROPOSAL_PENDING_APPROVAL" || selectedApprovalBlocked}
                     >
                       Approve
                     </Button>
@@ -483,7 +525,7 @@ export default function ApprovalsPage() {
                     </Button>
                     <Button
                       onClick={() => handleExecute(selectedProposal.proposal_id)}
-                      disabled={working || selectedProposal.status_code !== "PROPOSAL_APPROVED"}
+                      disabled={working || selectedProposal.status_code !== "PROPOSAL_APPROVED" || selectedApprovalBlocked}
                     >
                       Execute
                     </Button>
