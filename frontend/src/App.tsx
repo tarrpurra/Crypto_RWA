@@ -22,7 +22,17 @@ import SettingsPage from "./pages/SettingsPage";
 import SimplexDemo from "./pages/SimplexDemo";
 import NotFound from "./pages/NotFound";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,
+      gcTime: 5 * 60_000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: true,
+      retry: 1,
+    },
+  },
+});
 
 function RouteChangeLogger() {
   const location = useLocation();

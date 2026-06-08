@@ -17,6 +17,147 @@ For each entry, record:
 
 ## Change Log
 
+### 2026-06-08
+
+Type:
+Proposal routing and dust-leg fix
+
+Author:
+Codex
+
+Summary:
+
+- updated the proposal planner to prefer rebalance swap legs built from the current wallet holdings when the actual portfolio is available and the allocation engine returns actionable rebalance moves
+- surfaced `RISK_REBALANCE_ONLY` as a Sepolia advisory warning instead of a blocker so rebalance-backed execution can proceed when the swap route is valid
+- added dust guards to both planned swap builders so swap legs below the minimum executable value are skipped before proposal encoding and approval-step generation
+- passed the actual wallet portfolio into proposal planning from the decisions endpoint and added regression coverage for held-asset routing, dust skipping, and rebalance-path selection
+
+Affected scope:
+
+- services/agent/modules/proposals/investment_planner.py
+- services/agent/app/api/decisions.py
+- services/agent/tests/unit/test_investment_planner.py
+
+Impact:
+
+- behavior: proposal creation now follows held-asset rebalance routes instead of forcing a deposit-to-target path when the wallet already holds the rebalance assets
+- data quality: dust-sized swap legs are filtered before they can leak into proposal payloads or approval steps
+- tests: direct coverage now exercises both swap builders and the rebalance-path selection logic
+
+### 2026-06-08
+
+Type:
+Pre-demo market/report latency reduction
+
+Author:
+Codex
+
+Summary:
+
+- parallelized `GET /market/quotes/latest` so live price refresh and route discovery can run together before quote sampling starts
+- added a small request-local cache inside the report builder so repeated report sections can reuse the same fetched portfolio, risk, allocation, and market data within one `reports/latest` request
+- added focused tests for the new quote-parallelization path and the report cache helper
+
+Affected scope:
+
+- services/agent/app/api/market.py
+- services/agent/modules/quotes/service.py
+- services/agent/modules/reports/builder.py
+- services/agent/tests/integration/test_market.py
+- services/agent/tests/integration/test_reports.py
+
+Impact:
+
+- performance: quote sampling and report generation should spend less time waiting on avoidable sequential fetches
+- reliability: request-local reuse reduces repeated upstream calls during one report render
+- tests: concurrency and cache behavior now have direct coverage
+
+### 2026-06-08
+
+Type:
+Pre-demo latency reduction
+
+Author:
+Codex
+
+Summary:
+
+- parallelized the live portfolio refresh path so persisted snapshot lookup, ERC-20 balance reads, and price bundle fetches can run concurrently instead of serializing inside `current_portfolio()`
+- updated the shared decision context builder to run portfolio and market-context reads in parallel and reuse the same built context for downstream allocation and reasoning flows
+- added unit coverage for the new concurrency shape so the request pipeline does not drift back to sequential fetches
+
+Affected scope:
+
+- services/agent/app/api/portfolio.py
+- services/agent/modules/decisions/context.py
+- services/agent/tests/unit/test_investment_scope.py
+- services/agent/tests/unit/test_portfolio_snapshot.py
+
+Impact:
+
+- performance: the demo-critical request path should spend less time waiting on independent live reads
+- reliability: slow upstream market and RPC calls still fall back to persisted data when available
+- tests: concurrency-oriented unit coverage now guards the new parallel fetch behavior
+
+### 2026-06-08
+
+Type:
+Swap cleanup and soft-advisory AI
+
+Author:
+Codex
+
+Summary:
+
+- changed proposal plan generation to emit execution-oriented status codes instead of proposal lifecycle codes
+- kept swap proposal creation guarded by quote freshness, slippage, deviation, pause-guardian, router, approval-manager, and recipient checks
+- updated the AI decision prompt and parser metadata path so AI remains advisory but can surface suggested actions without overriding deterministic recommendations
+- updated investment planner tests to expect execution-oriented linked proposal statuses
+
+Affected scope:
+
+- services/agent/modules/proposals/investment_planner.py
+- services/agent/strategies/decision_templates/prompt_builder.py
+- services/agent/strategies/decision_templates/parser.py
+- services/agent/tests/unit/test_investment_planner.py
+- docs/ai-data-analytics/ai_plan.md
+
+Impact:
+
+- execution: swap plans now surface execution readiness and blocking status using execution vocabulary
+- ai: model suggestions remain visible in metadata/debug payloads while the deterministic recommendation stays authoritative
+- tests: touched unit expectations now match execution-oriented swap planning
+
+### 2026-06-08
+
+Type:
+Swap-context prompt enrichment
+
+Author:
+Codex
+
+Summary:
+
+- extended the scoped allocation prompt so it can render current wallet holdings alongside the deposit preview instead of only showing the deposit-to-target path
+- updated the AI reasoning prompt to include explicit `token_in_symbol`, `token_out_symbol`, `route_id`, and `swap_pair_label` fields for each rebalance action
+- threaded the best-effort wallet portfolio into scoped decision and allocation flows so the AI can see held assets like `USDY` and `mETH` when reasoning about rebalances
+- adjusted the fallback unit tests so they run deterministically without probing a live AI provider
+
+Affected scope:
+
+- services/agent/modules/decisions/context.py
+- services/agent/app/api/investment_scope.py
+- services/agent/strategies/decision_templates/prompt_builder.py
+- services/agent/strategies/decision_templates/parser.py
+- services/agent/tests/unit/test_ai_fallback.py
+- services/agent/tests/unit/test_investment_scope.py
+
+Impact:
+
+- ai: prompt context now reflects held assets and explicit swap routes, not just the WMNT-centric deposit path
+- reasoning: operator-visible explanations now preserve the concrete token-in/token-out execution context
+- tests: AI fallback coverage stays deterministic and no longer depends on a live model endpoint
+
 ### 2026-06-07
 
 Type:

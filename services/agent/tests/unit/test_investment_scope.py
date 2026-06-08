@@ -51,6 +51,44 @@ def _make_risk_assessment(status_code: str = RiskStatusCode.RISK_NORMAL.value, h
 
 
 class InvestmentScopeTests(unittest.IsolatedAsyncioTestCase):
+    @patch("services.agent.modules.decisions.context._latest_market_context_best_effort_async", new_callable=AsyncMock)
+    @patch("services.agent.modules.decisions.context.current_portfolio", new_callable=AsyncMock)
+    async def test_build_decision_context_reuses_parallel_market_and_portfolio_reads(
+        self,
+        mock_current_portfolio,
+        mock_market_context,
+    ) -> None:
+        from services.agent.modules.decisions.context import build_decision_context
+        from services.agent.app.schemas.portfolio import PortfolioSnapshotResponse
+
+        settings = Settings(
+            target_chain=TargetChain.MANTLE_SEPOLIA,
+            simulation_fallback_enabled=True,
+        )
+
+        portfolio_response = PortfolioSnapshotResponse(
+            snapshot_id="portfolio-1",
+            generated_at=utc_now(),
+            portfolio_address="0xwallet",
+            chain_id=5003,
+            base_currency="USD",
+            total_value_usd="100",
+            positions=[],
+            data_sources_used=[],
+            status="ok",
+            status_code=DataStatusCode.DATA_FRESH.value,
+            status_label=DataStatusCode.DATA_FRESH.value,
+            status_reason="fresh",
+        )
+        mock_current_portfolio.return_value = portfolio_response
+        mock_market_context.return_value = ([], [])
+
+        context = await build_decision_context(wallet_address="0xwallet")
+
+        self.assertEqual(context.portfolio_response.snapshot_id, "portfolio-1")
+        mock_current_portfolio.assert_awaited_once()
+        mock_market_context.assert_awaited_once()
+
     @patch("services.agent.app.api.investment_scope.generate_ai_allocation")
     @patch("services.agent.modules.decisions.build_decision_context")
     async def test_scoped_allocation_calls_ai_with_context(self, mock_build_ctx, mock_ai_alloc) -> None:

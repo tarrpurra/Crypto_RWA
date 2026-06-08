@@ -1,13 +1,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, useReducedMotion } from "framer-motion";
-import YieldMindOrb from "@/components/intro/YieldMindOrb";
-import { useState, useEffect } from "react";
 
 const Navbar = ({ hasEntered }: { hasEntered: boolean }) => {
   const pathname = usePathname();
   const reducedMotion = useReducedMotion();
-  const [isHovered, setIsHovered] = useState(false);
 
   const navLinks = [
     { href: "/", label: "Product" },
@@ -32,13 +29,8 @@ const Navbar = ({ hasEntered }: { hasEntered: boolean }) => {
                 ${reducedMotion ? "hidden" : ""}
                 hover:scale-105 transition-transform duration-200
               `}
-              onMouseEnter={() => setIsHovered(true)}
-              onMouseLeave={() => setIsHovered(false)}
             >
-              <YieldMindOrb 
-                size={isHovered ? 40 : 36} 
-                className="h-full w-full" 
-              />
+              <img src="/master_logo.png" alt="" aria-hidden="true" draggable={false} className="h-full w-full object-contain" />
             </motion.div>
 
             <motion.span

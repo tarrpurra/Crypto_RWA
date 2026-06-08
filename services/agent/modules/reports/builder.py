@@ -26,6 +26,16 @@ from services.agent.repositories.db.models import TradeProposalRecord
 from services.agent.repositories.db.session import create_session, init_db
 
 
+class _ReportRequestCache:
+    def __init__(self) -> None:
+        self._values: dict[str, Any] = {}
+
+    async def get_or_fetch(self, key: str, fetch_fn):
+        if key not in self._values:
+            self._values[key] = await fetch_fn()
+        return self._values[key]
+
+
 def _normalize_value(value: Any) -> str:
     if value is None:
         return "n/a"
@@ -179,16 +189,17 @@ async def build_investment_report(
     generated_at = utc_now()
     report_id = f"report_{uuid4().hex}"
     download_name = f"aixrwa_report_{generated_at.strftime('%Y%m%d-%H%M%S')}.md"
-    ai_mode = "Full access AI" if runtime_config.AI_DECISION_MAKER_ENABLED else "Recommendation only"
+    ai_mode = "Full access AI" if runtime_config.get_ai_decision_maker_enabled() else "Recommendation only"
 
     sections: list[ReportSection] = []
     data_gaps: list[str] = []
+    request_cache = _ReportRequestCache()
     metadata: dict[str, Any] = {
         "report_id": report_id,
         "target_chain": settings.target_chain.value,
         "runtime_mode": settings.runtime_mode.value,
         "ai_mode": ai_mode,
-        "ai_decision_maker_enabled": runtime_config.AI_DECISION_MAKER_ENABLED,
+        "ai_decision_maker_enabled": runtime_config.get_ai_decision_maker_enabled(),
         "scope": _serialize_scope(scope),
     }
 
@@ -221,7 +232,10 @@ async def build_investment_report(
     portfolio_response = None
     portfolio_status = "degraded"
     try:
-        portfolio_response = await current_portfolio(wallet_address=wallet_address)
+        portfolio_response = await request_cache.get_or_fetch(
+            "portfolio",
+            lambda: current_portfolio(wallet_address=wallet_address),
+        )
         portfolio_status = portfolio_response.status
     except Exception as exc:
         fallback_snapshot = fetch_portfolio_snapshot(wallet_address=wallet_address, allow_env_fallback=False)
@@ -289,10 +303,14 @@ async def build_investment_report(
 
     risk_response = None
     try:
-        risk_response = await current_risk(
-            wallet_address=wallet_address,
-            allow_env_fallback=False,
-            **(scope_query or {}),
+        risk_key = f"risk:{wallet_address}:{scope_query!r}"
+        risk_response = await request_cache.get_or_fetch(
+            risk_key,
+            lambda: current_risk(
+                wallet_address=wallet_address,
+                allow_env_fallback=False,
+                **(scope_query or {}),
+            ),
         )
     except Exception as exc:
         data_gaps.append(f"Risk assessment unavailable: {exc}")
@@ -327,9 +345,13 @@ async def build_investment_report(
 
     allocation_response = None
     try:
-        allocation_response = await get_allocation_recommendation(
-            wallet_address=wallet_address,
-            **(scope_query or {}),
+        allocation_key = f"allocation:{wallet_address}:{scope_query!r}"
+        allocation_response = await request_cache.get_or_fetch(
+            allocation_key,
+            lambda: get_allocation_recommendation(
+                wallet_address=wallet_address,
+                **(scope_query or {}),
+            ),
         )
     except Exception as exc:
         data_gaps.append(f"Allocation recommendation unavailable: {exc}")
@@ -362,9 +384,13 @@ async def build_investment_report(
 
     decision_response = None
     try:
-        decision_response = await get_latest_decisions(
-            wallet_address=wallet_address,
-            **(scope_query or {}),
+        decision_key = f"decision:{wallet_address}:{scope_query!r}"
+        decision_response = await request_cache.get_or_fetch(
+            decision_key,
+            lambda: get_latest_decisions(
+                wallet_address=wallet_address,
+                **(scope_query or {}),
+            ),
         )
     except Exception as exc:
         data_gaps.append(f"Recommendation engine unavailable: {exc}")
@@ -455,7 +481,7 @@ async def build_investment_report(
     market_status = "degraded"
     market_summary = "Market diagnostics are unavailable."
     try:
-        market_ingestion = await ingestion_status()
+        market_ingestion = await request_cache.get_or_fetch("market_ingestion", ingestion_status)
         market_section_fields.extend(
             [
                 _field("Ingestion status", market_ingestion.status),
@@ -470,7 +496,7 @@ async def build_investment_report(
         data_gaps.append(f"Market ingestion unavailable: {exc}")
 
     try:
-        routes_response = await market_routes()
+        routes_response = await request_cache.get_or_fetch("market_routes", market_routes)
         market_section_fields.extend(
             [
                 _field("Routes", len(routes_response.routes)),
@@ -487,7 +513,7 @@ async def build_investment_report(
         data_gaps.append(f"Route discovery unavailable: {exc}")
 
     try:
-        prices_response = await latest_prices()
+        prices_response = await request_cache.get_or_fetch("market_prices", latest_prices)
         market_section_fields.extend(
             [
                 _field("Price snapshots", len(prices_response.prices)),
@@ -502,7 +528,7 @@ async def build_investment_report(
         data_gaps.append(f"Price ingestion unavailable: {exc}")
 
     try:
-        quotes_response = await latest_quotes()
+        quotes_response = await request_cache.get_or_fetch("market_quotes", latest_quotes)
         market_section_fields.extend(
             [
                 _field("Quote snapshots", len(quotes_response.quotes)),
@@ -643,7 +669,7 @@ async def build_investment_report(
         report_id=report_id,
         download_name=download_name,
         wallet_address=wallet_address,
-        ai_decision_maker_enabled=runtime_config.AI_DECISION_MAKER_ENABLED,
+        ai_decision_maker_enabled=runtime_config.get_ai_decision_maker_enabled(),
         ai_mode=ai_mode,
         sections=sections,
         data_gaps=data_gaps,

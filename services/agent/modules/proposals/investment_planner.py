@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from dataclasses import dataclass
@@ -11,8 +12,9 @@ from fastapi import HTTPException
 from web3 import Web3
 
 from services.agent.app.core.settings import Settings
-from services.agent.app.core.status_codes import DataStatusCode, ExecutionStatusCode, ProposalStatusCode, RuntimeMode, TargetChain
-from services.agent.app.schemas.portfolio import PortfolioSnapshotResponse
+from services.agent.app.core.status_codes import DataStatusCode, ExecutionStatusCode, RuntimeMode, TargetChain
+from services.agent.app.schemas.portfolio import AssetBalance, PortfolioSnapshot, PortfolioSnapshotResponse
+from services.agent.app.schemas.allocation import RebalanceAction
 from services.agent.app.schemas.proposals import (
     AllocationTargetItem,
     ExecutionPayloadSchema,
@@ -24,18 +26,21 @@ from services.agent.app.schemas.proposals import (
     TransactionStep,
 )
 from services.agent.app.schemas.quotes import NormalizedQuoteSnapshot
-from services.agent.app.schemas.risk import RiskAssessmentResponse
+from services.agent.app.schemas.risk import RiskAssessmentResponse, RiskSnapshot
 from services.agent.modules.contracts.reader import get_pause_guardian_state
 from services.agent.modules.market_data import PRICE_SNAPSHOT_STORE
 from services.agent.modules.oracle import get_ondo_usdy_oracle_adapter
-from services.agent.modules.oracle.freshness import utc_now
+from services.agent.modules.oracle.freshness import age_seconds, utc_now
 from services.agent.modules.quotes import get_quote_service
 from services.agent.repositories.db.market_repository import MarketDataRepository
 from services.agent.strategies.allocation.profiles import get_allocation_profile, get_allocation_profile_for_chain, normalize_profile_name
+from services.agent.strategies.allocation.rebalance import compute_rebalance
 
 
 PROPOSAL_DETAIL_CACHE: dict[str, InvestmentPlanResponse] = {}
+logger = logging.getLogger("services.agent.proposals.investment_planner")
 
+MIN_SWAP_USD = Decimal("1.00")
 SEPOLIA_PRICE_DEVIATION_THRESHOLD = Decimal("0.10")
 SEPOLIA_CONCENTRATION_CAP = Decimal("1.00")
 SEPOLIA_SLIPPAGE_THRESHOLD_DEFAULT = Decimal("100")
@@ -116,6 +121,125 @@ def _decimal_or_zero(value: str | None) -> Decimal:
         return Decimal(value or "0")
     except Exception:
         return Decimal("0")
+
+
+def _portfolio_snapshot_from_response(snapshot: PortfolioSnapshotResponse) -> PortfolioSnapshot:
+    return PortfolioSnapshot(
+        snapshot_id=snapshot.snapshot_id,
+        wallet_or_vault=snapshot.portfolio_address or "UNCONFIGURED",
+        total_value_usd=float(_decimal_or_zero(snapshot.total_value_usd)),
+        balances=[
+            AssetBalance(
+                asset_symbol=position.asset_symbol,
+                balance=float(_decimal_or_zero(position.balance)),
+                value_usd=float(_decimal_or_zero(position.value_usd)),
+                weight=float(_decimal_or_zero(position.weight)),
+                price_usd=float(_decimal_or_zero(position.price_usd)),
+            )
+            for position in snapshot.positions
+        ],
+        weights={
+            position.asset_symbol: float(_decimal_or_zero(position.weight))
+            for position in snapshot.positions
+        },
+        status_code=snapshot.status_code,
+        status_reason=snapshot.status_reason,
+        created_at=snapshot.generated_at,
+    )
+
+
+def _risk_snapshot_from_assessment(assessment: RiskAssessmentResponse) -> RiskSnapshot:
+    return RiskSnapshot(
+        snapshot_id=str(assessment.metadata.get("risk_snapshot_id") or assessment.metadata.get("risk_assessment_id") or assessment.metadata.get("assessment_id") or f"risk_assessment_{int(assessment.generated_at.timestamp())}"),
+        total_score=assessment.risk_score,
+        risk_band=assessment.risk_band,
+        status_code=assessment.status_code,
+        status_reason=assessment.status_reason,
+        bucket_scores={bucket.bucket: bucket.score for bucket in assessment.buckets},
+        prechecks={bucket.bucket: not bucket.hard_veto and bucket.status not in {"blocked", "missing"} for bucket in assessment.buckets},
+        notes=list(assessment.notes),
+        created_at=assessment.generated_at,
+    )
+
+
+def _symbol_price(
+    symbol: str,
+    prices: dict[str, Decimal],
+    portfolio: PortfolioSnapshotResponse | None = None,
+) -> Decimal | None:
+    normalized = symbol.upper()
+    aliases = {normalized}
+    if normalized == "MNT":
+        aliases.add("WMNT")
+    elif normalized == "WMNT":
+        aliases.add("MNT")
+    elif normalized == "USDC":
+        aliases.add("USDC.E")
+    elif normalized == "USDC.E":
+        aliases.add("USDC")
+
+    for alias in aliases:
+        price = prices.get(alias)
+        if price is not None and price > 0:
+            return price
+
+    if portfolio is None:
+        return None
+
+    for position in portfolio.positions:
+        position_symbol = position.asset_symbol.upper()
+        position_key = position.asset_key.upper()
+        if position_symbol not in aliases and position_key not in aliases:
+            continue
+        price = _decimal_or_zero(position.price_usd)
+        if price > 0:
+            return price
+        balance = _decimal_or_zero(position.balance)
+        value_usd = _decimal_or_zero(position.value_usd)
+        if balance > 0 and value_usd > 0:
+            return value_usd / balance
+    return None
+
+
+def _best_quote_for_pair(
+    quote_service,
+    token_in: str,
+    token_out: str,
+) -> tuple[NormalizedQuoteSnapshot | None, Decimal | None]:
+    attempt = quote_service.best_quote_attempt_for_pair(token_in, token_out)
+    raw_gas_estimate: Decimal | None = None
+    quote: NormalizedQuoteSnapshot | None = None
+
+    if attempt is not None:
+        gas_value = attempt.raw_snapshot.raw_payload_json.get("gas_estimate")
+        if gas_value is not None:
+            try:
+                raw_gas_estimate = Decimal(str(gas_value))
+            except Exception:
+                raw_gas_estimate = None
+        if (
+            attempt.normalized_snapshot.status_code == DataStatusCode.QUOTE_FRESH.value
+            and attempt.normalized_snapshot.amount_out is not None
+        ):
+            quote = attempt.normalized_snapshot
+
+    if quote is None:
+        quote = quote_service.best_quote_for_pair(token_in, token_out)
+
+    return quote, raw_gas_estimate
+
+
+def _is_dust_swap(
+    *,
+    amount_in: Decimal,
+    token_in_symbol: str,
+    prices: dict[str, Decimal],
+    portfolio: PortfolioSnapshotResponse | None = None,
+) -> bool:
+    source_price = _symbol_price(token_in_symbol, prices, portfolio)
+    if source_price is None or source_price <= 0:
+        return False
+    return amount_in * source_price < MIN_SWAP_USD
 
 
 def _scaled_quote_amount_out_for_swap(swap: PlannedSwap) -> Decimal | None:
@@ -210,9 +334,14 @@ def _build_planned_swaps(
     deposit_asset_symbol: str,
     deposit_amount: Decimal,
     target_weights: dict[str, float],
+    prices: dict[str, Decimal] | None = None,
 ) -> list[PlannedSwap]:
     quote_service = get_quote_service()
+    prices = prices or _latest_price_map()
     execution_symbol = _execution_input_symbol(deposit_asset_symbol)
+    source_price = _symbol_price(execution_symbol, prices)
+    if source_price is None:
+        source_price = _symbol_price(deposit_asset_symbol, prices)
     swaps: list[PlannedSwap] = []
     for asset_symbol, weight in target_weights.items():
         if asset_symbol.upper() == execution_symbol.upper():
@@ -220,23 +349,15 @@ def _build_planned_swaps(
         amount_in = deposit_amount * Decimal(str(weight))
         if amount_in <= 0:
             continue
-        attempt = quote_service.best_quote_attempt_for_pair(execution_symbol, asset_symbol)
-        raw_gas_estimate = None
-        quote: NormalizedQuoteSnapshot | None = None
-        if attempt is not None:
-            gas_value = attempt.raw_snapshot.raw_payload_json.get("gas_estimate")
-            if gas_value is not None:
-                try:
-                    raw_gas_estimate = Decimal(str(gas_value))
-                except Exception:
-                    raw_gas_estimate = None
-            if (
-                attempt.normalized_snapshot.status_code == DataStatusCode.QUOTE_FRESH.value
-                and attempt.normalized_snapshot.amount_out is not None
-            ):
-                quote = attempt.normalized_snapshot
-        if quote is None:
-            quote = quote_service.best_quote_for_pair(execution_symbol, asset_symbol)
+        if source_price is not None and amount_in * source_price < MIN_SWAP_USD:
+            logger.info(
+                "Skipping dust swap %s->%s: source value $%s is below the minimum threshold.",
+                execution_symbol,
+                asset_symbol,
+                f"{(amount_in * source_price):.4f}",
+            )
+            continue
+        quote, raw_gas_estimate = _best_quote_for_pair(quote_service, execution_symbol, asset_symbol)
         swaps.append(
             PlannedSwap(
                 target_asset_symbol=asset_symbol,
@@ -248,6 +369,67 @@ def _build_planned_swaps(
                 uses_native_value=False,
             )
         )
+    return swaps
+
+
+def _build_rebalance_swaps(
+    *,
+    rebalance_actions: list[RebalanceAction],
+    portfolio: PortfolioSnapshotResponse,
+    prices: dict[str, Decimal] | None = None,
+) -> list[PlannedSwap]:
+    quote_service = get_quote_service()
+    prices = prices or _latest_price_map()
+    swaps: list[PlannedSwap] = []
+
+    for action in rebalance_actions:
+        action_type = action.action.upper()
+        if action_type not in {"BUY", "SELL"}:
+            continue
+        token_in_symbol = action.token_in_symbol or action.asset_symbol
+        token_out_symbol = action.token_out_symbol or action.asset_symbol
+        if not token_in_symbol or not token_out_symbol:
+            continue
+
+        source_price = _symbol_price(token_in_symbol, prices, portfolio)
+        target_price = _symbol_price(token_out_symbol, prices, portfolio)
+
+        amount_in: Decimal | None = None
+        if action_type == "SELL":
+            amount_in = Decimal(str(action.amount))
+        elif source_price is not None and target_price is not None and source_price > 0:
+            amount_in = Decimal(str(action.amount)) * target_price / source_price
+
+        if amount_in is None or amount_in <= 0:
+            logger.info(
+                "Skipping rebalance swap %s->%s because the input amount could not be resolved.",
+                token_in_symbol,
+                token_out_symbol,
+            )
+            continue
+
+        if source_price is not None and amount_in * source_price < MIN_SWAP_USD:
+            logger.info(
+                "Skipping dust rebalance swap %s->%s: source value $%s is below the minimum threshold.",
+                token_in_symbol,
+                token_out_symbol,
+                f"{(amount_in * source_price):.4f}",
+            )
+            continue
+
+        quote, raw_gas_estimate = _best_quote_for_pair(quote_service, token_in_symbol, token_out_symbol)
+        swaps.append(
+            PlannedSwap(
+                target_asset_symbol=token_out_symbol,
+                amount_in=amount_in,
+                token_in_symbol=token_in_symbol,
+                token_out_symbol=token_out_symbol,
+                quote=quote,
+                gas_estimate=raw_gas_estimate,
+                uses_native_value=False,
+            )
+        )
+
     return swaps
 
 
@@ -267,7 +449,28 @@ def _build_guard_checks(
     price_deviation_threshold, concentration_cap, slippage_threshold_default, slippage_threshold_meth = _guard_thresholds(settings)
 
     oracle_ok = usdy_oracle.status in {"ok", "live", "live_reference"} if "USDY" in fresh_price_symbols else True
-    quote_ok = all(swap.quote and swap.quote.status_code == DataStatusCode.QUOTE_FRESH.value for swap in swaps) if swaps else True
+    quote_ok = all(swap.quote and swap.quote.amount_out is not None for swap in swaps) if swaps else True
+    quote_freshness_pass = True
+    quote_freshness_message = "No swap quotes require freshness checks."
+    quote_freshness_observed = "n/a"
+    quote_freshness_threshold = f"<={int(settings.dex_quote_fresh_limit_seconds)}s"
+    for swap in swaps:
+        if swap.quote is None or swap.quote.amount_out is None:
+            quote_freshness_pass = False
+            quote_freshness_message = f"Missing live quote for {swap.token_in_symbol}->{swap.token_out_symbol}."
+            quote_freshness_observed = "missing"
+            break
+        quote_age = age_seconds(swap.quote.sample_timestamp, utc_now())
+        quote_freshness_observed = str(quote_age) if quote_age is not None else "missing"
+        if quote_age is None:
+            quote_freshness_pass = False
+            quote_freshness_message = f"Quote freshness timestamp is missing for {swap.token_in_symbol}->{swap.token_out_symbol}."
+            break
+        if quote_age > settings.dex_quote_fresh_limit_seconds or swap.quote.status_code == DataStatusCode.QUOTE_STALE.value:
+            quote_freshness_pass = False
+            quote_freshness_message = f"Quote for {swap.token_in_symbol}->{swap.token_out_symbol} is stale at {quote_age} seconds old."
+            break
+        quote_freshness_message = f"Quote for {swap.token_in_symbol}->{swap.token_out_symbol} is {quote_age} seconds old and within freshness limits."
 
     deviation_pass = True
     deviation_message = "No swap quotes require deviation checks."
@@ -313,6 +516,8 @@ def _build_guard_checks(
     concentration_pass = max(selected_weights.values()) <= concentration_cap if selected_weights else True
     if not concentration_pass:
         blockers.append(f"One target allocation exceeds the {int(concentration_cap * Decimal('100'))}% concentration cap.")
+    if not quote_freshness_pass:
+        blockers.append(quote_freshness_message)
 
     pause_ok = True
     pause_message = "Pause guardian is not configured; runtime remains advisory."
@@ -340,6 +545,16 @@ def _build_guard_checks(
     approval_message = "Approval freshness is evaluated after the wallet submits the ERC-20 approval transaction."
 
     checks = [
+        RiskValidationCheck(
+            code="quote_freshness",
+            label="Quote freshness",
+            passed=quote_freshness_pass,
+            blocking=strict_market_checks,
+            message=quote_freshness_message,
+            observed_value=quote_freshness_observed,
+            threshold_value=quote_freshness_threshold,
+            data_sources_used=["quotes"],
+        ),
         RiskValidationCheck(
             code="oracle_freshness",
             label="Oracle freshness",
@@ -441,7 +656,10 @@ def _encode_trade_proposal(
     decimals_in = int(token_in_asset.get("decimals") or 18)
     decimals_out = int(token_out_asset.get("decimals") or 18)
     max_amount_in = int(swap.amount_in * Decimal(10 ** decimals_in))
-    min_amount_out = int((quoted_amount_out * Decimal("0.99")) * Decimal(10 ** decimals_out))
+    if settings.target_chain == TargetChain.MANTLE_SEPOLIA:
+        min_amount_out = int((quoted_amount_out * Decimal("0.50")) * Decimal(10 ** decimals_out))
+    else:
+        min_amount_out = int((quoted_amount_out * Decimal("0.99")) * Decimal(10 ** decimals_out))
 
     if swap.quote.protocol == "AIYIELD":
         router_address = settings.effective_aiyield_swap_router_address
@@ -512,7 +730,7 @@ def _encode_trade_proposal(
         plan_hash=plan_hash,
         wallet_or_vault=recipient,
         payload=payload,
-        status_code=ProposalStatusCode.PROPOSAL_PENDING_APPROVAL.value,
+        status_code=ExecutionStatusCode.EXECUTION_READY.value,
         risk_snapshot_id=None,
         created_at=t_now,
         updated_at=t_now,
@@ -535,6 +753,7 @@ def build_investment_plan(
     request: InvestmentPlanRequest,
     portfolio: PortfolioSnapshotResponse,
     risk: RiskAssessmentResponse,
+    actual_portfolio: PortfolioSnapshotResponse | None = None,
 ) -> tuple[InvestmentPlanResponse, list[tuple[TradeProposal, str]]]:
     normalized_profile = normalize_profile_name(request.risk_profile)
     deposit_amount = Decimal(str(request.deposit_amount))
@@ -606,10 +825,36 @@ def build_investment_plan(
     if missing_assets:
         blockers.append(f"Target assets are not configured on {settings.target_chain.value}: {', '.join(missing_assets)}.")
 
-    swaps = _build_planned_swaps(
+    rebalance_swaps: list[PlannedSwap] = []
+    if settings.target_chain == TargetChain.MANTLE_SEPOLIA and risk.risk_band == "RISK_REBALANCE_ONLY":
+        warnings.append("Testnet advisory: RISK_REBALANCE_ONLY is advisory on Mantle Sepolia and does not block rebalance execution.")
+    planning_portfolio = actual_portfolio or portfolio
+    held_symbols = {
+        position.asset_symbol.upper()
+        for position in planning_portfolio.positions
+        if _decimal_or_zero(position.balance) > 0 and position.asset_symbol.upper() != request.deposit_asset_symbol.upper()
+    }
+    if held_symbols:
+        rebalance_portfolio = _portfolio_snapshot_from_response(planning_portfolio)
+        rebalance_decision, rebalance_actions = compute_rebalance(
+            rebalance_portfolio,
+            _risk_snapshot_from_assessment(risk),
+            normalized_profile,
+        )
+        if rebalance_actions and rebalance_decision.recommended_action != "PAUSE":
+            rebalance_swaps = _build_rebalance_swaps(
+                rebalance_actions=rebalance_actions,
+                portfolio=planning_portfolio,
+                prices=prices,
+            )
+            if rebalance_swaps:
+                warnings.append("Rebalance proposal legs were built from current wallet holdings.")
+
+    swaps = rebalance_swaps or _build_planned_swaps(
         deposit_asset_symbol=request.deposit_asset_symbol,
         deposit_amount=deposit_amount,
         target_weights=selected_weights,
+        prices=prices,
     )
     checks, guard_blockers = _build_guard_checks(
         settings=settings,
@@ -640,7 +885,8 @@ def build_investment_plan(
     transaction_steps: list[TransactionStep] = []
     step_index = 1
     ai_managed_execution = settings.ai_decision_maker_enabled
-    if request.deposit_asset_symbol.upper() == "MNT":
+    wrap_native_mnt = request.deposit_asset_symbol.upper() == "MNT" and any(swap.token_in_symbol.upper() == "WMNT" for swap in swaps)
+    if wrap_native_mnt:
         transaction_steps.append(
             TransactionStep(
                 step_index=step_index,
@@ -692,26 +938,34 @@ def build_investment_plan(
             step_index += 1
 
     execution_required = bool(linked_proposals)
-    approval_enabled = not blockers and execution_required and deposit_price is not None
+    execution_ready = bool(linked_proposals) and (deposit_price is not None or bool(rebalance_swaps))
+    approval_enabled = not blockers and execution_ready
     if blockers:
         response_status = "degraded"
-        response_status_code = ProposalStatusCode.PROPOSAL_RISK_REJECTED.value
+        response_status_code = ExecutionStatusCode.EXECUTION_BLOCKED.value
         response_status_reason = "Investment plan is blocked until the listed issues are resolved."
-    elif execution_required and deposit_price is not None:
+    elif execution_ready:
         response_status = "ok"
-        response_status_code = ProposalStatusCode.PROPOSAL_PENDING_APPROVAL.value
-        response_status_reason = (
-            "Investment plan is ready for automatic execution by full access AI."
-            if settings.ai_decision_maker_enabled
-            else "Investment plan is ready for human approval."
-        )
+        response_status_code = ExecutionStatusCode.EXECUTION_READY.value
+        if rebalance_swaps:
+            response_status_reason = (
+                "Rebalance plan is ready for automatic execution by full access AI."
+                if settings.ai_decision_maker_enabled
+                else "Rebalance plan is ready for human approval."
+            )
+        else:
+            response_status_reason = (
+                "Investment plan is ready for automatic execution by full access AI."
+                if settings.ai_decision_maker_enabled
+                else "Investment plan is ready for human approval."
+            )
     else:
         response_status = "ok"
         response_status_code = ExecutionStatusCode.EXECUTION_SKIPPED.value
         response_status_reason = (
             "No swaps are required because the requested allocation is already aligned."
             if not execution_required
-            else "Allocation is available, but execution is deferred until a normalized deposit price is available."
+            else "Allocation is available, but execution is deferred until a normalized deposit price or rebalance-backed quote path is available."
         )
 
     response = InvestmentPlanResponse(
@@ -739,6 +993,8 @@ def build_investment_plan(
             "portfolio_snapshot_id": portfolio.snapshot_id,
             "portfolio_address": portfolio.portfolio_address,
             "total_portfolio_value_usd": portfolio.total_value_usd,
+            "actual_portfolio_snapshot_id": actual_portfolio.snapshot_id if actual_portfolio is not None else None,
+            "swap_path": "rebalance" if rebalance_swaps else "deposit",
             "runtime_mode": settings.runtime_mode.value,
             "target_chain": settings.target_chain.value,
             "execution_required": execution_required,

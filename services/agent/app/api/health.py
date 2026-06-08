@@ -236,7 +236,7 @@ async def service_status() -> ServiceStatusResponse:
             ),
         },
         simulation_fallback_enabled=settings.simulation_fallback_enabled,
-        ai_decision_maker_enabled=runtime_config.AI_DECISION_MAKER_ENABLED,
+        ai_decision_maker_enabled=runtime_config.get_ai_decision_maker_enabled(),
     )
 
 

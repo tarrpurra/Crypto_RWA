@@ -31,7 +31,7 @@ async def get_runtime_settings() -> SettingsResponse:
 
     settings = get_settings()
     return SettingsResponse(
-        ai_decision_maker_enabled=runtime_config.AI_DECISION_MAKER_ENABLED,
+        ai_decision_maker_enabled=runtime_config.get_ai_decision_maker_enabled(),
         chain_id=settings.effective_chain_id,
         native_mnt_enabled=settings.native_mnt_enabled,
         sepolia_usdy_address=settings.sepolia_usdy_address,
@@ -50,7 +50,7 @@ async def update_runtime_settings(body: UpdateSettingsRequest) -> SettingsRespon
     settings = get_settings()
     runtime_config.AI_DECISION_MAKER_ENABLED = body.ai_decision_maker_enabled
     return SettingsResponse(
-        ai_decision_maker_enabled=runtime_config.AI_DECISION_MAKER_ENABLED,
+        ai_decision_maker_enabled=runtime_config.get_ai_decision_maker_enabled(),
         chain_id=settings.effective_chain_id,
         native_mnt_enabled=settings.native_mnt_enabled,
         sepolia_usdy_address=settings.sepolia_usdy_address,

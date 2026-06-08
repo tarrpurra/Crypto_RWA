@@ -58,6 +58,7 @@ export function useAllocationRecommendation() {
       }
     },
     enabled: Boolean(effectiveWalletAddress),
+    staleTime: 30_000,
     refetchInterval: 45_000,
   });
 }

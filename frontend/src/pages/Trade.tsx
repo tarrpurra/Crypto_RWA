@@ -36,6 +36,7 @@ import { cn } from "@/lib/utils";
 const assetOptions = ["USDY", "mETH", "MNT"] as const;
 const riskProfiles = ["Defensive", "Balanced", "Yield-Seeking"] as const;
 const allocationModes = ["AI Suggested", "Manual"] as const;
+const GAS_RESERVE_MNT = 1.0;
 
 function NetworkGuard({ aiDecisionMakerEnabled }: { aiDecisionMakerEnabled: boolean }) {
   const chainId = useChainId();
@@ -130,7 +131,6 @@ export default function Trade() {
   const autoExecutionPlanIdRef = useRef<string | null>(null);
   const autoCreatePlanRef = useRef<string | null>(null);
   const wrappedPlanIdRef = useRef<string | null>(null);
-  const amountTouchedRef = useRef(false);
 
   const initialAssetSymbol = searchParams.get("asset");
   const initialAmount = searchParams.get("amount");
@@ -175,10 +175,10 @@ export default function Trade() {
   const selectedPortfolioBalanceValue = Number.parseFloat(selectedPortfolioBalance || "0");
   const nativeWalletBalanceValue = Number.isFinite(nativeMntBalance) ? nativeMntBalance : Number.parseFloat(nativeBalanceQuery.data?.formatted || "0");
   const walletBalanceAmount =
-    Number.isFinite(selectedPortfolioBalanceValue) && selectedPortfolioBalanceValue > 0
+    Number.isFinite(selectedPortfolioBalanceValue)
       ? selectedPortfolioBalance
-      : Number.isFinite(nativeWalletBalanceValue) && nativeWalletBalanceValue > 0 && assetSymbol === "MNT"
-        ? nativeBalanceQuery.data?.formatted || ""
+      : Number.isFinite(nativeWalletBalanceValue) && assetSymbol === "MNT"
+        ? nativeBalanceQuery.data?.formatted ?? ""
         : "";
   const availableBalance = useMemo(() => {
     if (!walletBalanceAmount) {
@@ -187,8 +187,7 @@ export default function Trade() {
     const parsed = Number.parseFloat(walletBalanceAmount);
     return Number.isFinite(parsed) ? parsed : null;
   }, [walletBalanceAmount]);
-  const resolvedAmount = walletBalanceAmount || amount;
-  const numericAmount = Number.parseFloat(resolvedAmount || "0");
+  const numericAmount = Number.parseFloat(amount.trim() || "0");
   const manualWeights = allocationMode === "Manual" ? parseManualWeights(manualAllocation) : null;
   const mntWrapConfigured = Boolean(settings?.native_mnt_enabled && settings?.sepolia_wmnt_address);
   const localWarnings = useMemo(() => {
@@ -203,7 +202,7 @@ export default function Trade() {
       warnings.push("No wallet address is available for portfolio reads.");
     }
     if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-      warnings.push("Enter a valid wallet balance to deploy.");
+      warnings.push("Enter a valid deposit amount.");
     }
     if (allocationMode === "Manual" && !manualWeights) {
       warnings.push("Manual allocation must be provided as USDY/mETH, for example 70/30.");
@@ -266,17 +265,6 @@ export default function Trade() {
   }, [plan]);
 
   useEffect(() => {
-    amountTouchedRef.current = false;
-  }, [assetSymbol]);
-
-  useEffect(() => {
-    if (amountTouchedRef.current) {
-      return;
-    }
-    setAmount(walletBalanceAmount);
-  }, [walletBalanceAmount]);
-
-  useEffect(() => {
     if (!aiDecisionMakerEnabled || !plan?.linked_proposals.length || !plan.approval_enabled) {
       return;
     }
@@ -330,10 +318,6 @@ export default function Trade() {
   }, [searchParams]);
 
   useEffect(() => {
-    if (isConnected && aiDecisionMakerEnabled && !walletBalanceAmount) {
-      clearScope();
-      return;
-    }
     if (!isSupportedChain || !Number.isFinite(numericAmount) || numericAmount <= 0) {
       clearScope();
       return;
@@ -345,7 +329,7 @@ export default function Trade() {
       allocationMode,
       chainId: mantleSepoliaTestnet.id,
     });
-  }, [allocationMode, assetSymbol, aiDecisionMakerEnabled, clearScope, isConnected, isSupportedChain, numericAmount, riskProfile, setScope, walletBalanceAmount]);
+  }, [allocationMode, assetSymbol, clearScope, isConnected, isSupportedChain, numericAmount, riskProfile, setScope]);
 
   const handleCreatePlan = async () => {
     console.info("[frontend][trade] create plan requested", {
@@ -367,9 +351,8 @@ export default function Trade() {
       return;
     }
 
-    const GAS_RESERVE_MNT = 0.5;
     const deployAmountRaw = numericAmount;
-    const planDepositAmount = Math.max(0, deployAmountRaw - GAS_RESERVE_MNT);
+    const planDepositAmount = assetSymbol === "MNT" ? Math.max(0, deployAmountRaw - GAS_RESERVE_MNT) : deployAmountRaw;
     const planManualWeights = manualWeights ?? undefined;
 
     createPlan.mutate(
@@ -431,9 +414,6 @@ export default function Trade() {
       }
       return;
     }
-    if (aiDecisionMakerEnabled && !walletBalanceAmount) {
-      return;
-    }
     if (!walletAddress || localWarnings.length > 0) {
       return;
     }
@@ -457,7 +437,6 @@ export default function Trade() {
     scope,
     walletAddress,
     wrapMnt.isPending,
-    walletBalanceAmount,
   ]);
 
   const handleApprove = () => {
@@ -511,8 +490,12 @@ export default function Trade() {
     if ((market?.status_code ?? "") === "DATA_MISSING") {
       blockers.push(`Market data status is ${market?.status_code}`);
     }
+    const approvalBlockers = resolvedPlan?.approval_blockers ?? plan?.approval_blockers ?? [];
+    if (approvalBlockers.length > 0) {
+      blockers.push(...approvalBlockers);
+    }
     return blockers;
-  }, [routes?.routes?.length, risk?.risk_band, risk?.hard_veto_status, market?.status_code]);
+  }, [market?.status_code, plan?.approval_blockers, resolvedPlan?.approval_blockers, risk?.hard_veto_status, risk?.risk_band, routes?.routes?.length]);
 
   const handleExecute = () => {
     if (!activeProposalId) {
@@ -607,7 +590,7 @@ export default function Trade() {
     <PageScaffold
       eyebrow="Investment flow"
       title="Trade"
-      description="Create an AI-managed investment plan from the connected wallet balance, inspect real backend guard checks, approve linked swap proposals, then execute through the connected wallet."
+      description="Create an AI-managed investment plan from a user-entered deposit amount, inspect real backend guard checks, approve linked swap proposals, then execute through the connected wallet."
     >
       <NetworkGuard aiDecisionMakerEnabled={aiDecisionMakerEnabled} />
       <WalletScopeControl />
@@ -666,17 +649,13 @@ export default function Trade() {
                 </Select>
               </label>
               <label className="grid gap-2">
-                <span className="text-xs text-muted-foreground">Wallet balance to deploy</span>
+                <span className="text-xs text-muted-foreground">Deposit amount</span>
                 <Input
                   type="number"
                   min="0"
                   step="0.01"
                   value={amount}
-                  readOnly={aiDecisionMakerEnabled}
-                  onChange={(event) => {
-                    amountTouchedRef.current = true;
-                    setAmount(event.target.value);
-                  }}
+                  onChange={(event) => setAmount(event.target.value)}
                   className="bg-surface-2"
                 />
               </label>
@@ -724,7 +703,7 @@ export default function Trade() {
 
             <div className="grid gap-3 rounded border border-border bg-surface-2 p-3 md:grid-cols-3">
               <div>
-                <p className="text-xs text-muted-foreground">Wallet balance</p>
+                <p className="text-xs text-muted-foreground">Available wallet balance</p>
                 <p className="mt-1 font-mono text-sm text-foreground">{availableBalance !== null ? availableBalance.toFixed(4) : "unknown"}</p>
               </div>
               <div>
@@ -739,7 +718,7 @@ export default function Trade() {
 
             {assetSymbol === "MNT" && (
                 <div className="rounded border border-primary/30 bg-primary/10 p-3 text-sm text-foreground">
-                  Native MNT deposits are wrapped to WMNT when the plan executes. The AI uses the connected wallet balance instead of asking for more funds.
+                  Native MNT deposits are wrapped to WMNT when the plan executes. Enter the amount you want to deploy; the balance below is shown only as availability context.
                 </div>
               )}
 

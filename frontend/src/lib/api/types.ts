@@ -367,6 +367,8 @@ export interface TradeProposal {
   nonce: number
   status_code: string
   risk_snapshot_id: string | null
+  approval_enabled?: boolean | null
+  approval_blockers?: string[]
   created_at: string
   updated_at: string
 }

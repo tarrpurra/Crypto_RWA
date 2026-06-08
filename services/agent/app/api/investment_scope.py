@@ -235,6 +235,7 @@ async def build_scoped_allocation_response(scope: InvestmentScopeInput, settings
         risk_profile=scope.risk_profile,
         allocation_mode=scope.allocation_mode,
     )
+    portfolio_context = context.actual_portfolio or context.portfolio
     decision, actions = await generate_ai_allocation(
         portfolio_value_usd=context.portfolio.total_value_usd,
         deposit_asset_symbol=scope.deposit_asset_symbol,
@@ -242,6 +243,7 @@ async def build_scoped_allocation_response(scope: InvestmentScopeInput, settings
         target_weights=context.portfolio.weights,
         risk_assessment=context.risk_assessment,
         profile_name=context.profile_name,
+        portfolio=portfolio_context,
     )
     status = "degraded" if decision.recommended_action == "PAUSE" else "ok"
     return AllocationDecisionResponse(
@@ -265,6 +267,7 @@ async def build_scoped_decision_response(scope: InvestmentScopeInput, settings: 
         risk_profile=scope.risk_profile,
         allocation_mode=scope.allocation_mode,
     )
+    portfolio_context = context.actual_portfolio or context.portfolio
     decision, actions = await generate_ai_allocation(
         portfolio_value_usd=context.portfolio.total_value_usd,
         deposit_asset_symbol=scope.deposit_asset_symbol,
@@ -272,9 +275,10 @@ async def build_scoped_decision_response(scope: InvestmentScopeInput, settings: 
         target_weights=context.portfolio.weights,
         risk_assessment=context.risk_assessment,
         profile_name=context.profile_name,
+        portfolio=portfolio_context,
     )
     return await generate_recommendation_reasoning(
-        context.portfolio,
+        portfolio_context,
         context.risk_snapshot,
         decision,
         actions,

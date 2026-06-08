@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
@@ -6,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from services.agent.app.main import app
 from services.agent.app.schemas.reports import InvestmentReportResponse
+from services.agent.modules.reports.builder import _ReportRequestCache
 
 
 class ReportEndpointTests(unittest.TestCase):
@@ -40,6 +42,17 @@ class ReportEndpointTests(unittest.TestCase):
         self.assertEqual(body["download_name"], "aixrwa_report_20260101-000000.md")
         self.assertEqual(body["ai_mode"], "Full access AI")
         build_report.assert_awaited_once()
+
+    def test_report_request_cache_reuses_fetched_value(self) -> None:
+        cache = _ReportRequestCache()
+        fetch = AsyncMock(return_value={"value": 1})
+
+        first = asyncio.run(cache.get_or_fetch("portfolio", fetch))
+        second = asyncio.run(cache.get_or_fetch("portfolio", fetch))
+
+        self.assertEqual(first, {"value": 1})
+        self.assertEqual(second, {"value": 1})
+        fetch.assert_awaited_once()
 
 
 if __name__ == "__main__":

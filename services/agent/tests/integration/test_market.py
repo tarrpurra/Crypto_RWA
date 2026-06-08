@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -40,6 +41,46 @@ class MarketEndpointTests(unittest.TestCase):
         body = response.json()
         self.assertIn("quotes", body)
         self.assertIn("status_code", body)
+
+    @patch("services.agent.app.api.market._save_quotes_best_effort")
+    @patch("services.agent.app.api.market._save_prices_best_effort")
+    @patch("services.agent.app.api.market.QUOTE_SNAPSHOT_STORE.write")
+    @patch("services.agent.app.api.market.PRICE_SNAPSHOT_STORE.write")
+    @patch("services.agent.app.api.market.get_quote_service")
+    @patch("services.agent.app.api.market.get_price_service")
+    @patch("services.agent.app.api.market.asyncio.gather", new_callable=AsyncMock)
+    def test_latest_quotes_parallelizes_price_refresh_and_route_discovery(
+        self,
+        gather_mock,
+        get_price_service,
+        get_quote_service,
+        price_store_write,
+        quote_store_write,
+        save_prices,
+        save_quotes,
+    ) -> None:
+        price_bundle = MagicMock()
+        price_bundle.normalized_snapshots = []
+        routes = [MagicMock()]
+        quotes_bundle = MagicMock()
+        quotes_bundle.normalized_snapshots = []
+
+        gather_mock.return_value = (price_bundle, routes)
+        get_price_service.return_value.fetch_latest_prices = AsyncMock(return_value=price_bundle)
+        quote_service = MagicMock()
+        quote_service.sample_latest_quotes.return_value = quotes_bundle
+        quote_service.settings.target_chain = "mantle_sepolia"
+        get_quote_service.return_value = quote_service
+
+        response = self.client.get("/market/quotes/latest")
+
+        self.assertEqual(response.status_code, 200)
+        quote_service.sample_latest_quotes.assert_called_once_with(routes=routes)
+        self.assertTrue(gather_mock.await_count >= 1)
+        price_store_write.assert_called_once_with(price_bundle)
+        quote_store_write.assert_called_once_with(quotes_bundle)
+        save_prices.assert_called_once()
+        save_quotes.assert_called_once()
 
     def test_pair_quotes_endpoint_returns_structured_response(self) -> None:
         response = self.client.get("/market/quotes/USDY/mETH")

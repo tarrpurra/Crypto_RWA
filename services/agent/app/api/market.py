@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException
@@ -135,11 +136,14 @@ def latest_usdy_oracle_status() -> OndoUsdyOracleStatus:
 @router.get("/quotes/latest", response_model=LatestQuotesResponse)
 async def latest_quotes() -> LatestQuotesResponse:
     price_service = get_price_service()
-    price_bundle = await price_service.fetch_latest_prices()
+    service = get_quote_service()
+    price_bundle, routes = await asyncio.gather(
+        price_service.fetch_latest_prices(),
+        asyncio.to_thread(service.discover_routes),
+    )
     PRICE_SNAPSHOT_STORE.write(price_bundle)
     _save_prices_best_effort(price_bundle)
-    service = get_quote_service()
-    bundle = service.sample_latest_quotes()
+    bundle = service.sample_latest_quotes(routes=routes)
     QUOTE_SNAPSHOT_STORE.write(bundle)
     _save_quotes_best_effort(bundle)
     return _quote_response_from_snapshots(
@@ -156,7 +160,7 @@ async def latest_quotes_for_pair(token_in: str, token_out: str) -> LatestQuotesR
     PRICE_SNAPSHOT_STORE.write(price_bundle)
     _save_prices_best_effort(price_bundle)
     service = get_quote_service()
-    quotes = service.latest_quotes_for_pair(token_in, token_out)
+    quotes = await asyncio.to_thread(service.latest_quotes_for_pair, token_in, token_out)
     return _quote_response_from_snapshots(
         quotes,
         reason_if_empty=f"No quote routes are currently discoverable for {token_in}/{token_out} on the configured target chain.",
@@ -171,7 +175,7 @@ async def best_quote_for_pair(token_in: str, token_out: str) -> NormalizedQuoteS
     PRICE_SNAPSHOT_STORE.write(price_bundle)
     _save_prices_best_effort(price_bundle)
     service = get_quote_service()
-    best_quote = service.best_quote_for_pair(token_in, token_out)
+    best_quote = await asyncio.to_thread(service.best_quote_for_pair, token_in, token_out)
     if best_quote is not None:
         return best_quote
 

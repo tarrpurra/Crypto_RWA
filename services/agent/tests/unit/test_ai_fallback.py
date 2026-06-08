@@ -3,17 +3,21 @@ from __future__ import annotations
 import unittest
 import json
 from datetime import datetime
+from services.agent.app.core.settings import get_settings
 from services.agent.app.schemas.portfolio import PortfolioSnapshot, AssetBalance
 from services.agent.app.schemas.risk import RiskSnapshot
 from services.agent.app.schemas.allocation import AllocationDecision, RebalanceAction
 from services.agent.strategies.decision_templates.fallback_rules import generate_deterministic_explanation
-from services.agent.strategies.decision_templates.prompt_builder import build_reasoning_prompt
+from services.agent.strategies.decision_templates.prompt_builder import build_allocation_prompt, build_reasoning_prompt
 from services.agent.strategies.decision_templates.parser import generate_recommendation_reasoning, _override_with_ai_decision
 from services.agent.modules.oracle.freshness import utc_now
 
 
 class AiFallbackTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.settings = get_settings()
+        self.original_ai_reasoning_enabled = self.settings.ai_reasoning_enabled
+        self.settings.ai_reasoning_enabled = False
         self.now = utc_now()
         self.balances = [
             AssetBalance(asset_symbol="USDC", balance=250000.0, value_usd=250000.0, weight=0.25),
@@ -54,6 +58,9 @@ class AiFallbackTests(unittest.TestCase):
             status_code="RISK_NORMAL",
             created_at=self.now
         )
+
+    def tearDown(self) -> None:
+        self.settings.ai_reasoning_enabled = self.original_ai_reasoning_enabled
 
     def test_deterministic_explanation_hold(self) -> None:
         explanation = generate_deterministic_explanation(self.portfolio, self.risk, self.decision, [])
@@ -108,6 +115,47 @@ class AiFallbackTests(unittest.TestCase):
         prompt = build_reasoning_prompt(self.portfolio, self.risk, self.decision, [], ai_decision_maker=False)
         self.assertIn("AI Reasoning Layer", prompt)
         self.assertNotIn("recommended_action", prompt)
+
+    def test_prompt_builder_includes_wallet_holdings_and_swap_routes(self) -> None:
+        allocation_prompt = build_allocation_prompt(
+            portfolio_value_usd=1000000.0,
+            deposit_asset_symbol="MNT",
+            deposit_amount=498.0,
+            target_weights={"USDY": 0.6, "mETH": 0.4},
+            risk_status="RISK_REBALANCE_ONLY",
+            risk_score=24.5,
+            risk_notes=["Risk scoring is deterministic and advisory."],
+            profile_name="Balanced",
+            portfolio_balances=[
+                {"asset_symbol": "USDY", "balance": 450000.0, "value_usd": 450000.0, "weight": 0.45},
+                {"asset_symbol": "mETH", "balance": 75.0, "value_usd": 300000.0, "weight": 0.30},
+            ],
+        )
+        self.assertIn("Current Wallet Holdings", allocation_prompt)
+        self.assertIn("USDY", allocation_prompt)
+        self.assertIn("mETH", allocation_prompt)
+
+        rebalance_actions = [
+            RebalanceAction(
+                asset_symbol="USDY",
+                action="BUY",
+                amount=37.5,
+                route_id="route-usdy",
+                token_in_symbol="WMNT",
+                token_out_symbol="USDY",
+                swap_pair_label="WMNT -> USDY",
+            )
+        ]
+        reasoning_prompt = build_reasoning_prompt(
+            self.portfolio,
+            self.risk,
+            self.decision,
+            rebalance_actions,
+            ai_decision_maker=True,
+        )
+        self.assertIn("swap_pair_label", reasoning_prompt)
+        self.assertIn("token_in_symbol", reasoning_prompt)
+        self.assertIn("WMNT -> USDY", reasoning_prompt)
 
     def test_override_with_ai_decision_preserves_deterministic_action(self) -> None:
         ai_output = {

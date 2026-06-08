@@ -16,6 +16,20 @@ from services.agent.strategies.allocation.swap_pairs import build_rebalance_swap
 logger = logging.getLogger("services.agent.ai")
 
 
+def _serialize_portfolio_balances(portfolio: PortfolioSnapshot | None) -> list[dict[str, object]]:
+    if portfolio is None:
+        return []
+    return [
+        {
+            "asset_symbol": balance.asset_symbol,
+            "balance": balance.balance,
+            "value_usd": balance.value_usd,
+            "weight": balance.weight,
+        }
+        for balance in portfolio.balances
+    ]
+
+
 def _extract_json_payload(text: str) -> dict:
     candidate = text.strip()
     if candidate.startswith("```"):
@@ -163,6 +177,7 @@ async def generate_ai_allocation(
     target_weights: dict[str, float],
     risk_assessment: RiskAssessmentResponse | None,
     profile_name: str,
+    portfolio: PortfolioSnapshot | None = None,
 ) -> tuple[AllocationDecision, list[RebalanceAction]]:
     settings = get_settings()
     from services.agent.app.core.status_codes import RiskStatusCode
@@ -180,6 +195,7 @@ async def generate_ai_allocation(
         risk_score=risk_score,
         risk_notes=risk_notes,
         profile_name=profile_name,
+        portfolio_balances=_serialize_portfolio_balances(portfolio),
     )
 
     ai_response_text: str | None = None
@@ -362,7 +378,7 @@ async def generate_recommendation_reasoning(
     rebalance_actions: list[RebalanceAction]
 ) -> RecommendationResponse:
     settings = get_settings()
-    ai_decision_maker = runtime_config.AI_DECISION_MAKER_ENABLED
+    ai_decision_maker = runtime_config.get_ai_decision_maker_enabled()
     prompt = build_reasoning_prompt(portfolio, risk, decision, rebalance_actions, ai_decision_maker=ai_decision_maker)
 
     explanation = None

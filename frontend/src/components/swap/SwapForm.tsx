@@ -33,7 +33,7 @@ export function SwapForm() {
   });
 
   const [depositAsset, setDepositAsset] = useState<(typeof assetOptions)[number]>("MNT");
-  const [depositAmount, setDepositAmount] = useState("100");
+  const [depositAmount, setDepositAmount] = useState("");
   const [riskProfile, setRiskProfile] = useState<(typeof riskProfiles)[number]>("Balanced");
 
   const pairedTarget = depositAsset === "USDY" ? "mETH" : "USDY";
