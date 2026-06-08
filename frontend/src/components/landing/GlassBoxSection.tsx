@@ -8,7 +8,7 @@ const PIPELINE = [
 
 export function GlassBoxSection() {
   return (
-    <section className="border-b border-lp-border px-6 py-24 lg:px-8">
+    <section id="glass-box" className="border-b border-lp-border px-6 py-24 lg:px-8">
       <div className="mx-auto grid max-w-screen-2xl items-center gap-16 lg:grid-cols-2">
         <div>
           <div className="mb-4 font-sans text-[11px] font-medium uppercase tracking-widest text-lp-fg-muted">

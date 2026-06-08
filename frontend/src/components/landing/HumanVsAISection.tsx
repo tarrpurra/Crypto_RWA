@@ -5,7 +5,7 @@ export function HumanVsAISection() {
   const aiUsdy = 70;
 
   return (
-    <section className="border-b border-lp-border bg-lp-surface px-6 py-24 lg:px-8">
+    <section id="human-vs-ai" className="border-b border-lp-border bg-lp-surface px-6 py-24 lg:px-8">
       <div className="mx-auto max-w-screen-2xl text-center">
         <div className="mb-4 font-sans text-[11px] font-medium uppercase tracking-widest text-lp-fg-muted">
           Human vs AI

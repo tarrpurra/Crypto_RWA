@@ -1,4 +1,4 @@
-import { useState } from "react";
+import ElectricBorder from "@/components/ui/ElectricBorder";
 
 const steps = [
   {
@@ -6,55 +6,75 @@ const steps = [
     tag: "Oracle Layer",
     title: "The agent reads the market",
     body: "Every 2 hours, live USDY and mETH data is pulled from Pyth Network and the Ondo oracle directly on Mantle. No estimates. No stale prices. On-chain feeds only.",
+    chips: ["Pyth", "Ondo"],
   },
   {
     n: "02",
     tag: "Decision Engine",
     title: "Five layers decide every move",
-    body: "A pipeline evaluates the yield spread, sizes the position using Kelly Criterion, and runs four independent risk checks — credit, liquidity, concentration, oracle health — before any swap is approved.",
+    body: "A pipeline evaluates the yield spread, sizes the position using Kelly Criterion, and runs four independent risk checks - credit, liquidity, concentration, oracle health - before any swap is approved.",
+    chips: ["Kelly", "Risk gate"],
   },
   {
     n: "03",
     tag: "Glass Box",
     title: "Every call is permanent",
-    body: "Every decision — including ones the risk gate blocks — is written to Mantle via ERC-8004. The agent cannot delete a bad call. You can read the entire history on-chain right now.",
+    body: "Every decision - including ones the risk gate blocks - is written to Mantle via ERC-8004. The agent cannot delete a bad call. You can read the entire history on-chain right now.",
+    chips: ["ERC-8004", "Audit trail"],
   },
 ];
 
 function StepCard({ s }: { s: (typeof steps)[number] }) {
-  const [hov, setHov] = useState(false);
   return (
-    <div
-      onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
-      className={`rounded-xl border bg-lp-surface p-6 border-t-2 border-t-lp-gold transition-all duration-200 ${
-        hov
-          ? "border-lp-gold/30 shadow-[0_0_28px_hsl(var(--lp-gold)/0.07)]"
-          : "border-lp-border"
-      }`}
+    <ElectricBorder
+      color="#d4962a"
+      speed={0.7}
+      chaos={0.09}
+      borderRadius={16}
+      style={{ borderRadius: 16 }}
+      className="h-full w-full max-w-[26rem] justify-self-center"
     >
-      <div className="mb-3.5 font-mono text-[10px] tracking-wider text-lp-gold">
-        STEP {s.n} · <span className="text-lp-fg-muted">{s.tag}</span>
-      </div>
-      <div className="mb-3 font-display text-[17px] font-semibold leading-tight tracking-tight text-lp-fg">
-        {s.title}
-      </div>
-      <div className="font-sans text-[13px] leading-relaxed text-lp-fg-secondary">{s.body}</div>
-    </div>
-  );
-}
+      <div className="relative flex h-full min-h-[36rem] flex-col overflow-hidden rounded-[16px] border border-[#d4962a]/16 bg-[radial-gradient(circle_at_top_left,rgba(212,150,42,0.12),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(212,150,42,0.08),transparent_36%),linear-gradient(180deg,rgba(18,12,7,0.99),rgba(9,7,5,0.96))] p-7 sm:p-8">
+        <div className="pointer-events-none absolute inset-0 rounded-[16px] ring-1 ring-inset ring-[#d4962a]/10" />
+        <div className="relative flex h-full flex-col">
+          <div className="flex items-start justify-between gap-4">
+            <span className="inline-flex items-center rounded-full border border-[#d4962a]/18 bg-[#24180f]/90 px-4 py-1.5 font-mono text-[10px] uppercase tracking-[0.28em] text-[#f3b24a]">
+              Step {s.n}
+            </span>
+            <span className="pt-1 font-mono text-[10px] uppercase tracking-[0.32em] text-[#b78947]/70">
+              {s.tag}
+            </span>
+          </div>
 
-function Arrow() {
-  return (
-    <div className="flex items-center justify-center pt-12">
-      <span className="text-[18px] text-lp-gold opacity-35">&rarr;</span>
-    </div>
+          <div className="mt-7 max-w-[12ch] text-[30px] font-semibold leading-[1.03] tracking-[-0.03em] text-[#f6efe3] text-balance">
+            {s.title}
+          </div>
+
+          <div className="mt-5 max-w-[28ch] text-justify text-[16px] leading-7 hyphens-auto text-[#c9b696]">
+            {s.body}
+          </div>
+
+          <div className="mt-auto pt-10">
+            <div className="mb-4 flex flex-wrap gap-2">
+              {s.chips.map((chip) => (
+                <span
+                  key={chip}
+                  className="inline-flex items-center rounded-full border border-[#d4962a]/12 bg-[#1f1710]/90 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.14em] text-[#e5d2ae]"
+                >
+                  {chip}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </ElectricBorder>
   );
 }
 
 export function HowItWorksSection() {
   return (
-    <section className="border-b border-lp-border px-6 py-24 lg:px-8">
+    <section id="how-it-works" className="border-b border-lp-border px-6 py-24 lg:px-8">
       <div className="mx-auto max-w-screen-2xl">
         <div className="mb-14 text-center">
           <div className="mb-4 font-sans text-[11px] font-medium uppercase tracking-widest text-lp-fg-muted">
@@ -64,11 +84,9 @@ export function HowItWorksSection() {
             Three steps. Zero ambiguity.
           </h2>
         </div>
-        <div className="grid items-start gap-0 md:grid-cols-[1fr_36px_1fr_36px_1fr]">
+        <div className="grid items-stretch gap-8 lg:grid-cols-3 lg:justify-items-center">
           <StepCard s={steps[0]} />
-          <Arrow />
           <StepCard s={steps[1]} />
-          <Arrow />
           <StepCard s={steps[2]} />
         </div>
       </div>
