@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import CircularText from "../ui/CircularText";
-import FloatingLines from "./FloatingLines";
+import MagicRings from "../ui/MagicRings";
 
 type YieldMindIntroProps = {
   isLaunching: boolean;
@@ -9,10 +9,6 @@ type YieldMindIntroProps = {
 };
 
 const easeOut = [0.23, 1, 0.32, 1] as const;
-const floatingLinesGradient = ["#2b1b08", "#6e5320", "#d6b83f", "#f7df8a"];
-const floatingLineCount = [6, 9, 12];
-const floatingLineDistance = [8, 6, 4];
-
 export default function YieldMindIntro({
   isLaunching,
   onEnter,
@@ -86,19 +82,29 @@ export default function YieldMindIntro({
       className="fixed inset-0 z-[60] overflow-hidden bg-[#030303]"
       aria-hidden={isLaunching}
     >
-      <div className="absolute inset-0 z-0 opacity-75" aria-hidden="true">
-        <FloatingLines
-          enabledWaves={["top", "middle", "bottom"]}
-          lineCount={floatingLineCount}
-          lineDistance={floatingLineDistance}
-          animationSpeed={reduceMotion ? 0.25 : 0.55}
-          interactive={!reduceMotion}
-          bendRadius={7}
-          bendStrength={-4.2}
-          parallax={!reduceMotion}
-          parallaxStrength={0.12}
-          mixBlendMode="screen"
-          linesGradient={floatingLinesGradient}
+      <div className="absolute inset-0 z-0" aria-hidden="true">
+        <MagicRings
+          color="#D49628"
+          colorTwo="#f4edd6"
+          ringCount={6}
+          speed={0.85}
+          attenuation={10}
+          lineThickness={2}
+          baseRadius={0.35}
+          radiusStep={0.1}
+          scaleRate={0.1}
+          opacity={0.9}
+          blur={0}
+          noiseAmount={0.08}
+          rotation={0}
+          ringGap={1.5}
+          fadeIn={0.7}
+          fadeOut={0.5}
+          followMouse={true}
+          mouseInfluence={0.15}
+          hoverScale={1.1}
+          parallax={0.04}
+          clickBurst={true}
         />
       </div>
 

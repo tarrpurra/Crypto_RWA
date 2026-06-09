@@ -13,7 +13,6 @@ import { GlassBoxSection } from "@/components/landing/GlassBoxSection";
 import { HumanVsAISection } from "@/components/landing/HumanVsAISection";
 import { FinalCta } from "@/components/landing/FinalCta";
 import { Footer } from "@/components/landing/Footer";
-import { DitheringShader } from "@/components/ui/dithering-shader";
 
 type LandingPhase = "intro" | "launching" | "entered";
 
@@ -96,20 +95,7 @@ const Landing = () => {
         style={{ transformOrigin: activationOrigin }}
         className="pointer-events-none absolute inset-0 z-0 overflow-hidden"
       >
-        <div className="absolute inset-0 opacity-80">
-          <DitheringShader
-            className="h-full w-full scale-[1.16]"
-            shape="ripple"
-            type="4x4"
-            colorBack="#050403"
-            colorFront="#D6B83F"
-            pxSize={4}
-            speed={0.3}
-            width={1600}
-            height={1200}
-          />
-        </div>
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(214,184,63,0.09),transparent_34%),linear-gradient(rgba(214,184,63,0.025)_1px,transparent_1px),linear-gradient(90deg,rgba(214,184,63,0.025)_1px,transparent_1px)] bg-[size:auto,56px_56px,56px_56px]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_34%,rgba(214,184,63,0.18),transparent_0%,transparent_38%),radial-gradient(circle_at_70%_22%,rgba(214,184,63,0.09),transparent_0%,transparent_28%),linear-gradient(180deg,rgba(9,7,5,0.14),rgba(5,4,3,0.4))]" />
       </motion.div>
       <div className="absolute inset-0 z-0 bg-[radial-gradient(circle_at_top,rgba(214,184,63,0.08),transparent_40%),linear-gradient(to_bottom,rgba(3,3,3,0.04),rgba(3,3,3,0.34))]" />
       <div className="relative z-10">

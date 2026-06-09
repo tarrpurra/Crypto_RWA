@@ -2,40 +2,17 @@
 
 import { Link } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
-import { ArrowRight } from "lucide-react";
 import { DashboardMockup } from "./DashboardMockup";
 import DecryptedText from "@/components/ui/DecryptedText";
+import { HeroLightBendingBackground } from "./HeroLightBendingBackground";
+
 
 export function HeroSection() {
   const reduce = useReducedMotion();
 
   return (
     <section className="relative min-h-[100dvh] overflow-hidden pt-20">
-      {/* Background grid */}
-      <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
-        <div
-          className="absolute -left-[18%] -top-[20%] h-[720px] w-[720px] rounded-full"
-          style={{
-            background: "radial-gradient(circle, rgba(212,150,42,0.09) 0%, transparent 70%)",
-            animation: "drift1 16s linear infinite",
-          }}
-        />
-        <div
-          className="absolute -bottom-[10%] -right-[8%] h-[520px] w-[520px] rounded-full"
-          style={{
-            background: "radial-gradient(circle, rgba(138,112,56,0.07) 0%, transparent 70%)",
-            animation: "drift2 20s linear infinite",
-          }}
-        />
-        <div
-          className="absolute inset-0 opacity-20"
-          style={{
-            backgroundImage:
-              "linear-gradient(hsl(var(--lp-border)) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--lp-border)) 1px, transparent 1px)",
-            backgroundSize: "52px 52px",
-          }}
-        />
-      </div>
+      <HeroLightBendingBackground reduce={reduce} />
       <div className="relative z-10 mx-auto max-w-screen-2xl px-6 pb-20 pt-16 lg:px-8">
         <div className="grid items-center gap-14 lg:grid-cols-2">
           {/* Left */}
