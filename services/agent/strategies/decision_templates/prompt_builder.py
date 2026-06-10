@@ -66,6 +66,8 @@ Rules:
 5. If everything is already aligned, set recommended_action to "HOLD".
 6. The retained deposit asset amount is determined by its target weight.
 7. When current wallet holdings are provided, treat them as real swap context and prefer routes that recognize existing exposures.
+8. Only recommend rebalancing if the drift is significant and executing the trade provides a clear net benefit after considering transaction cost, slippage, and market trend. If the trend is unfavorable or drift is marginal, prefer holding and waiting for a better opportunity.
+
 
 Respond with ONLY valid JSON:
 {{
@@ -152,6 +154,8 @@ Decision rules:
 - Valid suggested actions: "HOLD" (no trades), "REBALANCE" (execute proposed trades), "PAUSE" (stop all trading).
 - Consider all risk factors including oracle freshness, depeg risk, liquidity/slippage, concentration limits, and execution readiness.
 - Treat hard risk states as non-negotiable guard rails, not as a license to override the deterministic plan.
+- Prioritize trade efficiency: do not recommend swaps on minor deviations or if market trends indicate that waiting would yield a better execution price. Only suggest alternate actions if they provide a clear net-benefit or safety improvement.
+
 
 Please generate a JSON object matching this schema:
 {{

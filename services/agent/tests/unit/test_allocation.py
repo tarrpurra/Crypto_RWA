@@ -10,9 +10,20 @@ from services.agent.strategies.allocation.profiles import get_allocation_profile
 from services.agent.modules.oracle.freshness import utc_now
 
 
+from unittest.mock import MagicMock, patch
+
+
 class AllocationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.now = utc_now()
+        # Mock database session to prevent live DB connections in tests
+        self.db_patcher = patch("services.agent.strategies.allocation.rebalance.create_session")
+        self.mock_create_session = self.db_patcher.start()
+        self.mock_session = MagicMock()
+        self.mock_session.__enter__.return_value = self.mock_session
+        self.mock_session.scalar.return_value = None
+        self.mock_create_session.return_value = self.mock_session
+
         self.risk_normal = RiskSnapshot(
             snapshot_id="risk_test_normal",
             total_score=10.0,
@@ -35,6 +46,9 @@ class AllocationTests(unittest.TestCase):
             notes=["Oracle is stale"],
             created_at=self.now
         )
+
+    def tearDown(self) -> None:
+        self.db_patcher.stop()
 
     def test_no_rebalance_when_within_drift_tolerance(self) -> None:
         # Balanced target: USDC: 0.25, USDY: 0.45, mETH: 0.30
