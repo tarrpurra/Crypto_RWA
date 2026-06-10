@@ -85,7 +85,7 @@ def compute_rebalance(
 
     # Evaluate drift rebalance needs
     significant_drifts: list[tuple[str, float]] = []
-    drift_tolerance = 0.015  # 1.5% drift tolerance
+    drift_tolerance = 0.05  # 5.0% drift tolerance
     
     for asset, drift in drifts.items():
         if abs(drift) > drift_tolerance:

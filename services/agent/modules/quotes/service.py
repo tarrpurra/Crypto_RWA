@@ -164,6 +164,8 @@ class QuoteService:
             ("WMNT", "USDY", 3000),
             ("WMNT", "USDY", 10000),
             ("WMNT", "mETH", 3000),
+            ("mETH", "USDY", 3000),
+            ("USDY", "mETH", 3000),
         ]
         for token_in_sym, token_out_sym, fee in pairs:
             token_in = assets.get(token_in_sym)
@@ -371,6 +373,8 @@ class QuoteService:
         allowed_pairs = {
             ("WMNT", "mETH"),
             ("mETH", "WMNT"),
+            ("mETH", "USDY"),
+            ("USDY", "mETH"),
         }
         return (route.token_in, route.token_out) in allowed_pairs
 

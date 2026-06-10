@@ -28,17 +28,28 @@ export function usePortfolioWallet() {
     };
   }, []);
 
+  const [lastConnectedAddress, setLastConnectedAddress] = useState<string | undefined>(undefined);
+
   useEffect(() => {
-    if (!address || !isSupportedChain) {
-      return;
+    if (address && isSupportedChain) {
+      const normalized = address.trim();
+      if (normalized && normalized !== storedWallet) {
+        window.localStorage.setItem(STORAGE_KEY, normalized);
+        setStoredWallet(normalized);
+        window.dispatchEvent(new Event(WALLET_EVENT));
+      }
+      setLastConnectedAddress(normalized);
+    } else {
+      if (lastConnectedAddress && !address) {
+        if (storedWallet.toLowerCase() === lastConnectedAddress.toLowerCase()) {
+          window.localStorage.removeItem(STORAGE_KEY);
+          setStoredWallet("");
+          window.dispatchEvent(new Event(WALLET_EVENT));
+        }
+      }
+      setLastConnectedAddress(undefined);
     }
-    const normalized = address.trim();
-    if (normalized && normalized !== storedWallet) {
-      window.localStorage.setItem(STORAGE_KEY, normalized);
-      setStoredWallet(normalized);
-      window.dispatchEvent(new Event(WALLET_EVENT));
-    }
-  }, [address, isSupportedChain, storedWallet]);
+  }, [address, isSupportedChain, storedWallet, lastConnectedAddress]);
 
   const setWalletAddress = useCallback((address: string) => {
     const normalized = address.trim();
