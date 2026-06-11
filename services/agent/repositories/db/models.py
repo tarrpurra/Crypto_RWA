@@ -189,3 +189,22 @@ class TradeExecutionRecord(Base):
     status_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class VaultFlowRecord(Base):
+    __tablename__ = "vault_flows"
+    __table_args__ = (UniqueConstraint("flow_id", name="uq_vault_flows_flow_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    flow_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    vault_address: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    user_address: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    flow_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    asset_symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    asset_address: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    asset_amount: Mapped[str | None] = mapped_column(String(78), nullable=True)
+    usd_value: Mapped[str] = mapped_column(String(78), nullable=False)
+    tx_hash: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON_TYPE, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

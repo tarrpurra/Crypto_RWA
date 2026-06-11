@@ -1,7 +1,6 @@
 import { Bar, BarChart, Cell, Tooltip, XAxis, YAxis } from "recharts"
 import { ChartContainer, ChartTooltipContent } from "@/components/ui/chart"
 import type { RiskAssessmentResponse } from "@/lib/api/types"
-import { cn } from "@/lib/utils"
 
 const BUCKET_COLORS: Record<string, string> = {
   concentration: "hsl(var(--primary))",
@@ -41,11 +40,6 @@ export function RiskBucketChart({ risk, isLoading }: RiskBucketChartProps) {
           <p className="terminal-label text-primary">Risk</p>
           <h2 className="mt-1 text-xl font-semibold text-foreground">Assessment buckets</h2>
         </div>
-        {risk?.risk_score != null && (
-          <span className={cn("font-mono text-xs", risk.risk_band === "NORMAL" ? "text-success" : risk.risk_band === "CAUTION" ? "text-warning" : "text-destructive")}>
-            {risk.risk_band} / {risk.risk_score}
-          </span>
-        )}
       </div>
 
       {isLoading ? (

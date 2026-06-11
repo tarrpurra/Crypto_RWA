@@ -15,8 +15,9 @@ export function useAllocationRecommendation() {
         allocationMode: scope.allocationMode,
       }
     : null;
+  const scopeKey = scope ? JSON.stringify(scope) : null;
   return useQuery({
-    queryKey: ["allocation", "recommendation", effectiveWalletAddress, scope],
+    queryKey: ["allocation", "recommendation", effectiveWalletAddress, scopeKey],
     queryFn: async () => {
       console.info("[frontend][allocation] requesting /allocation/recommendation", {
         walletAddress: effectiveWalletAddress,

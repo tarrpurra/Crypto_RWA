@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
@@ -34,6 +35,14 @@ from services.agent.strategies.decision_templates.parser import generate_recomme
 
 logger = logging.getLogger("services.agent.decisions.api")
 router = APIRouter(tags=["decisions"])
+
+
+def _ai_debug_value(payload: Any, field: str) -> Any:
+    if payload is None:
+        return None
+    if isinstance(payload, dict):
+        return payload.get(field)
+    return getattr(payload, field, None)
 
 
 def _address_to_symbol_map(settings) -> dict[str, str]:
@@ -106,22 +115,33 @@ async def get_latest_decisions(
             )
         )
         logger.info(
-            "Decision recommendation completed (scoped): status=%s status_code=%s recommended_action=%s",
+            "Decision recommendation completed (scoped): status=%s status_code=%s recommended_action=%s confidence=%s ai_mode=%s used_fallback=%s",
             response.status,
             response.status_code,
             response.recommended_action,
+            response.confidence,
+            _ai_debug_value(response.ai_debug, "mode"),
+            _ai_debug_value(response.ai_debug, "used_fallback"),
         )
         return response
     from services.agent.modules.decisions import build_decision_context
     context = await build_decision_context(wallet_address=wallet_address)
-    decision, actions = compute_rebalance(context.portfolio, context.risk_snapshot, context.profile_name)
+    decision, actions = compute_rebalance(
+        context.portfolio,
+        context.risk_snapshot,
+        context.profile_name,
+        target_weights_override=context.target_weights,
+    )
     reasoning_portfolio = context.actual_portfolio or context.portfolio
     response = await generate_recommendation_reasoning(reasoning_portfolio, context.risk_snapshot, decision, actions)
     logger.info(
-        "Decision recommendation completed: status=%s status_code=%s recommended_action=%s",
+        "Decision recommendation completed: status=%s status_code=%s recommended_action=%s confidence=%s ai_mode=%s used_fallback=%s",
         response.status,
         response.status_code,
         response.recommended_action,
+        response.confidence,
+        _ai_debug_value(response.ai_debug, "mode"),
+        _ai_debug_value(response.ai_debug, "used_fallback"),
     )
     return response
 

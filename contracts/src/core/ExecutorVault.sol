@@ -23,6 +23,8 @@ contract ExecutorVault {
 
     mapping(bytes32 role => mapping(address account => bool allowed)) private _roles;
 
+    mapping(address user => mapping(address token => uint256 balance)) public userBalances;
+
     modifier onlyRole(bytes32 role) {
         if (!_roles[role][msg.sender]) revert Errors.Unauthorized();
         _;
@@ -41,6 +43,65 @@ contract ExecutorVault {
     }
 
     receive() external payable {}
+
+    // ── User Deposit / Withdraw ────────────────────────────────────────
+
+    event Deposited(address indexed user, address indexed token, uint256 amount);
+    event Withdrawn(address indexed user, address indexed token, uint256 amount);
+
+    function depositToken(address token, uint256 amount) external {
+        if (token == address(0)) revert Errors.ZeroAddress();
+        if (amount == 0) revert Errors.InvalidAmount();
+
+        IERC20(token).transferFrom(msg.sender, address(this), amount);
+        userBalances[msg.sender][token] += amount;
+
+        emit Deposited(msg.sender, token, amount);
+    }
+
+    function depositNative() external payable {
+        if (msg.value == 0) revert Errors.InvalidAmount();
+
+        userBalances[msg.sender][address(0)] += msg.value;
+
+        emit Deposited(msg.sender, address(0), msg.value);
+    }
+
+    function withdrawToken(address token, address to, uint256 amount) external {
+        if (token == address(0)) revert Errors.ZeroAddress();
+        if (to == address(0)) revert Errors.ZeroAddress();
+        if (amount == 0) revert Errors.InvalidAmount();
+        if (userBalances[msg.sender][token] < amount) revert Errors.InsufficientBalance();
+
+        userBalances[msg.sender][token] -= amount;
+        IERC20(token).transfer(to, amount);
+
+        emit Withdrawn(msg.sender, token, amount);
+    }
+
+    function withdrawNative(address payable to, uint256 amount) external {
+        if (to == address(0)) revert Errors.ZeroAddress();
+        if (amount == 0) revert Errors.InvalidAmount();
+        if (userBalances[msg.sender][address(0)] < amount) revert Errors.InsufficientBalance();
+
+        userBalances[msg.sender][address(0)] -= amount;
+        (bool success,) = to.call{value: amount}("");
+        if (!success) revert Errors.ExternalCallFailed();
+
+        emit Withdrawn(msg.sender, address(0), amount);
+    }
+
+    function getUserBalance(address user, address token) external view returns (uint256) {
+        return userBalances[user][token];
+    }
+
+    function getUserBalances(address user, address[] calldata tokens) external view returns (uint256[] memory) {
+        uint256[] memory balances = new uint256[](tokens.length);
+        for (uint256 i = 0; i < tokens.length; i++) {
+            balances[i] = userBalances[user][tokens[i]];
+        }
+        return balances;
+    }
 
     function hasRole(bytes32 role, address account) external view returns (bool) {
         return _roles[role][account];

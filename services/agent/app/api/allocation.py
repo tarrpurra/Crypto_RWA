@@ -81,7 +81,12 @@ async def get_allocation_recommendation(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    decision, actions = compute_rebalance(context.portfolio, context.risk_snapshot, context.profile_name)
+    decision, actions = compute_rebalance(
+        context.portfolio,
+        context.risk_snapshot,
+        context.profile_name,
+        target_weights_override=context.target_weights,
+    )
     _save_allocation_decision(decision)
 
     status = "ok"

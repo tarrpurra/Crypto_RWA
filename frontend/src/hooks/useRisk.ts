@@ -8,8 +8,9 @@ export function useCurrentRisk(options?: { allowEnvFallback?: boolean }) {
   const { effectiveWalletAddress } = usePortfolioWallet();
   const { scope } = useInvestmentScope();
   const allowEnvFallback = options?.allowEnvFallback ?? false;
+  const scopeKey = scope ? JSON.stringify(scope) : null;
   return useQuery({
-    queryKey: ["risk", "current", effectiveWalletAddress, scope, allowEnvFallback],
+    queryKey: ["risk", "current", effectiveWalletAddress, scopeKey, allowEnvFallback],
     queryFn: () =>
       riskApi.current(
         effectiveWalletAddress,

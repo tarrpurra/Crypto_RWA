@@ -7,6 +7,7 @@ from services.agent.app.api import (
     allocation_router,
     chain_router,
     contracts_router,
+    dashboard_router,
     decisions_router,
     health_router,
     market_router,
@@ -14,6 +15,7 @@ from services.agent.app.api import (
     portfolio_router,
     risk_router,
     settings_router,
+    vault_router,
 )
 from services.agent.app.core.logging import configure_logging
 from services.agent.app.core.settings import get_settings
@@ -35,6 +37,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(chain_router)
 app.include_router(contracts_router)
+app.include_router(dashboard_router)
 app.include_router(market_router)
 app.include_router(reports_router)
 app.include_router(portfolio_router)
@@ -42,3 +45,4 @@ app.include_router(risk_router)
 app.include_router(allocation_router)
 app.include_router(decisions_router)
 app.include_router(settings_router)
+app.include_router(vault_router)

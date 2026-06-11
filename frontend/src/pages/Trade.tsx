@@ -128,8 +128,10 @@ export default function Trade() {
   const proposals = useMemo(() => proposalsQuery.data?.proposals ?? [], [proposalsQuery.data?.proposals]);
   const aiDecisionMakerEnabled = settings?.ai_decision_maker_enabled ?? false;
   const routeHasInvestmentParams = searchParams.has("asset") || searchParams.has("amount") || searchParams.has("risk");
+  const reviewModeRequested = searchParams.get("review") === "1";
   const autoExecutionPlanIdRef = useRef<string | null>(null);
   const autoCreatePlanRef = useRef<string | null>(null);
+  const reviewCreatePlanRef = useRef<string | null>(null);
   const wrappedPlanIdRef = useRef<string | null>(null);
 
   const initialAssetSymbol = searchParams.get("asset");
@@ -399,6 +401,7 @@ export default function Trade() {
   useEffect(() => {
     console.info("[frontend][trade] auto-create evaluation", {
       aiDecisionMakerEnabled,
+      reviewModeRequested,
       routeHasInvestmentParams,
       hasScope: Boolean(scope),
       hasPlan: Boolean(plan?.plan_id),
@@ -434,6 +437,54 @@ export default function Trade() {
     handleCreatePlan,
     localWarnings.length,
     plan?.plan_id,
+    reviewModeRequested,
+    routeHasInvestmentParams,
+    scope,
+    walletAddress,
+    wrapMnt.isPending,
+  ]);
+
+  useEffect(() => {
+    console.info("[frontend][trade] review-create evaluation", {
+      aiDecisionMakerEnabled,
+      reviewModeRequested,
+      routeHasInvestmentParams,
+      hasScope: Boolean(scope),
+      hasPlan: Boolean(plan?.plan_id),
+      createPending: createPlan.isPending,
+      wrapPending: wrapMnt.isPending,
+      autoExecutionActive,
+      walletBalanceAmount,
+      localWarnings,
+    });
+    if (aiDecisionMakerEnabled || !reviewModeRequested || !routeHasInvestmentParams || !scope || plan?.plan_id || createPlan.isPending || wrapMnt.isPending || autoExecutionActive) {
+      if (!reviewModeRequested || plan?.plan_id) {
+        reviewCreatePlanRef.current = null;
+      }
+      return;
+    }
+    if (!walletAddress || localWarnings.length > 0) {
+      return;
+    }
+
+    const scopeKey = `${scope.depositAssetSymbol}:${scope.depositAmount}:${scope.riskProfile}:${scope.allocationMode}:review`;
+    if (reviewCreatePlanRef.current === scopeKey) {
+      return;
+    }
+
+    reviewCreatePlanRef.current = scopeKey;
+    console.info("[frontend][trade] review-create triggered", { scopeKey, scope });
+    toast.info("Preparing swap details for review.");
+    void handleCreatePlan();
+  }, [
+    aiDecisionMakerEnabled,
+    autoExecutionActive,
+    createPlan.isPending,
+    handleCreatePlan,
+    localWarnings.length,
+    plan?.plan_id,
+    reviewModeRequested,
+    routeHasInvestmentParams,
     scope,
     walletAddress,
     wrapMnt.isPending,

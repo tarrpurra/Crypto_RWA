@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from functools import lru_cache
-
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -17,6 +15,13 @@ _ENGINE = None
 _SESSION_FACTORY = None
 
 
+def _is_test_runtime(settings: Settings) -> bool:
+    import os
+
+    app_env = (settings.app_env or "").strip().lower()
+    return app_env == "test" or os.getenv("PYTEST_CURRENT_TEST") is not None
+
+
 def get_engine():
     global _ENGINE
     if _ENGINE is not None:
@@ -29,16 +34,24 @@ def get_engine():
 
     try:
         engine = create_engine(db_url, future=True, pool_pre_ping=True)
-        # Test connection
         with engine.connect() as conn:
             pass
         _ENGINE = engine
         logger.info("Connected to database successfully.")
         return _ENGINE
     except Exception as exc:
-        logger.warning("Failed to connect to database %s: %s. Falling back to in-memory SQLite.", db_url, exc)
-        _ENGINE = create_engine("sqlite:///:memory:", future=True, connect_args={"check_same_thread": False})
-        return _ENGINE
+        if _is_test_runtime(settings):
+            logger.warning(
+                "Failed to connect to database %s during test runtime: %s. Using in-memory SQLite for tests only.",
+                db_url,
+                exc,
+            )
+            _ENGINE = create_engine("sqlite+pysqlite:///:memory:", future=True, connect_args={"check_same_thread": False})
+            return _ENGINE
+        raise RuntimeError(
+            "Persistent database connection failed. Refusing to use in-memory SQLite outside test runtime "
+            "because AIxRWA requires durable portfolio, risk, decision, proposal, and vault snapshots."
+        ) from exc
 
 
 def get_session_factory() -> sessionmaker[Session]:

@@ -19,14 +19,15 @@ import AllocationStudio from "./pages/AllocationStudio";
 import ApprovalsPage from "./pages/ApprovalsPage";
 import StrategyLab from "./pages/StrategyLab";
 import SettingsPage from "./pages/SettingsPage";
+import AICommandCenter from "./pages/AICommandCenter";
 import SimplexDemo from "./pages/SimplexDemo";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 30_000,
-      gcTime: 5 * 60_000,
+      staleTime: 60_000,
+      gcTime: 30 * 60_000,
       refetchOnWindowFocus: false,
       refetchOnReconnect: true,
       retry: 1,
@@ -76,6 +77,7 @@ const App = () => (
             <Route path="/allocation" element={<DashboardLayout><AllocationStudio /></DashboardLayout>} />
             <Route path="/trade" element={<DashboardLayout><Trade /></DashboardLayout>} />
             <Route path="/approvals" element={<DashboardLayout><ApprovalsPage /></DashboardLayout>} />
+            <Route path="/ai-command" element={<DashboardLayout><AICommandCenter /></DashboardLayout>} />
             <Route path="/strategy-lab" element={<DashboardLayout><StrategyLab /></DashboardLayout>} />
             <Route path="/settings" element={<DashboardLayout><SettingsPage /></DashboardLayout>} />
             <Route path="/simplex" element={<SimplexDemo />} />

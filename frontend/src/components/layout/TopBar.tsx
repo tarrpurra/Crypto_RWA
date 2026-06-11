@@ -6,6 +6,7 @@ import { ThemeToggle } from "@/components/layout/ThemeToggle";
 
 const navItems = [
   { title: "Dashboard", url: "/dashboard" },
+  { title: "AI Command", url: "/ai-command", pulse: true },
   { title: "Risk", url: "/risk" },
   { title: "Allocation", url: "/allocation" },
   { title: "Trade", url: "/trade" },
@@ -52,7 +53,13 @@ export function TopBar() {
                   : "border-transparent text-muted-foreground hover:text-foreground"
               }`}
             >
-              {item.title}
+              {item.pulse && (
+                <span className="mr-1.5 flex h-2 w-2 items-center justify-center">
+                  <span className="absolute h-2 w-2 animate-ping rounded-full bg-emerald-400" />
+                  <span className="relative h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                </span>
+              )}
+              <span className={item.pulse ? "text-primary" : ""}>{item.title}</span>
             </Link>
           ))}
         </nav>

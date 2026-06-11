@@ -17,6 +17,93 @@ For each entry, record:
 
 ## Change Log
 
+### 2026-06-11
+
+Type:
+Snapshot-first dashboard foundation
+
+Author:
+Codex
+
+Summary:
+
+- removed the unsafe non-test database fallback to in-memory SQLite so persistence failures now surface clearly instead of silently discarding snapshots
+- added a cached `/dashboard/summary` endpoint that reads latest persisted portfolio, risk, allocation, and proposal records without triggering live market or wallet recomputation
+- moved the frontend dashboard onto the new summary endpoint for core portfolio and risk state, and changed `/portfolio/current` plus `/risk/current` to prefer persisted snapshots unless `force_refresh=true`
+
+Affected scope:
+
+- services/agent/repositories/db/session.py
+- services/agent/app/api/dashboard.py
+- services/agent/app/schemas/dashboard.py
+- services/agent/modules/dashboard/cache.py
+- services/agent/modules/dashboard/summary.py
+- services/agent/app/api/portfolio.py
+- services/agent/app/api/risk.py
+- frontend/src/lib/api/dashboard.ts
+- frontend/src/hooks/useDashboardSummary.ts
+- frontend/src/pages/Index.tsx
+- frontend/src/App.tsx
+
+Impact:
+
+- persistence: non-test runtimes no longer silently lose data by falling back to in-memory SQLite
+- performance: dashboard core state can be served from one cached snapshot endpoint instead of repeatedly hitting separate live-compute portfolio and risk paths
+- compatibility: portfolio and risk endpoints still work but now default to persisted snapshots unless explicitly forced to refresh
+
+### 2026-06-11
+
+Type:
+Vault cost-basis and P&L tracking
+
+Author:
+Codex
+
+Summary:
+
+- added backend persistence for per-user vault cash-flow records so deposits, withdrawals, and manual adjustments can be stored as cost basis
+- extended the `/vault/portfolio` response with invested amount, total deposits, total withdrawals, and P&L fields derived from the stored flow ledger plus live vault valuation
+- added `POST /vault/flows/record` so confirmed deposit and withdrawal activity can be written back to backend state after the wallet or frontend completes the on-chain action
+
+Affected scope:
+
+- services/agent/app/api/vault.py
+- services/agent/app/schemas/vault.py
+- services/agent/repositories/db/models.py
+- services/agent/repositories/db/vault_repository.py
+
+Impact:
+
+- portfolio vault UX can now show invested capital and P&L from backend-provided fields instead of hardcoded or missing values
+- data model: vault performance now depends on recorded cash flows; internal vault swaps do not change invested basis
+- operations: frontend or execution flow still needs to call `/vault/flows/record` after successful deposits or withdrawals
+
+### 2026-06-11
+
+Type:
+Decision API ai_debug compatibility fix
+
+Author:
+Codex
+
+Summary:
+
+- fixed the decisions and scoped-investment logging paths to read `AIDebugPayload` as a Pydantic model instead of calling dict-style `.get(...)`
+- kept the API tolerant of either model or dict payloads so legacy/internal call sites do not crash the response path
+- added direct unit coverage for the async `/decisions` helper to ensure a typed `RecommendationResponse` no longer raises during completion logging
+
+Affected scope:
+
+- services/agent/app/api/decisions.py
+- services/agent/app/api/investment_scope.py
+- services/agent/tests/unit/test_decisions_api.py
+
+Impact:
+
+- reliability: `/decisions` and scoped decision flows no longer fail after recommendation generation because of `ai_debug` attribute access
+- risk: the observed exception was in the API/logging layer, not in canonical risk evaluation
+- tests: focused unit coverage now protects the typed `ai_debug` response path
+
 ### 2026-06-08
 
 Type:
