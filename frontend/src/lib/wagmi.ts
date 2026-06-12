@@ -3,7 +3,7 @@ import { mantleSepoliaTestnet } from "wagmi/chains";
 import { connectorsForWallets } from "@rainbow-me/rainbowkit";
 import { metaMaskWallet, rainbowWallet, walletConnectWallet } from "@rainbow-me/rainbowkit/wallets";
 
-const projectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID ?? "";
+const projectId = "00000000000000000000000000000000";
 
 const connectors = connectorsForWallets(
   [

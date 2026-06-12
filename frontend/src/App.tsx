@@ -17,7 +17,7 @@ import RiskCenter from "./pages/RiskCenter";
 import Trade from "./pages/Trade";
 import AllocationStudio from "./pages/AllocationStudio";
 import ApprovalsPage from "./pages/ApprovalsPage";
-import StrategyLab from "./pages/StrategyLab";
+import StrategyStudio from "./pages/StrategyStudio";
 import SettingsPage from "./pages/SettingsPage";
 import SimplexDemo from "./pages/SimplexDemo";
 import NotFound from "./pages/NotFound";
@@ -60,33 +60,33 @@ function RainbowKitThemeWrapper({ children }: { children: ReactNode }) {
 
 const App = () => (
   <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>
-  <WagmiProvider config={wagmiConfig}>
-  <QueryClientProvider client={queryClient}>
-    <RainbowKitThemeWrapper>
-    <TooltipProvider>
-      <AuthProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <RouteChangeLogger />
-          <Routes>
-            <Route path="/" element={<Landing />} />
-            <Route path="/dashboard" element={<DashboardLayout><Index /></DashboardLayout>} />
-            <Route path="/risk" element={<DashboardLayout><RiskCenter /></DashboardLayout>} />
-            <Route path="/allocation" element={<DashboardLayout><AllocationStudio /></DashboardLayout>} />
-            <Route path="/trade" element={<DashboardLayout><Trade /></DashboardLayout>} />
-            <Route path="/approvals" element={<DashboardLayout><ApprovalsPage /></DashboardLayout>} />
-            <Route path="/strategy-lab" element={<DashboardLayout><StrategyLab /></DashboardLayout>} />
-            <Route path="/settings" element={<DashboardLayout><SettingsPage /></DashboardLayout>} />
-            <Route path="/simplex" element={<SimplexDemo />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
-      </AuthProvider>
-    </TooltipProvider>
-    </RainbowKitThemeWrapper>
-  </QueryClientProvider>
-  </WagmiProvider>
+    <WagmiProvider config={wagmiConfig}>
+      <QueryClientProvider client={queryClient}>
+        <RainbowKitThemeWrapper>
+          <TooltipProvider>
+            <AuthProvider>
+              <Toaster />
+              <Sonner />
+              <BrowserRouter>
+                <RouteChangeLogger />
+                <Routes>
+                  <Route path="/" element={<Landing />} />
+                  <Route path="/dashboard" element={<DashboardLayout><Index /></DashboardLayout>} />
+                  <Route path="/risk" element={<DashboardLayout><RiskCenter /></DashboardLayout>} />
+                  <Route path="/allocation" element={<DashboardLayout><AllocationStudio /></DashboardLayout>} />
+                  <Route path="/trade" element={<DashboardLayout><Trade /></DashboardLayout>} />
+                  <Route path="/approvals" element={<DashboardLayout><ApprovalsPage /></DashboardLayout>} />
+                  <Route path="/strategy-lab" element={<DashboardLayout><StrategyStudio /></DashboardLayout>} />
+                  <Route path="/settings" element={<DashboardLayout><SettingsPage /></DashboardLayout>} />
+                  <Route path="/simplex" element={<SimplexDemo />} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </BrowserRouter>
+            </AuthProvider>
+          </TooltipProvider>
+        </RainbowKitThemeWrapper>
+      </QueryClientProvider>
+    </WagmiProvider>
   </ThemeProvider>
 );
 
