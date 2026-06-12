@@ -33,6 +33,14 @@ from services.agent.modules.proposals.investment_planner import (
 class InvestmentPlannerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.now = utc_now()
+        # Mock Web3 in investment_planner to prevent live RPC queries
+        self.web3_patcher = patch("services.agent.modules.proposals.investment_planner.Web3")
+        self.mock_web3 = self.web3_patcher.start()
+        # Mock gas price to return 50 Gwei
+        self.mock_web3.return_value.eth.gas_price = 50000000
+
+    def tearDown(self) -> None:
+        self.web3_patcher.stop()
 
     def _fresh_quote(self, token_in: str, token_out: str) -> NormalizedQuoteSnapshot:
         return NormalizedQuoteSnapshot(

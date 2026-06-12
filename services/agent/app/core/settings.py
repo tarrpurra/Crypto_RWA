@@ -162,6 +162,10 @@ class Settings(BaseSettings):
     ai_reasoning_model: str = "qwen2.5:3b"
     ollama_url: str = "http://host.docker.internal:11434"
 
+    rebalance_drift_tolerance: float = 0.03
+    rebalance_cooldown_seconds: int = 1500
+    rebalance_min_benefit_usd: float = 30.0
+
     @property
     def effective_http_rpc_url(self) -> str:
         if self.target_chain == TargetChain.MANTLE_MAINNET:

@@ -856,6 +856,47 @@ def build_investment_plan(
         target_weights=selected_weights,
         prices=prices,
     )
+
+    # Dynamic gas/net-benefit filtering for swaps
+    filtered_swaps: list[PlannedSwap] = []
+    gas_price_wei = Decimal("50000000")  # fallback to 0.05 Gwei
+    try:
+        w3 = Web3(Web3.HTTPProvider(settings.effective_http_rpc_url))
+        gas_price_wei = Decimal(str(w3.eth.gas_price))
+    except Exception as exc:
+        logger.warning("Failed to fetch live gas price from RPC, using fallback: %s", exc)
+
+    mnt_price = prices.get("MNT") or prices.get("WMNT") or Decimal("0.80")
+    min_benefit = Decimal(str(settings.rebalance_min_benefit_usd))
+
+    for swap in swaps:
+        source_price = _symbol_price(swap.token_in_symbol, prices, planning_portfolio)
+        if source_price is None:
+            source_price = prices.get(swap.token_in_symbol.upper(), Decimal("0"))
+        
+        swap_val_usd = swap.amount_in * source_price
+        
+        gas_cost_usd = Decimal("0")
+        if swap.gas_estimate is not None:
+            gas_cost_mnt = (swap.gas_estimate * gas_price_wei) / Decimal("1000000000000000000")
+            gas_cost_usd = gas_cost_mnt * mnt_price
+            
+        net_benefit_usd = swap_val_usd - gas_cost_usd
+        
+        if net_benefit_usd < min_benefit:
+            logger.info(
+                "Skipping swap %s->%s: swap value $%.2f minus gas cost $%.4f yields net benefit $%.2f, which is below the minimum threshold $%.2f",
+                swap.token_in_symbol,
+                swap.token_out_symbol,
+                swap_val_usd,
+                gas_cost_usd,
+                net_benefit_usd,
+                min_benefit
+            )
+            continue
+        filtered_swaps.append(swap)
+        
+    swaps = filtered_swaps
     checks, guard_blockers = _build_guard_checks(
         settings=settings,
         deposit_asset_symbol=request.deposit_asset_symbol,
