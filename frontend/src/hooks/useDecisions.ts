@@ -7,8 +7,9 @@ import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 export function useDecisions() {
   const { effectiveWalletAddress } = usePortfolioWallet();
   const { scope } = useInvestmentScope();
+  const scopeKey = scope ? JSON.stringify(scope) : null;
   return useQuery({
-    queryKey: ["decisions", effectiveWalletAddress, scope],
+    queryKey: ["decisions", effectiveWalletAddress, scopeKey],
     queryFn: () =>
       decisionsApi.getDecisions(
         effectiveWalletAddress,

@@ -243,8 +243,9 @@ async def generate_ai_allocation(
                 if res.status_code == 200:
                     result_json = res.json()
                     ai_response_text = result_json.get("response", "").strip()
-                    logger.debug("Ollama allocation raw response: %s", ai_response_text)
+                    logger.info("Ollama allocation raw response: %s", ai_response_text)
                     parsed = _extract_json_payload(ai_response_text)
+                    logger.info("Ollama allocation parsed response: %s", parsed)
                 else:
                     fallback_reason = f"Ollama returned HTTP {res.status_code}"
                     logger.warning("Ollama returned HTTP %s for allocation prompt.", res.status_code)
@@ -428,10 +429,11 @@ async def generate_recommendation_reasoning(
                 if res.status_code == 200:
                     result_json = res.json()
                     raw_response_text = result_json.get("response", "").strip()
-                    logger.debug("Ollama raw response: %s", raw_response_text)
+                    logger.info("Ollama raw response: %s", raw_response_text)
 
                     parsed = _extract_json_payload(raw_response_text)
                     parsed_response = parsed
+                    logger.info("Ollama reasoning parsed response: %s", parsed_response)
                     if ai_decision_maker:
                         if "recommended_action" in parsed:
                             explanation = {

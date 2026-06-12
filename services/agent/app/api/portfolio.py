@@ -125,7 +125,11 @@ def _normalize_zero_snapshot(snapshot: PortfolioSnapshotResponse) -> PortfolioSn
 
 
 @router.get("/current", response_model=PortfolioSnapshotResponse)
-async def current_portfolio(wallet_address: str | None = None, allow_env_fallback: bool = False) -> PortfolioSnapshotResponse:
+async def current_portfolio(
+    wallet_address: str | None = None,
+    allow_env_fallback: bool = False,
+    force_refresh: bool = False,
+) -> PortfolioSnapshotResponse:
     settings = get_settings()
     portfolio_address = _resolve_portfolio_address(wallet_address, allow_env_fallback=allow_env_fallback)
     if not portfolio_address:
@@ -144,6 +148,20 @@ async def current_portfolio(wallet_address: str | None = None, allow_env_fallbac
         )
         _save_snapshot_best_effort(snapshot)
         return snapshot
+
+    if not force_refresh:
+        try:
+            persisted_snapshot = await asyncio.to_thread(
+                lambda: PortfolioSnapshotRepository().latest_snapshot(portfolio_address=portfolio_address),
+            )
+        except Exception as exc:
+            logger.warning("Portfolio snapshot lookup failed before cached return: %s", exc)
+            persisted_snapshot = None
+        if persisted_snapshot is not None:
+            served_snapshot = _normalize_zero_snapshot(persisted_snapshot)
+            served_metadata = dict(served_snapshot.metadata)
+            served_metadata.update({"served_from": "latest_snapshot", "force_refresh": False})
+            return served_snapshot.model_copy(update={"metadata": served_metadata})
 
     persisted_snapshot_task = asyncio.to_thread(
         lambda: PortfolioSnapshotRepository().latest_snapshot(portfolio_address=portfolio_address),

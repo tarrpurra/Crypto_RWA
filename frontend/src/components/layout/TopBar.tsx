@@ -7,9 +7,7 @@ import { ThemeToggle } from "@/components/layout/ThemeToggle";
 const navItems = [
   { title: "Dashboard", url: "/dashboard" },
   { title: "Risk", url: "/risk" },
-  { title: "Allocation", url: "/allocation" },
-  { title: "Trade", url: "/trade" },
-  { title: "Approvals", url: "/approvals" },
+  { title: "Decision Log", url: "/decision-log" },
   { title: "Strategy Lab", url: "/strategy-lab" },
   { title: "Settings", url: "/settings" },
 ];
@@ -52,7 +50,7 @@ export function TopBar() {
                   : "border-transparent text-muted-foreground hover:text-foreground"
               }`}
             >
-              {item.title}
+              <span>{item.title}</span>
             </Link>
           ))}
         </nav>

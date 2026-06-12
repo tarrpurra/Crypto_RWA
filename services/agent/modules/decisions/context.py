@@ -33,6 +33,7 @@ class DecisionContext:
     prices: list[NormalizedPriceSnapshot]
     quotes: list[NormalizedQuoteSnapshot]
     profile_name: str
+    target_weights: dict[str, float] | None = None
     scope_type: str = "wallet"
     scope_input: dict | None = None
 
@@ -315,6 +316,7 @@ async def build_decision_context(
         actual_portfolio_response = portfolio_response
         actual_portfolio = _portfolio_snapshot_from_response(portfolio_response)
         effective_profile = _active_profile_name(settings, profile_name)
+        _, target_weights = get_allocation_profile_for_chain(effective_profile, settings.target_chain.value)
 
     prices, quotes = market_context
     risk_assessment = RiskEngine().evaluate(
@@ -337,6 +339,7 @@ async def build_decision_context(
         prices=prices or [],
         quotes=quotes or [],
         profile_name=effective_profile,
+        target_weights=target_weights,
         scope_type="deposit" if is_scoped else "wallet",
         scope_input={
             "deposit_asset_symbol": deposit_asset_symbol,

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 from uuid import uuid4
+
+logger = logging.getLogger("services.agent.decisions.api")
 
 from services.agent.app.core.settings import Settings, TargetChain, get_settings
 from services.agent.app.core.status_codes import DataStatusCode
@@ -32,6 +36,14 @@ class InvestmentScopeInput:
     deposit_amount: float
     risk_profile: str
     allocation_mode: str = "AI Suggested"
+
+
+def _ai_debug_value(payload: Any, field: str) -> Any:
+    if payload is None:
+        return None
+    if isinstance(payload, dict):
+        return payload.get(field)
+    return getattr(payload, field, None)
 
 
 def _ensure_utc(value: datetime) -> datetime:
@@ -245,6 +257,12 @@ async def build_scoped_allocation_response(scope: InvestmentScopeInput, settings
         profile_name=context.profile_name,
         portfolio=portfolio_context,
     )
+    logger.info(
+        "AI allocation result: action=%s confidence=%s reasoning=%s",
+        decision.recommended_action,
+        decision.confidence,
+        decision.reasoning,
+    )
     status = "degraded" if decision.recommended_action == "PAUSE" else "ok"
     return AllocationDecisionResponse(
         status=status,
@@ -277,9 +295,24 @@ async def build_scoped_decision_response(scope: InvestmentScopeInput, settings: 
         profile_name=context.profile_name,
         portfolio=portfolio_context,
     )
-    return await generate_recommendation_reasoning(
+    logger.info(
+        "Scoped AI allocation result: action=%s confidence=%s reasoning=%s",
+        decision.recommended_action,
+        decision.confidence,
+        decision.reasoning,
+    )
+    recommendation = await generate_recommendation_reasoning(
         portfolio_context,
         context.risk_snapshot,
         decision,
         actions,
     )
+    logger.info(
+        "Scoped AI recommendation: action=%s confidence=%s reasoning_summary=%s ai_mode=%s fallback=%s",
+        recommendation.recommended_action,
+        recommendation.confidence,
+        recommendation.reasoning_summary,
+        _ai_debug_value(recommendation.ai_debug, "mode"),
+        _ai_debug_value(recommendation.ai_debug, "used_fallback"),
+    )
+    return recommendation

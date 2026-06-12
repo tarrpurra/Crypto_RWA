@@ -64,7 +64,7 @@ export function FeatureGrid() {
           <motion.div
             key={f.title}
             variants={itemAnim}
-            className="group border border-lp-border-muted bg-lp-surface p-8 border-l-4 border-lp-gold shadow-hard transition-all duration-300 hover:-translate-y-1 hover:border-l-[#ffdca0] hover:shadow-[0_22px_48px_-28px_hsl(var(--lp-gold)/0.72)]"
+            className="group border border-lp-border-muted bg-lp-surface p-8 border-l-4 border-lp-gold shadow-hard transition-all duration-300 hover:-translate-y-1 hover:border-l-lp-gold hover:shadow-[0_22px_48px_-28px_hsl(var(--lp-gold)/0.72)]"
           >
             <div className="mb-8 flex h-12 w-12 items-center justify-center border border-lp-border-muted bg-lp-surface-2 text-lp-gold">
               {f.icon}

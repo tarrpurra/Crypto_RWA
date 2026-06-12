@@ -78,13 +78,11 @@ export function HumanVsAISection() {
           </div>
         </div>
         <button
-          className="mx-auto mt-8 inline-flex h-[52px] items-center gap-2 rounded-lg bg-lp-gold px-[38px] font-display text-[15px] font-semibold text-lp-bg shadow-[0_0_28px_hsl(var(--lp-gold)/0.22)] transition-all duration-200 hover:scale-[1.02] hover:bg-[#E0A83C] active:scale-[0.98]"
+          className="hover:bg-gold-hover mx-auto mt-8 inline-flex h-[52px] items-center gap-2 rounded-lg bg-lp-gold px-[38px] font-display text-[15px] font-semibold text-lp-bg shadow-[0_0_28px_hsl(var(--lp-gold)/0.22)] transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
           onMouseEnter={(e) => {
-            e.currentTarget.style.background = "#E0A83C";
             e.currentTarget.style.transform = "translateY(-2px) scale(1.02)";
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.background = "";
             e.currentTarget.style.transform = "none";
           }}
         >

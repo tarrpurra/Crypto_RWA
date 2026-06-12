@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from "react";
-import { BrowserRouter, Route, Routes, useLocation } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WagmiProvider } from "wagmi";
 import { RainbowKitProvider, darkTheme, lightTheme } from "@rainbow-me/rainbowkit";
@@ -14,9 +14,7 @@ import { logger } from "@/lib/logger";
 import Landing from "./pages/Landing";
 import Index from "./pages/Index";
 import RiskCenter from "./pages/RiskCenter";
-import Trade from "./pages/Trade";
-import AllocationStudio from "./pages/AllocationStudio";
-import ApprovalsPage from "./pages/ApprovalsPage";
+import DecisionLog from "./pages/DecisionLog";
 import StrategyStudio from "./pages/StrategyStudio";
 import SettingsPage from "./pages/SettingsPage";
 import SimplexDemo from "./pages/SimplexDemo";
@@ -25,8 +23,8 @@ import NotFound from "./pages/NotFound";
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 30_000,
-      gcTime: 5 * 60_000,
+      staleTime: 60_000,
+      gcTime: 30 * 60_000,
       refetchOnWindowFocus: false,
       refetchOnReconnect: true,
       retry: 1,
@@ -49,17 +47,29 @@ function RouteChangeLogger() {
 
 function RainbowKitThemeWrapper({ children }: { children: ReactNode }) {
   const { resolvedTheme } = useTheme();
+  const theme =
+    resolvedTheme === "light"
+      ? lightTheme({
+          accentColor: "#D4962A",
+          accentColorForeground: "#FFFBF5",
+          borderRadius: "small",
+          overlayBlur: "small",
+        })
+      : darkTheme({
+          accentColor: "#D4962A",
+          accentColorForeground: "#150F07",
+          borderRadius: "small",
+          overlayBlur: "small",
+        });
   return (
-    <RainbowKitProvider
-      theme={resolvedTheme === "light" ? lightTheme() : darkTheme()}
-    >
+    <RainbowKitProvider theme={theme}>
       {children}
     </RainbowKitProvider>
   );
 }
 
 const App = () => (
-  <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>
+  <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} disableTransitionOnChange>
     <WagmiProvider config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
         <RainbowKitThemeWrapper>
@@ -73,9 +83,11 @@ const App = () => (
                   <Route path="/" element={<Landing />} />
                   <Route path="/dashboard" element={<DashboardLayout><Index /></DashboardLayout>} />
                   <Route path="/risk" element={<DashboardLayout><RiskCenter /></DashboardLayout>} />
-                  <Route path="/allocation" element={<DashboardLayout><AllocationStudio /></DashboardLayout>} />
-                  <Route path="/trade" element={<DashboardLayout><Trade /></DashboardLayout>} />
-                  <Route path="/approvals" element={<DashboardLayout><ApprovalsPage /></DashboardLayout>} />
+                  <Route path="/decision-log" element={<DashboardLayout><DecisionLog /></DashboardLayout>} />
+                  <Route path="/allocation" element={<Navigate to="/strategy-lab" replace />} />
+                  <Route path="/trade" element={<Navigate to="/decision-log" replace />} />
+                  <Route path="/approvals" element={<Navigate to="/decision-log" replace />} />
+                  <Route path="/ai-command" element={<Navigate to="/dashboard" replace />} />
                   <Route path="/strategy-lab" element={<DashboardLayout><StrategyStudio /></DashboardLayout>} />
                   <Route path="/settings" element={<DashboardLayout><SettingsPage /></DashboardLayout>} />
                   <Route path="/simplex" element={<SimplexDemo />} />

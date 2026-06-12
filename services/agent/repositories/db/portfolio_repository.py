@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy import select
 
 from services.agent.app.schemas.portfolio import PortfolioSnapshotResponse
+from services.agent.repositories.db.normalization import normalize_json_symbols
 from services.agent.repositories.db.models import PortfolioSnapshotRecord
 from services.agent.repositories.db.session import create_session, init_db
 
@@ -42,17 +43,23 @@ class PortfolioSnapshotRepository:
             chain_id=snapshot.chain_id,
             base_currency=snapshot.base_currency,
             total_value_usd=snapshot.total_value_usd,
+            invested_amount_usd=snapshot.invested_amount_usd,
+            total_deposits_usd=snapshot.total_deposits_usd,
+            total_withdrawals_usd=snapshot.total_withdrawals_usd,
+            pnl_usd=snapshot.pnl_usd,
+            pnl_percent=snapshot.pnl_percent,
             generated_at=snapshot.generated_at,
             status=snapshot.status,
             status_code=snapshot.status_code,
             status_reason=snapshot.status_reason,
-            positions_json=[position.model_dump(mode="json") for position in snapshot.positions],
+            positions_json=normalize_json_symbols([position.model_dump(mode="json") for position in snapshot.positions]),
             data_sources_json=snapshot.data_sources_used,
             metadata_json=snapshot.metadata,
         )
 
     @staticmethod
     def _snapshot_from_record(record: PortfolioSnapshotRecord) -> PortfolioSnapshotResponse:
+        metadata = record.metadata_json or {}
         return PortfolioSnapshotResponse(
             snapshot_id=record.snapshot_id,
             generated_at=record.generated_at,
@@ -60,11 +67,16 @@ class PortfolioSnapshotRepository:
             chain_id=record.chain_id,
             base_currency=record.base_currency,
             total_value_usd=record.total_value_usd,
-            positions=record.positions_json,
+            invested_amount_usd=record.invested_amount_usd or metadata.get("invested_amount_usd"),
+            total_deposits_usd=record.total_deposits_usd or metadata.get("total_deposits_usd"),
+            total_withdrawals_usd=record.total_withdrawals_usd or metadata.get("total_withdrawals_usd"),
+            pnl_usd=record.pnl_usd or metadata.get("pnl_usd"),
+            pnl_percent=record.pnl_percent or metadata.get("pnl_percent"),
+            positions=normalize_json_symbols(record.positions_json),
             data_sources_used=record.data_sources_json,
             status=record.status,
             status_code=record.status_code,
             status_label=record.status_code,
             status_reason=record.status_reason,
-            metadata=record.metadata_json,
+            metadata=metadata,
         )

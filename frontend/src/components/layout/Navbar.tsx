@@ -10,8 +10,8 @@ const Navbar = ({ hasEntered }: { hasEntered: boolean }) => {
     { href: "/", label: "Product" },
     { href: "/dashboard", label: "Dashboard" },
     { href: "/risk", label: "Docs" },
-    { href: "/trade", label: "Log in" },
-    { href: "/allocation", label: "Get started" },
+    { href: "/decision-log", label: "Log in" },
+    { href: "/dashboard", label: "Get started" },
   ];
 
   return (

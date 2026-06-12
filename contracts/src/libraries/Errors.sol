@@ -32,4 +32,6 @@ library Errors {
     error InsufficientOutput(uint256 minAmountOut, uint256 actualAmountOut);
     error TokenApproveFailed(address token, address spender);
     error ExternalCallFailed();
+    error InvalidAmount();
+    error InsufficientBalance();
 }

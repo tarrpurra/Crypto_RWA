@@ -18,6 +18,20 @@ class RiskBucket(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class RiskScoreBandRange(BaseModel):
+    band: str
+    min_inclusive: float
+    max_exclusive: float | None = None
+    label: str
+
+
+class RiskScoreScale(BaseModel):
+    min_score: float = 0.0
+    max_score: float = 100.0
+    higher_is_worse: bool = True
+    bands: list[RiskScoreBandRange] = Field(default_factory=list)
+
+
 class RiskSnapshot(BaseModel):
     snapshot_id: str
     total_score: float
@@ -34,8 +48,11 @@ class RiskAssessmentResponse(BaseModel):
     asset: str
     recommended_action: str
     risk_score: float
+    risk_score_normalized: float = 0.0
     risk_band: str
+    risk_score_scale: RiskScoreScale = Field(default_factory=RiskScoreScale)
     confidence: float
+    confidence_normalized: float = 0.0
     reasoning_summary: str
     data_sources_used: list[str] = Field(default_factory=list)
     hard_veto_status: str

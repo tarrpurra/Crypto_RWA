@@ -44,6 +44,7 @@ async def current_risk(
     risk_profile: str | None = None,
     allocation_mode: str | None = None,
     allow_env_fallback: bool = False,
+    force_refresh: bool = False,
 ) -> RiskAssessmentResponse:
     if deposit_asset_symbol and deposit_amount and risk_profile:
         assessment = build_scoped_risk_assessment(
@@ -57,6 +58,16 @@ async def current_risk(
         )
         _save_assessment_best_effort(assessment)
         return assessment
+    if not force_refresh:
+        try:
+            latest = RiskAssessmentRepository().latest_assessment()
+        except Exception as exc:
+            logger.warning("Latest risk assessment lookup failed before cached return: %s", exc)
+            latest = None
+        if latest is not None:
+            served_metadata = dict(latest.metadata)
+            served_metadata.update({"served_from": "latest_assessment", "force_refresh": False})
+            return latest.model_copy(update={"metadata": served_metadata})
     settings = get_settings()
     portfolio = await current_portfolio(wallet_address=wallet_address, allow_env_fallback=allow_env_fallback)
     prices, quotes = _latest_market_context_best_effort()

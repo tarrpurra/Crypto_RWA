@@ -356,7 +356,7 @@ export default function ApprovalsPage() {
         </div>
         {aiDecisionMakerEnabled && (
           <div className="mt-3 rounded border border-success/40 bg-success/10 px-3 py-2 text-sm text-success">
-            Full access AI is handling approval and execution automatically. Open Review to inspect the payload and guard checks.
+            Full access AI is handling approval and execution automatically. Open Review to inspect the proposal details and guard checks.
           </div>
         )}
         <div className="mt-3 space-y-3">
@@ -393,8 +393,8 @@ export default function ApprovalsPage() {
             <DialogTitle>Proposal review</DialogTitle>
             <DialogDescription>
               {aiDecisionMakerEnabled
-                ? "Inspect the execution payload and risk state; full access AI handles approval and execution automatically."
-                : "Inspect the execution payload, then approve or reject with the current wallet context."}
+                ? "Inspect the proposal details and risk state; full access AI handles approval and execution automatically."
+                : "Inspect the proposal details, then approve or reject with the current wallet context."}
             </DialogDescription>
           </DialogHeader>
 
@@ -490,7 +490,7 @@ export default function ApprovalsPage() {
                 <p className="font-medium text-foreground">Approval guidance</p>
                 <p className="text-muted-foreground">
                   {aiDecisionMakerEnabled
-                    ? "Full access AI is handling approval and execution automatically. Use this dialog to inspect the payload and risk state."
+                    ? "Full access AI is handling approval and execution automatically. Use this dialog to inspect the proposal details and risk state."
                     : "Approve only after checking the pair, amount bounds, guard checks, and whether the proposal is still pending."}
                 </p>
               </div>

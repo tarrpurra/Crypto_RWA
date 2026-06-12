@@ -26,7 +26,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
         <div
           className={cn(
             "shell-backdrop relative flex min-w-0 w-full flex-1 flex-col",
-            useDocumentScroll ? "min-h-screen overflow-visible" : "overflow-hidden",
+            useDocumentScroll ? "min-h-screen overflow-visible" : "h-screen overflow-hidden",
           )}
         >
           <RenderBoundary
@@ -37,16 +37,16 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
           </RenderBoundary>
           <main
             className={cn(
-              "relative z-10 flex min-w-0 flex-1 scrollbar-thin",
+              "relative z-10 min-w-0 scrollbar-thin",
               useDocumentScroll
                 ? "overflow-visible"
-                : "min-h-0 overflow-y-auto overflow-x-hidden",
+                : "h-[calc(100vh-3rem)] overflow-y-auto overflow-x-hidden pb-16",
             )}
           >
             <div
               className={cn(
-                "flex min-h-0 min-w-0 w-full flex-1 flex-col",
-                useDocumentScroll ? "pb-4" : "",
+                "flex min-w-0 w-full flex-col",
+                useDocumentScroll ? "min-h-full pb-4" : "min-h-full",
               )}
             >
               <RenderBoundary

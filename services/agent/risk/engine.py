@@ -9,6 +9,7 @@ from services.agent.app.schemas.market_data import NormalizedPriceSnapshot
 from services.agent.app.schemas.portfolio import PortfolioSnapshotResponse
 from services.agent.app.schemas.quotes import NormalizedQuoteSnapshot
 from services.agent.app.schemas.risk import RiskAssessmentResponse, RiskBucket
+from services.agent.app.schemas.risk import RiskScoreBandRange, RiskScoreScale
 from services.agent.modules.oracle.freshness import utc_now
 
 
@@ -78,18 +79,24 @@ class RiskEngine:
         bucket_weights = self._bucket_weight_map(buckets)
         buckets = self._with_bucket_weights(buckets, bucket_weights)
         hard_veto = any(bucket.hard_veto for bucket in buckets)
-        risk_score = 100.0 if hard_veto else self._weighted_score(buckets)
+        raw_risk_score = 100.0 if hard_veto else self._weighted_score(buckets)
+        risk_score = self._normalize_risk_score(raw_risk_score)
         status_code = self._status_code(risk_score=risk_score, hard_veto=hard_veto, buckets=buckets)
         recommended_action = self._recommended_action(status_code)
-        confidence = self._confidence(portfolio=portfolio, hard_veto=hard_veto, quote_validation_status=quote_validation_status)
+        confidence = self._normalize_confidence(
+            self._confidence(portfolio=portfolio, hard_veto=hard_veto, quote_validation_status=quote_validation_status)
+        )
         data_sources = sorted({source for bucket in buckets for source in bucket.data_sources_used})
 
         return RiskAssessmentResponse(
             asset="portfolio",
             recommended_action=recommended_action,
             risk_score=risk_score,
+            risk_score_normalized=risk_score,
             risk_band=status_code,
+            risk_score_scale=self._risk_score_scale(),
             confidence=confidence,
+            confidence_normalized=confidence,
             reasoning_summary=self._reasoning_summary(status_code=status_code, hard_veto=hard_veto),
             data_sources_used=data_sources,
             hard_veto_status="active" if hard_veto else "inactive",
@@ -115,6 +122,60 @@ class RiskEngine:
                 "scoring_method": "weighted_bucket_score_with_restrictive_status_escalation",
                 "bucket_weights": bucket_weights,
             },
+        )
+
+    @staticmethod
+    def _normalize_risk_score(value: float) -> float:
+        return round(max(0.0, min(100.0, value)), 2)
+
+    @staticmethod
+    def _normalize_confidence(value: float) -> float:
+        return round(max(0.0, min(1.0, value)), 2)
+
+    @staticmethod
+    def _risk_score_scale() -> RiskScoreScale:
+        return RiskScoreScale(
+            min_score=0.0,
+            max_score=100.0,
+            higher_is_worse=True,
+            bands=[
+                RiskScoreBandRange(
+                    band=RiskStatusCode.RISK_NORMAL.value,
+                    min_inclusive=0.0,
+                    max_exclusive=25.0,
+                    label="Normal",
+                ),
+                RiskScoreBandRange(
+                    band=RiskStatusCode.RISK_CAUTION.value,
+                    min_inclusive=25.0,
+                    max_exclusive=50.0,
+                    label="Caution",
+                ),
+                RiskScoreBandRange(
+                    band=RiskStatusCode.RISK_REBALANCE_ONLY.value,
+                    min_inclusive=50.0,
+                    max_exclusive=70.0,
+                    label="Rebalance Only",
+                ),
+                RiskScoreBandRange(
+                    band=RiskStatusCode.RISK_REDUCE_ONLY.value,
+                    min_inclusive=70.0,
+                    max_exclusive=90.0,
+                    label="Reduce Only",
+                ),
+                RiskScoreBandRange(
+                    band=RiskStatusCode.RISK_PAUSE_REQUIRED.value,
+                    min_inclusive=90.0,
+                    max_exclusive=100.0,
+                    label="Pause Required",
+                ),
+                RiskScoreBandRange(
+                    band=RiskStatusCode.RISK_VETO.value,
+                    min_inclusive=100.0,
+                    max_exclusive=None,
+                    label="Veto",
+                ),
+            ],
         )
 
     @staticmethod

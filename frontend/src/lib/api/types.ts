@@ -66,6 +66,11 @@ export interface PortfolioSnapshotResponse extends StatusEnvelope {
   chain_id: number;
   base_currency: string;
   total_value_usd: string | null;
+  invested_amount_usd?: string | null;
+  total_deposits_usd?: string | null;
+  total_withdrawals_usd?: string | null;
+  pnl_usd?: string | null;
+  pnl_percent?: string | null;
   positions: PortfolioPosition[];
   data_sources_used: string[];
   metadata: Record<string, unknown>;
@@ -86,12 +91,29 @@ export interface RiskBucket {
   data_sources_used: string[];
 }
 
+export interface RiskScoreBandRange {
+  band: string;
+  min_inclusive: number;
+  max_exclusive: number | null;
+  label: string;
+}
+
+export interface RiskScoreScale {
+  min_score: number;
+  max_score: number;
+  higher_is_worse: boolean;
+  bands: RiskScoreBandRange[];
+}
+
 export interface RiskAssessmentResponse extends StatusEnvelope {
   asset: string;
   recommended_action: string;
   risk_score: number;
+  risk_score_normalized: number;
   risk_band: string;
+  risk_score_scale: RiskScoreScale;
   confidence: number;
+  confidence_normalized: number;
   reasoning_summary: string;
   data_sources_used: string[];
   hard_veto_status: string;
@@ -377,6 +399,8 @@ export interface TradeProposalResponse extends StatusEnvelope {
   proposal: TradeProposal
 }
 
+export interface ProposalListItem extends TradeProposal {}
+
 export interface ProposalMutationResponse extends StatusEnvelope {
   proposal_id: string
   message: string
@@ -443,6 +467,46 @@ export interface LinkedProposalSummary {
   status_code: string
 }
 
+export interface VaultBalanceItem {
+  asset_symbol: string;
+  asset_address: string | null;
+  balance: string;
+  value_usd: string | null;
+  share: number;
+}
+
+export interface VaultBalanceResponse extends StatusEnvelope {
+  vault_address: string;
+  vault_label: string;
+  user_address: string;
+  total_value_usd: string | null;
+  invested_amount_usd?: string | null;
+  total_deposits_usd?: string | null;
+  total_withdrawals_usd?: string | null;
+  pnl_usd?: string | null;
+  pnl_percent?: string | null;
+  balances: VaultBalanceItem[];
+  pending_deposits: number;
+  pending_withdrawals: number;
+  generated_at?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DepositPrepareResponse extends StatusEnvelope {
+  token: string;
+  amount: string;
+  allowance_required: boolean;
+  current_allowance: string;
+  spender: string;
+}
+
+export interface WithdrawPrepareResponse extends StatusEnvelope {
+  token: string;
+  amount: string;
+  vault_balance: string;
+  sufficient_balance: boolean;
+}
+
 export interface InvestmentPlanResponse extends StatusEnvelope {
   generated_at: string
   plan_id: string
@@ -461,4 +525,27 @@ export interface InvestmentPlanResponse extends StatusEnvelope {
   linked_proposals: LinkedProposalSummary[]
   risk_assessment: RiskAssessmentResponse
   metadata: Record<string, unknown>
+}
+
+export interface DashboardFreshnessPayload {
+  updated_at: string | null;
+  age_seconds: number | null;
+  status: string;
+}
+
+export interface DashboardCachePayload {
+  hit: boolean;
+  ttl_seconds: number;
+}
+
+export interface DashboardSummaryResponse {
+  portfolio: PortfolioSnapshotResponse | null;
+  risk: RiskAssessmentResponse | null;
+  allocation: AllocationDecisionResponse | null;
+  latest_decision: RecommendationResponse | null;
+  pending_proposal: ProposalListItem | null;
+  alerts: Record<string, unknown>[];
+  freshness: DashboardFreshnessPayload;
+  mode: string;
+  cache: DashboardCachePayload;
 }

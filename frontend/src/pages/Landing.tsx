@@ -93,11 +93,10 @@ const Landing = () => {
           ease: easeOut,
         }}
         style={{ transformOrigin: activationOrigin }}
-        className="pointer-events-none absolute inset-0 z-0 overflow-hidden"
+        className="landing-ambient pointer-events-none absolute inset-0 z-0 overflow-hidden"
       >
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_34%,rgba(214,184,63,0.18),transparent_0%,transparent_38%),radial-gradient(circle_at_70%_22%,rgba(214,184,63,0.09),transparent_0%,transparent_28%),linear-gradient(180deg,rgba(9,7,5,0.14),rgba(5,4,3,0.4))]" />
       </motion.div>
-      <div className="absolute inset-0 z-0 bg-[radial-gradient(circle_at_top,rgba(214,184,63,0.08),transparent_40%),linear-gradient(to_bottom,rgba(3,3,3,0.04),rgba(3,3,3,0.34))]" />
+      <div className="landing-overlay absolute inset-0 z-0" />
       <div className="relative z-10">
         <LandingNav isVisible={isVisible} isSettled={isSettled} isLaunching={phase === "launching"} />
 

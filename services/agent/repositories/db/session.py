@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from functools import lru_cache
-
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from services.agent.app.core.settings import Settings, get_settings
@@ -17,6 +15,13 @@ _ENGINE = None
 _SESSION_FACTORY = None
 
 
+def _is_test_runtime(settings: Settings) -> bool:
+    import os
+
+    app_env = (settings.app_env or "").strip().lower()
+    return app_env == "test" or os.getenv("PYTEST_CURRENT_TEST") is not None
+
+
 def get_engine():
     global _ENGINE
     if _ENGINE is not None:
@@ -29,16 +34,24 @@ def get_engine():
 
     try:
         engine = create_engine(db_url, future=True, pool_pre_ping=True)
-        # Test connection
         with engine.connect() as conn:
             pass
         _ENGINE = engine
         logger.info("Connected to database successfully.")
         return _ENGINE
     except Exception as exc:
-        logger.warning("Failed to connect to database %s: %s. Falling back to in-memory SQLite.", db_url, exc)
-        _ENGINE = create_engine("sqlite:///:memory:", future=True, connect_args={"check_same_thread": False})
-        return _ENGINE
+        if _is_test_runtime(settings):
+            logger.warning(
+                "Failed to connect to database %s during test runtime: %s. Using in-memory SQLite for tests only.",
+                db_url,
+                exc,
+            )
+            _ENGINE = create_engine("sqlite+pysqlite:///:memory:", future=True, connect_args={"check_same_thread": False})
+            return _ENGINE
+        raise RuntimeError(
+            "Persistent database connection failed. Refusing to use in-memory SQLite outside test runtime "
+            "because AIxRWA requires durable portfolio, risk, decision, proposal, and vault snapshots."
+        ) from exc
 
 
 def get_session_factory() -> sessionmaker[Session]:
@@ -52,10 +65,53 @@ def get_session_factory() -> sessionmaker[Session]:
 def init_db(settings: Settings | None = None) -> None:
     del settings
     try:
-        Base.metadata.create_all(get_engine())
+        engine = get_engine()
+        Base.metadata.create_all(engine)
+        _sync_schema(engine)
     except Exception as exc:
         logger.error("Failed to initialize database schema: %s", exc)
 
 
 def create_session() -> Session:
     return get_session_factory()()
+
+
+def _sync_schema(engine) -> None:
+    inspector = inspect(engine)
+    _ensure_columns(
+        engine,
+        inspector,
+        "investment_plans",
+        {
+            "deposit_asset_symbol": "VARCHAR(32)",
+            "deposit_amount": "VARCHAR(78)",
+            "deposit_value_usd": "VARCHAR(78)",
+        },
+    )
+    _ensure_columns(
+        engine,
+        inspector,
+        "portfolio_snapshots",
+        {
+            "invested_amount_usd": "VARCHAR(78)",
+            "total_deposits_usd": "VARCHAR(78)",
+            "total_withdrawals_usd": "VARCHAR(78)",
+            "pnl_usd": "VARCHAR(78)",
+            "pnl_percent": "VARCHAR(78)",
+        },
+    )
+
+
+def _ensure_columns(engine, inspector, table_name: str, expected_columns: dict[str, str]) -> None:
+    try:
+        existing_columns = {column["name"] for column in inspector.get_columns(table_name)}
+    except Exception:
+        return
+
+    missing = {name: definition for name, definition in expected_columns.items() if name not in existing_columns}
+    if not missing:
+        return
+
+    with engine.begin() as connection:
+        for column_name, definition in missing.items():
+            connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}"))

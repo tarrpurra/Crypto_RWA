@@ -5,6 +5,7 @@ from sqlalchemy import select
 from services.agent.app.schemas.market_data import NormalizedPriceSnapshot, RawPriceSnapshot
 from services.agent.app.schemas.quotes import NormalizedQuoteSnapshot, RawQuoteSnapshot
 from services.agent.modules.market_data.snapshots import PriceIngestionBundle, QuoteIngestionBundle
+from services.agent.repositories.db.normalization import normalize_asset_symbol
 from services.agent.repositories.db.models import PriceSnapshotRecord, QuoteSnapshotRecord
 from services.agent.repositories.db.session import create_session, init_db
 
@@ -86,7 +87,7 @@ class MarketDataRepository:
         return PriceSnapshotRecord(
             snapshot_id=snapshot.snapshot_id,
             asset_key=snapshot.asset_key,
-            asset_symbol=snapshot.asset_symbol,
+            asset_symbol=normalize_asset_symbol(snapshot.asset_symbol) or snapshot.asset_symbol,
             asset_address=snapshot.asset_address,
             chain_id=snapshot.chain_id,
             record_kind="raw",
@@ -111,7 +112,7 @@ class MarketDataRepository:
         return PriceSnapshotRecord(
             snapshot_id=snapshot.snapshot_id,
             asset_key=snapshot.asset_key,
-            asset_symbol=snapshot.asset_symbol,
+            asset_symbol=normalize_asset_symbol(snapshot.asset_symbol) or snapshot.asset_symbol,
             asset_address=snapshot.asset_address,
             chain_id=snapshot.chain_id,
             record_kind="normalized",
@@ -140,7 +141,7 @@ class MarketDataRepository:
         return NormalizedPriceSnapshot(
             snapshot_id=record.snapshot_id,
             asset_key=record.asset_key,
-            asset_symbol=record.asset_symbol,
+            asset_symbol=normalize_asset_symbol(record.asset_symbol) or record.asset_symbol,
             asset_address=record.asset_address,
             chain_id=record.chain_id,
             price_usd=record.price,
@@ -195,8 +196,8 @@ class MarketDataRepository:
             protocol=snapshot.protocol,
             route_id=snapshot.route_id,
             route_type=snapshot.route_label,
-            token_in=snapshot.token_in_symbol,
-            token_out=snapshot.token_out_symbol,
+            token_in=normalize_asset_symbol(snapshot.token_in_symbol) or snapshot.token_in_symbol,
+            token_out=normalize_asset_symbol(snapshot.token_out_symbol) or snapshot.token_out_symbol,
             chain_id=snapshot.chain_id,
             record_kind="normalized",
             amount_in=snapshot.amount_in,
@@ -221,8 +222,8 @@ class MarketDataRepository:
             route_id=record.route_id or record.snapshot_id,
             route_label=record.route_type,
             chain_id=record.chain_id,
-            token_in_symbol=record.token_in,
-            token_out_symbol=record.token_out,
+            token_in_symbol=normalize_asset_symbol(record.token_in) or record.token_in,
+            token_out_symbol=normalize_asset_symbol(record.token_out) or record.token_out,
             amount_in=record.amount_in,
             amount_out=record.quoted_amount_out,
             quoted_price=record.quoted_price,

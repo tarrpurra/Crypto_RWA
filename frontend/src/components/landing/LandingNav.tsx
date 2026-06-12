@@ -153,7 +153,7 @@ export function LandingNav({ isVisible, isSettled, isLaunching }: LandingNavProp
                 to="/dashboard"
                 className="border-2 border-lp-gold bg-lp-gold px-6 py-2.5 text-sm font-semibold text-lp-bg transition-opacity duration-200 hover:opacity-90 active:scale-[0.98]"
               >
-                Launch App &rarr;
+                Start Trading &rarr;
               </Link>
             </motion.div>
           </div>
@@ -178,7 +178,7 @@ export function LandingNav({ isVisible, isSettled, isLaunching }: LandingNavProp
               onClick={() => setMobileOpen(false)}
               className="mt-2 inline-block border-2 border-lp-gold bg-lp-gold px-6 py-2.5 text-sm font-semibold text-lp-bg"
             >
-              Launch App &rarr;
+              Start Trading &rarr;
             </Link>
           </div>
         </div>
