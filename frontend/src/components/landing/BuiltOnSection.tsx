@@ -34,7 +34,7 @@ export function BuiltOnSection() {
                 className="block transition-opacity duration-200 hover:opacity-90"
                 aria-label={item.alt}
               >
-                <span className="flex h-[130px] w-[180px] items-center justify-center rounded-[16px] border border-lp-gold/25 bg-[#3d2b14] px-6">
+                <span className="bg-copper-strong flex h-[130px] w-[180px] items-center justify-center rounded-[16px] border border-lp-gold/25 px-6">
                   <img
                     src={item.src}
                     alt={item.alt}

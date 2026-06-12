@@ -66,6 +66,11 @@ export interface PortfolioSnapshotResponse extends StatusEnvelope {
   chain_id: number;
   base_currency: string;
   total_value_usd: string | null;
+  invested_amount_usd?: string | null;
+  total_deposits_usd?: string | null;
+  total_withdrawals_usd?: string | null;
+  pnl_usd?: string | null;
+  pnl_percent?: string | null;
   positions: PortfolioPosition[];
   data_sources_used: string[];
   metadata: Record<string, unknown>;
@@ -86,12 +91,29 @@ export interface RiskBucket {
   data_sources_used: string[];
 }
 
+export interface RiskScoreBandRange {
+  band: string;
+  min_inclusive: number;
+  max_exclusive: number | null;
+  label: string;
+}
+
+export interface RiskScoreScale {
+  min_score: number;
+  max_score: number;
+  higher_is_worse: boolean;
+  bands: RiskScoreBandRange[];
+}
+
 export interface RiskAssessmentResponse extends StatusEnvelope {
   asset: string;
   recommended_action: string;
   risk_score: number;
+  risk_score_normalized: number;
   risk_band: string;
+  risk_score_scale: RiskScoreScale;
   confidence: number;
+  confidence_normalized: number;
   reasoning_summary: string;
   data_sources_used: string[];
   hard_veto_status: string;
@@ -458,9 +480,16 @@ export interface VaultBalanceResponse extends StatusEnvelope {
   vault_label: string;
   user_address: string;
   total_value_usd: string | null;
+  invested_amount_usd?: string | null;
+  total_deposits_usd?: string | null;
+  total_withdrawals_usd?: string | null;
+  pnl_usd?: string | null;
+  pnl_percent?: string | null;
   balances: VaultBalanceItem[];
   pending_deposits: number;
   pending_withdrawals: number;
+  generated_at?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface DepositPrepareResponse extends StatusEnvelope {

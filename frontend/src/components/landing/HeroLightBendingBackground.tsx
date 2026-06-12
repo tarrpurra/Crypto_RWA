@@ -41,7 +41,7 @@ export function HeroLightBendingBackground({ reduce }: HeroLightBendingBackgroun
       />
 
       {/* Readability vignette */}
-      <div className="pointer-events-none absolute inset-0 z-[4] bg-[radial-gradient(circle_at_50%_30%,transparent_0%,rgba(0,0,0,0.14)_56%,rgba(0,0,0,0.66)_100%)]" />
+      <div className="hero-vignette pointer-events-none absolute inset-0 z-[4]" />
     </div>
   );
 }

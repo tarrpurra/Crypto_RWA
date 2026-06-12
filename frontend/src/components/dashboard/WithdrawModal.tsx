@@ -9,8 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { VaultBalanceResponse } from "@/lib/api/types";
-
-const WITHDRAW_ASSETS = ["MNT", "USDC", "USDY", "mETH"] as const;
+const WITHDRAW_ASSETS = ["MNT","USDY", "mETH"] as const;
 
 interface WithdrawModalProps {
   open: boolean;

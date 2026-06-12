@@ -69,6 +69,11 @@ class PortfolioSnapshotResponse(BaseModel):
     chain_id: int
     base_currency: str = "USD"
     total_value_usd: str | None = None
+    invested_amount_usd: str | None = None
+    total_deposits_usd: str | None = None
+    total_withdrawals_usd: str | None = None
+    pnl_usd: str | None = None
+    pnl_percent: str | None = None
     positions: list[PortfolioPosition] = Field(default_factory=list)
     data_sources_used: list[str] = Field(default_factory=list)
     status: str

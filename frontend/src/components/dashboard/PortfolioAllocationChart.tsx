@@ -10,11 +10,13 @@ const COLORS = [
 
 interface PortfolioAllocationChartProps {
   portfolio: PortfolioSnapshotResponse | undefined
+  targetWeights?: Record<string, number>
   isLoading: boolean
 }
 
-export function PortfolioAllocationChart({ portfolio, isLoading }: PortfolioAllocationChartProps) {
+export function PortfolioAllocationChart({ portfolio, targetWeights, isLoading }: PortfolioAllocationChartProps) {
   const positions = portfolio?.positions ?? []
+  const targetWeightEntries = Object.entries(targetWeights ?? {}).sort((left, right) => right[1] - left[1])
 
   const chartData = positions
     .filter((p) => p.weight != null && Number(p.weight) > 0)
@@ -58,56 +60,75 @@ export function PortfolioAllocationChart({ portfolio, isLoading }: PortfolioAllo
           <p className="text-xs text-muted-foreground">No position data available.</p>
         </div>
       ) : (
-        <div className="mt-4 grid grid-cols-[1fr_auto] gap-4">
-          <div className="h-44">
-            <ChartContainer config={config} className="h-full w-full !aspect-auto">
-              <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-                <Pie
-                  data={chartData}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={48}
-                  outerRadius={72}
-                  strokeWidth={1}
-                  stroke="hsl(var(--border))"
-                >
-                  {chartData.map((entry, i) => (
-                    <Cell key={entry.name} fill={entry.fill} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  content={
-                    <ChartTooltipContent
-                      className="rounded border border-border bg-card"
-                      formatter={(value, name) => (
-                        <div className="flex items-center justify-between gap-4 text-xs">
-                          <span className="font-medium text-foreground">{name}</span>
-                          <span className="font-mono text-muted-foreground">{(Number(value) * 100).toFixed(1)}%</span>
-                        </div>
-                      )}
-                    />
-                  }
-                />
-              </PieChart>
-            </ChartContainer>
+        <div className="mt-4 space-y-4">
+          <div className="grid grid-cols-[1fr_auto] gap-4">
+            <div className="h-44">
+              <ChartContainer config={config} className="h-full w-full !aspect-auto">
+                <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+                  <Pie
+                    data={chartData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={48}
+                    outerRadius={72}
+                    strokeWidth={1}
+                    stroke="hsl(var(--border))"
+                  >
+                    {chartData.map((entry) => (
+                      <Cell key={entry.name} fill={entry.fill} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    content={
+                      <ChartTooltipContent
+                        className="rounded border border-border bg-card"
+                        formatter={(value, name) => (
+                          <div className="flex items-center justify-between gap-4 text-xs">
+                            <span className="font-medium text-foreground">{name}</span>
+                            <span className="font-mono text-muted-foreground">{(Number(value) * 100).toFixed(2)}%</span>
+                          </div>
+                        )}
+                      />
+                    }
+                  />
+                </PieChart>
+              </ChartContainer>
+            </div>
+
+            <div className="flex flex-col justify-center gap-1.5">
+              {chartData.map((item) => {
+                const position = positions.find((p) => p.asset_symbol === item.name)
+                return (
+                  <div key={item.name} className="flex items-center gap-2">
+                    <span className="h-2 w-2 shrink-0" style={{ backgroundColor: item.fill }} />
+                    <span className="text-[0.65rem] text-muted-foreground">{item.name}</span>
+                    <span className={cn("font-mono text-[0.6rem] font-medium", positions.length > 0 && position?.drift_status === "over_weight" ? "text-warning" : position?.drift_status === "under_weight" ? "text-destructive" : "text-foreground")}>
+                      {(item.value * 100).toFixed(2)}%
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
           </div>
 
-          <div className="flex flex-col justify-center gap-1.5">
-            {chartData.map((item) => {
-              const position = positions.find((p) => p.asset_symbol === item.name)
-              return (
-                <div key={item.name} className="flex items-center gap-2">
-                  <span className="h-2 w-2 shrink-0" style={{ backgroundColor: item.fill }} />
-                  <span className="text-[0.65rem] text-muted-foreground">{item.name}</span>
-                  <span className={cn("font-mono text-[0.6rem] font-medium", positions.length > 0 && position?.drift_status === "over_weight" ? "text-warning" : position?.drift_status === "under_weight" ? "text-destructive" : "text-foreground")}>
-                    {(item.value * 100).toFixed(1)}%
-                  </span>
-                </div>
-              )
-            })}
-          </div>
+          {targetWeightEntries.length > 0 && (
+            <div className="border-t border-border pt-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">Target weights</p>
+                <span className="text-[0.65rem] text-muted-foreground">Profile target</span>
+              </div>
+              <div className="grid gap-2">
+                {targetWeightEntries.map(([asset, weight]) => (
+                  <div key={asset} className="flex items-center justify-between border border-border bg-surface-2 px-3 py-2">
+                    <span className="font-medium text-foreground">{asset}</span>
+                    <span className="font-mono text-sm text-muted-foreground">{(weight * 100).toFixed(2)}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

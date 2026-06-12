@@ -87,8 +87,6 @@ def _normalize_weights(request: InvestmentPlanRequest, settings: Settings) -> tu
     original_profile_name, original_weights = get_allocation_profile(request.risk_profile)
     profile_name, ai_weights = get_allocation_profile_for_chain(request.risk_profile, settings.target_chain.value)
     warnings: list[str] = []
-    if settings.target_chain == TargetChain.MANTLE_SEPOLIA and "USDC" in {asset.upper() for asset in original_weights}:
-        warnings.append("Mantle Sepolia target baskets are renormalized across the remaining sleeves.")
     if request.allocation_mode.lower().startswith("manual"):
         if not request.manual_target_weights:
             raise HTTPException(status_code=400, detail="Manual allocation mode requires manual_target_weights.")
@@ -840,6 +838,7 @@ def build_investment_plan(
             rebalance_portfolio,
             _risk_snapshot_from_assessment(risk),
             normalized_profile,
+            target_weights_override=selected_weights,
         )
         if rebalance_actions and rebalance_decision.recommended_action != "PAUSE":
             rebalance_swaps = _build_rebalance_swaps(

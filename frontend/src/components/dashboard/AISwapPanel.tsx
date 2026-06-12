@@ -1,8 +1,8 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { ArrowRight, BellRing, ChevronDown, ChevronUp, Cpu } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Bot, ChevronDown, ChevronUp, Cpu, FileSearch, ShieldCheck, Sparkles } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
-import { Button } from "@/components/ui/button";
+import { LiveReasoningTrace, type ReasoningStep } from "@/components/ai/LiveReasoningTrace";
+import { ReasoningStreamPanel } from "@/components/ai/ReasoningStreamPanel";
 import type { AllocationDecisionResponse, RiskAssessmentResponse, RecommendationResponse } from "@/lib/api/types";
 
 interface SwapRecommendation {
@@ -24,21 +24,26 @@ interface AISwapPanelProps {
   onAiAccessChange: (enabled: boolean) => void;
   isAiAccessPending: boolean;
   swapRecommendations: SwapRecommendation[];
-  depositAmountReady: boolean;
-  onReviewSwap: () => void;
-  onOpenTradePage: () => void;
 }
 
-function ReasoningBlock({ number, title, text }: { number: string; title: string; text: string }) {
-  return (
-    <div className="rounded-lg border border-primary/10 bg-card p-4">
-      <div className="mb-2 flex items-center gap-3">
-        <span className="font-mono text-xs text-primary">{number}</span>
-        <h3 className="text-sm font-medium text-cream">{title}</h3>
-      </div>
-      <p className="text-sm leading-6 text-muted-foreground">{text}</p>
-    </div>
-  );
+function normalizeSummaryText(reasoning: string | undefined, profileName: string | undefined) {
+  if (!reasoning) {
+    return "Rebalance recommended based on current allocation drift.";
+  }
+
+  const prefixPattern = /^Proposed rebalance actions for .*? profile:\s*/i;
+  const cleaned = reasoning.replace(prefixPattern, "").trim();
+  const normalized = cleaned.replace(/\s*,\s*/g, "; ").replace(/\s+/g, " ").trim();
+
+  if (!normalized) {
+    return profileName
+      ? `${profileName} profile rebalance is recommended.`
+      : "Rebalance is recommended.";
+  }
+
+  return profileName
+    ? `${profileName} rebalance: ${normalized}`
+    : normalized;
 }
 
 export function AISwapPanel({
@@ -51,11 +56,7 @@ export function AISwapPanel({
   onAiAccessChange,
   isAiAccessPending,
   swapRecommendations,
-  depositAmountReady,
-  onReviewSwap,
-  onOpenTradePage,
 }: AISwapPanelProps) {
-  const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
   const [showWarning, setShowWarning] = useState(false);
   const decision = allocation?.decision;
@@ -69,6 +70,147 @@ export function AISwapPanel({
         : primarySwapRecommendation.asset_symbol)
     : null;
   const hasMultipleSwapLegs = swapRecommendations.length > 1;
+  const summaryText = normalizeSummaryText(decision?.reasoning, decision?.profile_name);
+  const retrievalItems = useMemo(() => {
+    const items = [
+      ...(decisions?.data_sources_used ?? []),
+      ...(decisions?.constraints_applied ?? []),
+      decision?.profile_name ? `profile:${decision.profile_name}` : null,
+      primarySwapRecommendation?.token_in_symbol ? `token_in:${primarySwapRecommendation.token_in_symbol}` : null,
+      primarySwapRecommendation?.token_out_symbol ? `token_out:${primarySwapRecommendation.token_out_symbol}` : null,
+      risk?.risk_band ? `risk:${risk.risk_band}` : null,
+    ].filter((value): value is string => Boolean(value));
+    return Array.from(new Set(items));
+  }, [
+    decision?.profile_name,
+    decisions?.constraints_applied,
+    decisions?.data_sources_used,
+    primarySwapRecommendation?.token_in_symbol,
+    primarySwapRecommendation?.token_out_symbol,
+    risk?.risk_band,
+  ]);
+  const reasoningNotes = useMemo(
+    () => Array.from(new Set([...(decisions?.notes ?? []), ...(risk?.notes ?? [])])),
+    [decisions?.notes, risk?.notes],
+  );
+  const parsedResponse = decisions?.ai_debug?.parsed_response ?? null;
+  const reasoningSteps = useMemo<ReasoningStep[]>(() => {
+    const sources = decisions?.data_sources_used ?? [];
+    const hasSwap = swapRecommendations.length > 0;
+    const proposalStatus: ReasoningStep["status"] =
+      action === "PAUSE"
+        ? "blocked"
+        : hasSwap
+          ? "running"
+          : "warning";
+    const approvalStatus: ReasoningStep["status"] =
+      risk?.hard_veto_status === "active"
+        ? "blocked"
+        : aiDecisionMakerEnabled
+          ? "running"
+          : "queued";
+
+    return [
+      {
+        id: "portfolio",
+        title: "Portfolio scan",
+        detail: hasConnectedWallet
+          ? "Loaded wallet-scoped balances and current portfolio context for the active account."
+          : "Waiting for a connected wallet before scanning balances and holdings.",
+        status: hasConnectedWallet ? "complete" : "queued",
+        evidence: [
+          allocation?.decision?.profile_name ? `profile:${allocation.decision.profile_name}` : null,
+          primarySwapRecommendation?.token_in_symbol ? `asset:${primarySwapRecommendation.token_in_symbol}` : null,
+        ].filter((value): value is string => Boolean(value)),
+      },
+      {
+        id: "market",
+        title: "Market check",
+        detail: sources.length > 0
+          ? "Verified current pricing and route context from the latest available market data sources."
+          : "Market data inputs are still loading or unavailable for this recommendation.",
+        status: sources.length > 0 ? "complete" : "warning",
+        evidence: sources.slice(0, 4),
+      },
+      {
+        id: "allocation",
+        title: "Allocation drift",
+        detail: decision?.reasoning
+          ? decision.reasoning
+          : "The allocation engine is comparing the current sleeves against the selected target profile.",
+        status: allocation?.status === "ok" || action === "REBALANCE" ? "complete" : allocation ? "warning" : "queued",
+        evidence: [
+          action ? `action:${action}` : null,
+          hasMultipleSwapLegs ? `legs:${swapRecommendations.length}` : null,
+        ].filter((value): value is string => Boolean(value)),
+      },
+      {
+        id: "risk",
+        title: "Risk guard",
+        detail: risk?.reasoning_summary
+          ? risk.reasoning_summary
+          : "Risk checks are still running before the proposal can move forward.",
+        status:
+          risk?.hard_veto_status === "active"
+            ? "blocked"
+            : risk?.risk_band === "RISK_CAUTION" || risk?.risk_band === "RISK_REBALANCE_ONLY"
+              ? "warning"
+              : risk
+                ? "complete"
+                : "queued",
+        evidence: [
+          risk?.risk_band ? `band:${risk.risk_band}` : null,
+          risk?.risk_score != null ? `score:${risk.risk_score.toFixed(2)}` : null,
+        ].filter((value): value is string => Boolean(value)),
+      },
+      {
+        id: "proposal",
+        title: "Proposal",
+        detail: hasSwap && primarySwapRecommendation
+          ? `Prepared ${primarySwapPairLabel ?? primarySwapRecommendation.asset_symbol} ${primarySwapRecommendation.action.toLowerCase()} recommendation for review.`
+          : action === "PAUSE"
+            ? "Proposal generation stopped because the current risk or portfolio state does not allow a trade."
+            : "No executable swap leg has been generated yet.",
+        status: proposalStatus,
+        evidence: primarySwapRecommendation
+          ? [primarySwapPairLabel ?? primarySwapRecommendation.asset_symbol, `amount:${primarySwapRecommendation.amount.toFixed(4)}`]
+          : undefined,
+      },
+      {
+        id: "approval",
+        title: "Approval",
+        detail:
+          risk?.hard_veto_status === "active"
+            ? "Execution remains blocked until the hard veto clears."
+            : aiDecisionMakerEnabled
+              ? "The system is allowed to continue through approval and execution once guard checks are satisfied."
+              : "Waiting for user review before any approval or execution can happen.",
+        status: approvalStatus,
+        evidence: [
+          risk?.required_human_approval_status ? `human:${risk.required_human_approval_status}` : null,
+          aiDecisionMakerEnabled ? "mode:full-access" : "mode:review-only",
+        ].filter((value): value is string => Boolean(value)),
+      },
+    ];
+  }, [
+    action,
+    aiDecisionMakerEnabled,
+    allocation,
+    decision?.reasoning,
+    hasConnectedWallet,
+    hasMultipleSwapLegs,
+    primarySwapPairLabel,
+    primarySwapRecommendation,
+    risk,
+    swapRecommendations.length,
+    decisions?.data_sources_used,
+  ]);
+  const pipelineStats = useMemo(() => {
+    const completed = reasoningSteps.filter((step) => step.status === "complete").length;
+    const warnings = reasoningSteps.filter((step) => step.status === "warning").length;
+    const blocked = reasoningSteps.filter((step) => step.status === "blocked" || step.status === "failed").length;
+    return { completed, warnings, blocked, total: reasoningSteps.length };
+  }, [reasoningSteps]);
 
   if (isLoading) {
     return (
@@ -84,68 +226,6 @@ export function AISwapPanel({
 
   return (
     <section className="ai-reasoning-panel rounded-xl">
-      {hasConnectedWallet && primarySwapRecommendation && (
-        <div className="border-b border-primary/20 p-5">
-          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-            <div className="flex items-start gap-3">
-              <div className="rounded border border-primary/25 bg-primary/10 p-2 text-primary">
-                <BellRing className="h-4 w-4" />
-              </div>
-              <div>
-                <p className="terminal-label text-primary">Swap recommendation ready</p>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {aiDecisionMakerEnabled
-                    ? "Full access AI is active. The trade flow will auto-approve and execute linked proposals after the plan is created."
-                    : "Recommendation only is active. Review the prefilled swap details before you approve or execute anything."}
-                </p>
-                <div className="mt-3 grid gap-2 md:grid-cols-3">
-                  <div className="rounded border border-border bg-surface-2 px-3 py-2">
-                    <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">
-                      {hasMultipleSwapLegs ? "Primary leg" : "Swap asset"}
-                    </p>
-                    <p className="mt-1 font-mono text-sm text-foreground">
-                      {primarySwapPairLabel ?? primarySwapRecommendation.asset_symbol} {primarySwapRecommendation.action === "BUY" ? "buy" : primarySwapRecommendation.action}
-                    </p>
-                  </div>
-                  <div className="rounded border border-border bg-surface-2 px-3 py-2">
-                    <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">
-                      {hasMultipleSwapLegs ? "Swap legs" : "Suggested amount"}
-                    </p>
-                    <p className="mt-1 font-mono text-sm text-foreground">
-                      {hasMultipleSwapLegs ? `${swapRecommendations.length} legs` : primarySwapRecommendation.amount.toFixed(4)}
-                    </p>
-                  </div>
-                  <div className="rounded border border-border bg-surface-2 px-3 py-2">
-                    <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">Confidence</p>
-                    <p className="mt-1 font-mono text-sm text-foreground">
-                      {allocation ? `${(allocation.decision.confidence * 100).toFixed(1)}%` : "-"}
-                    </p>
-                  </div>
-                </div>
-                <p className="mt-3 text-xs text-muted-foreground">
-                  The trade page opens with the suggested context already filled and can review every generated swap leg, including WMNT, USDY, and mETH routes.
-                </p>
-              </div>
-            </div>
-            {!aiDecisionMakerEnabled ? (
-              <div className="flex flex-wrap gap-2 md:justify-end">
-                <Button onClick={onReviewSwap} disabled={!depositAmountReady}>
-                  Review swap
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
-                <Button variant="outline" onClick={onOpenTradePage} disabled={!depositAmountReady}>
-                  Open trade page
-                </Button>
-              </div>
-            ) : (
-              <div className="rounded border border-success/40 bg-emerald-bg px-3 py-2 text-sm text-success md:max-w-sm md:justify-end">
-                Full access AI is opening the trade flow and executing the scoped swap automatically. No manual review is required in this mode.
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       <button
         onClick={() => setExpanded(!expanded)}
         className="flex w-full items-center justify-between p-5 text-left transition-colors hover:bg-primary/[0.03]"
@@ -158,11 +238,25 @@ export function AISwapPanel({
             <p className="text-xs uppercase tracking-[0.18em] text-primary">AI Reasoning Summary</p>
             <p className="mt-0.5 text-sm font-medium text-cream">
               {action === "REBALANCE"
-                ? `${decision?.reasoning ?? "Rebalance recommended based on portfolio drift."}`
+                ? summaryText
                 : action === "PAUSE"
                   ? "Risk constraints require pausing new allocations."
                   : "Portfolio is within acceptable parameters."}
             </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[0.62rem] uppercase tracking-[0.14em] text-muted-foreground">
+                <FileSearch className="h-3 w-3" />
+                {retrievalItems.length} retrieved
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[0.62rem] uppercase tracking-[0.14em] text-muted-foreground">
+                <ShieldCheck className="h-3 w-3" />
+                {pipelineStats.warnings > 0 ? `${pipelineStats.warnings} warnings` : "guards clear"}
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[0.62rem] uppercase tracking-[0.14em] text-muted-foreground">
+                <Bot className="h-3 w-3" />
+                {decisions?.ai_debug?.mode ?? "derived trace"}
+              </span>
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -221,47 +315,48 @@ export function AISwapPanel({
 
       {expanded && (
         <div className="border-t border-primary/20 px-5 pb-5 pt-4">
-          <div className="grid gap-3 md:grid-cols-2">
-            <ReasoningBlock
-              number="01"
-              title="Observation"
-              text={
-                allocation?.decision?.reasoning
-                  ? `Portfolio analysis indicates ${allocation.decision.reasoning.toLowerCase()}`
-                  : "Current portfolio allocation is being evaluated against target weights. Market conditions and position sizes are within normal parameters."
-              }
-            />
-            <ReasoningBlock
-              number="02"
-              title="Risk Interpretation"
-              text={
-                risk?.reasoning_summary
-                  ? risk.reasoning_summary
-                  : risk
-                    ? `Risk score is ${risk.risk_score}/100. Band: ${risk.risk_band}. ${risk.hard_veto_status === "active" ? "Hard veto is active - no trades can execute." : "No hard veto triggered."}`
-                    : "Risk engine is loading or unavailable."
-              }
-            />
-            <ReasoningBlock
-              number="03"
-              title="Recommendation"
-              text={
-                action === "REBALANCE"
-                  ? `Recommended action: ${action}. ${decision?.reasoning ?? "Adjust allocations to match target weights."}`
-                  : action === "PAUSE"
-                    ? "All trading paused. Risk constraints are active."
-                    : "No action needed. Portfolio is within target ranges."
-              }
-            />
-            <ReasoningBlock
-              number="04"
-              title="Execution Constraint"
-              text={
-                risk?.required_human_approval_status === "required" || risk?.required_human_approval_status === "not_required"
-                  ? `Human approval: ${risk.required_human_approval_status === "required" ? "Required" : "Not required"}. ${risk.hard_veto_status === "active" ? "Hard veto is active - execution blocked." : "Execution path is clear."}`
-                  : "Execution constraints are being evaluated."
-              }
-            />
+          <div className="grid gap-3 xl:grid-cols-[1.15fr_0.85fr]">
+            <section className="rounded-lg border border-primary/20 bg-gradient-to-br from-primary/[0.07] via-transparent to-transparent p-4">
+              <div className="flex items-center justify-between gap-3">
+              <div>
+                  <p className="text-[0.7rem] font-extrabold uppercase tracking-[0.16em] text-primary">
+                    Full Reasoning Flow
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Live retrieval context, guardrails, notes, and parsed decision output.
+                  </p>
+                </div>
+                <div className="rounded-full border border-primary/20 bg-primary/[0.08] px-3 py-1 text-[0.65rem] uppercase tracking-[0.14em] text-primary">
+                  <span className="inline-flex items-center gap-1">
+                    <Sparkles className="h-3 w-3" />
+                    {pipelineStats.completed}/{pipelineStats.total} complete
+                  </span>
+                </div>
+              </div>
+              <ReasoningStreamPanel
+                retrievalItems={retrievalItems}
+                constraints={decisions?.constraints_applied ?? []}
+                notes={reasoningNotes}
+                parsedResponse={parsedResponse}
+              />
+            </section>
+
+            <section className="rounded-lg border border-border bg-surface-2/70 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[0.7rem] font-extrabold uppercase tracking-[0.16em] text-primary">
+                    Explainable Pipeline
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Deterministic stages the system passed before issuing the latest recommendation.
+                  </p>
+                </div>
+                <span className="text-[0.65rem] uppercase tracking-[0.14em] text-muted-foreground">
+                  {pipelineStats.blocked > 0 ? `${pipelineStats.blocked} blocked` : `${pipelineStats.warnings} warning`}
+                </span>
+              </div>
+              <LiveReasoningTrace steps={reasoningSteps} expanded />
+            </section>
           </div>
         </div>
       )}

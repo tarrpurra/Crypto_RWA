@@ -102,7 +102,7 @@ export function SwapForm() {
       ? `No discovered quote route is available yet for ${quoteTokenIn}->${pairedTarget}.`
       : quote && quote.amount_out
       ? `Sample route visible: ${quote.protocol} ${depositAsset === "MNT" ? "WMNT" : depositAsset}->${pairedTarget}.`
-      : "No executable sample quote is available yet. Plan creation still happens on the Trade page.";
+      : "No executable sample quote is available yet. Plan creation still happens on the Decision Log page.";
 
   const openTradeFlow = () => {
     const params = new URLSearchParams({
@@ -110,7 +110,7 @@ export function SwapForm() {
       amount: depositAmount,
       risk: riskProfile,
     });
-    navigate(`/trade?${params.toString()}`);
+    navigate(`/decision-log?${params.toString()}`);
   };
 
   return (

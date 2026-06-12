@@ -17,10 +17,17 @@ logger = logging.getLogger("services.agent.strategies.rebalance")
 def compute_rebalance(
     portfolio: PortfolioSnapshot,
     risk: RiskSnapshot,
-    profile_name: str
+    profile_name: str,
+    target_weights_override: dict[str, float] | None = None,
 ) -> tuple[AllocationDecision, list[RebalanceAction]]:
     now = utc_now()
     profile_name, target_profile = get_allocation_profile(profile_name)
+    if target_weights_override:
+        target_profile = {
+            asset_symbol: float(weight)
+            for asset_symbol, weight in target_weights_override.items()
+            if float(weight) > 0
+        }
 
     if portfolio.status_code != "DATA_FRESH" or portfolio.total_value_usd <= 0 or not portfolio.balances:
         target_weights = {asset: weight for asset, weight in target_profile.items()}

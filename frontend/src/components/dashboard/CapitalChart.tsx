@@ -12,11 +12,31 @@ function formatDate(iso: string) {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: { value: number }[]; label?: string }) => {
+function formatTooltipDate(timestamp: number) {
+  return new Date(timestamp).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatAxisDate(timestamp: number, sameDayRange: boolean) {
+  const date = new Date(timestamp);
+  if (sameDayRange) {
+    return date.toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
+  return formatDate(date.toISOString());
+}
+
+const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: { value: number }[]; label?: number }) => {
   if (!active || !payload?.length) return null;
   return (
     <div className="rounded border border-lp-border-muted bg-lp-bg/92 px-3 py-2 shadow-xl backdrop-blur-lg">
-      <p className="text-xs text-lp-fg-muted">{label}</p>
+      <p className="text-xs text-lp-fg-muted">{label ? formatTooltipDate(label) : ""}</p>
       <p className="font-mono text-sm font-medium text-lp-fg">
         ${payload[0].value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
       </p>
@@ -29,10 +49,16 @@ export function CapitalChart({ snapshots, isLoading }: CapitalChartProps) {
 
   const chartData = (snapshots ?? [])
     .filter((s) => s.total_value_usd != null)
+    .sort((left, right) => new Date(left.generated_at).getTime() - new Date(right.generated_at).getTime())
     .map((s) => ({
-      date: formatDate(s.generated_at),
+      timestamp: new Date(s.generated_at).getTime(),
       value: Number(s.total_value_usd),
     }));
+
+  const sameDayRange =
+    chartData.length > 1
+      ? new Date(chartData[0].timestamp).toDateString() === new Date(chartData[chartData.length - 1].timestamp).toDateString()
+      : false;
 
   return (
     <div className="terminal-panel p-4">
@@ -63,12 +89,16 @@ export function CapitalChart({ snapshots, isLoading }: CapitalChartProps) {
             <AreaChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border) / 0.3)" vertical={false} />
               <XAxis
-                dataKey="date"
+                dataKey="timestamp"
+                type="number"
+                domain={["dataMin", "dataMax"]}
                 axisLine={false}
                 tickLine={false}
                 tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
                 dy={4}
                 interval="preserveStartEnd"
+                tickFormatter={(value: number) => formatAxisDate(value, sameDayRange)}
+                scale="time"
               />
               <YAxis
                 axisLine={false}

@@ -84,16 +84,18 @@ export function PageScaffold({
     description,
     children,
   }: {
-    eyebrow: string;
+    eyebrow?: string;
     title: string;
     description: string;
     children: ReactNode;
   }) {
     return (
-      <div className="mx-auto flex min-h-screen w-full max-w-[1440px] flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-        <section className="border-b-2 border-border pb-6">
-          <p className="text-xs font-semibold text-primary">{eyebrow}</p>
-        </section>
+      <div className="mx-auto flex min-h-full w-full max-w-[1440px] flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+        {eyebrow ? (
+          <section className="border-b-2 border-border pb-6">
+            <p className="text-xs font-semibold text-primary">{eyebrow}</p>
+          </section>
+        ) : null}
         {children}
       </div>
     );

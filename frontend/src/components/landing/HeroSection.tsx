@@ -73,7 +73,7 @@ export function HeroSection() {
             >
               <Link
                 to="/dashboard"
-                className="group flex h-[50px] items-center gap-2 rounded-lg bg-lp-gold px-[30px] font-display text-[14px] font-semibold text-lp-bg shadow-[0_0_28px_hsl(var(--lp-gold)/0.22)] transition-all duration-200 hover:bg-[#E0A83C] hover:-translate-y-0.5 active:scale-[0.98]"
+                className="group hover:bg-gold-hover flex h-[50px] items-center gap-2 rounded-lg bg-lp-gold px-[30px] font-display text-[14px] font-semibold text-lp-bg shadow-[0_0_28px_hsl(var(--lp-gold)/0.22)] transition-all duration-200 hover:-translate-y-0.5 active:scale-[0.98]"
               >
                 <span>Start Trading &rarr;</span>
               </Link>

@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useAccount, useBalance, useChainId } from "wagmi";
+import { useAccount, useBalance } from "wagmi";
 import { mantleSepoliaTestnet } from "wagmi/chains";
-import { AlertTriangle, ArrowRight, ShieldAlert } from "lucide-react";
+import { AlertTriangle, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 
-import { LoginButton } from "@/components/auth/LoginButton";
 import { MetricPanel, PageScaffold, toneFromStatus } from "@/components/rwa/PageScaffold";
-import { WalletScopeControl } from "@/components/rwa/WalletScopeControl";
 import { RiskDetailsModal } from "@/components/swap/RiskDetailsModal";
 import { TransactionStatus } from "@/components/swap/TransactionStatus";
 import { Badge } from "@/components/ui/badge";
@@ -22,7 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useMarketIngestionStatus, useLatestPrices, useMarketRoutes, useUsdyOracle } from "@/hooks/useMarket";
+import { useMarketIngestionStatus, useLatestPrices, useMarketRoutes } from "@/hooks/useMarket";
 import { useCurrentPortfolio } from "@/hooks/usePortfolio";
 import { useInvestmentScope } from "@/hooks/useInvestmentScope";
 import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
@@ -38,51 +36,44 @@ const riskProfiles = ["Defensive", "Balanced", "Yield-Seeking"] as const;
 const allocationModes = ["AI Suggested", "Manual"] as const;
 const GAS_RESERVE_MNT = 1.0;
 
-function NetworkGuard({ aiDecisionMakerEnabled }: { aiDecisionMakerEnabled: boolean }) {
-  const chainId = useChainId();
-  const { isConnected } = useAccount();
-  const isMantle = chainId === mantleSepoliaTestnet.id;
+const proposalStatusTone: Record<string, string> = {
+  PROPOSAL_PENDING_APPROVAL: "border-warning/35 bg-warning/10 text-warning",
+  PROPOSAL_APPROVED: "border-success/35 bg-success/10 text-success",
+  PROPOSAL_EXECUTING: "border-primary/35 bg-primary/10 text-primary",
+  PROPOSAL_EXECUTED: "border-success/35 bg-success/10 text-success",
+  PROPOSAL_REJECTED: "border-destructive/35 bg-destructive/10 text-destructive",
+};
 
-  return (
-    <section className={cn("terminal-panel p-4", !isMantle && isConnected ? "border-warning/50 bg-warning/5" : "")}>
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div>
-          <p className="terminal-label text-primary">Wallet and network</p>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Connect a wallet, then switch to Mantle Sepolia before creating or approving an investment plan.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Badge variant="outline" className="border-border text-muted-foreground">
-            {isConnected ? `Chain ${chainId ?? "-"}` : "Wallet disconnected"}
-          </Badge>
-          <Badge
-            variant="outline"
-            className={cn(
-              isMantle ? "border-success/40 bg-success/10 text-success" : "border-warning/40 bg-warning/10 text-warning",
-            )}
-          >
-            {isMantle ? "Mantle Sepolia" : "Wrong network"}
-          </Badge>
-          <Badge
-            variant="outline"
-            className={cn(
-              aiDecisionMakerEnabled ? "border-success/40 bg-success/10 text-success" : "border-border text-muted-foreground",
-            )}
-          >
-            {aiDecisionMakerEnabled ? "Full access AI" : "Recommendation only"}
-          </Badge>
-          <LoginButton />
-        </div>
-      </div>
-      {isConnected && !isMantle && (
-        <div className="mt-3 flex items-start gap-2 rounded border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning">
-          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>Execution stays disabled until the connected wallet is on Mantle Sepolia.</p>
-        </div>
-      )}
-    </section>
-  );
+function shortHash(value: string | null | undefined) {
+  if (!value) {
+    return "Not submitted";
+  }
+  return value.length > 14 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value;
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) {
+    return "Pending";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString();
+}
+
+function formatDecisionStatus(value: string | null | undefined) {
+  if (!value) {
+    return "Draft";
+  }
+  return value.replaceAll("_", " ").toLowerCase();
+}
+
+function resolveTokenLabel(token: string, tokenLabelsByAddress: Map<string, string>) {
+  if (/^0x[a-fA-F0-9]{40}$/.test(token)) {
+    return tokenLabelsByAddress.get(token.toLowerCase()) ?? `${token.slice(0, 6)}...${token.slice(-4)}`;
+  }
+  return token;
 }
 
 function parseManualWeights(input: string) {
@@ -97,7 +88,7 @@ function parseManualWeights(input: string) {
   };
 }
 
-export default function Trade() {
+export default function DecisionLog() {
   const [searchParams] = useSearchParams();
   const { isConnected } = useAccount();
   const { walletAddress, effectiveWalletAddress, isSupportedChain } = usePortfolioWallet();
@@ -106,7 +97,6 @@ export default function Trade() {
   const riskQuery = useCurrentRisk();
   const marketQuery = useMarketIngestionStatus();
   const pricesQuery = useLatestPrices();
-  const oracleQuery = useUsdyOracle();
   const routesQuery = useMarketRoutes();
   const proposalsQuery = useProposals();
   const settingsQuery = useSettings();
@@ -122,7 +112,6 @@ export default function Trade() {
   const risk = riskQuery.data;
   const market = marketQuery.data;
   const prices = pricesQuery.data;
-  const oracle = oracleQuery.data;
   const routes = routesQuery.data;
   const settings = settingsQuery.data;
   const proposals = useMemo(() => proposalsQuery.data?.proposals ?? [], [proposalsQuery.data?.proposals]);
@@ -231,12 +220,36 @@ export default function Trade() {
   const executionInputSymbol = (resolvedPlan?.deposit_asset_symbol ?? plan?.deposit_asset_symbol ?? assetSymbol) === "MNT"
     ? "WMNT"
     : (resolvedPlan?.deposit_asset_symbol ?? plan?.deposit_asset_symbol ?? assetSymbol);
-  const executionRequired = Boolean((resolvedPlan?.linked_proposals ?? plan?.linked_proposals ?? []).length);
   const autoExecutionActive = autoExecutionPlanId === plan?.plan_id;
   const activePlanForExecution = resolvedPlan ?? plan;
 
   const proposalActivity = getEntriesForProposal(activeProposalId);
-
+  const allActivity = useMemo(
+    () => [...proposals.flatMap((proposal) => getEntriesForProposal(proposal.proposal_id))]
+      .sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime()),
+    [getEntriesForProposal, proposals],
+  );
+  const tokenLabelsByAddress = useMemo(() => {
+    const labels = new Map<string, string>();
+    if (settings?.sepolia_usdy_address) {
+      labels.set(settings.sepolia_usdy_address.toLowerCase(), "USDY");
+    }
+    if (settings?.sepolia_meth_address) {
+      labels.set(settings.sepolia_meth_address.toLowerCase(), "mETH");
+    }
+    if (settings?.sepolia_wmnt_address) {
+      labels.set(settings.sepolia_wmnt_address.toLowerCase(), "WMNT");
+    }
+    return labels;
+  }, [settings?.sepolia_meth_address, settings?.sepolia_usdy_address, settings?.sepolia_wmnt_address]);
+  const sortedProposals = useMemo(
+    () => [...proposals].sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime()),
+    [proposals],
+  );
+  const selectedProposalLog = useMemo(
+    () => sortedProposals.find((proposal) => proposal.proposal_id === activeProposalId) ?? null,
+    [activeProposalId, sortedProposals],
+  );
   const executeNativeWrapIfNeeded = async () => {
     const wrapStep = activePlanForExecution?.transaction_steps.find((step) => step.step_type === "wrap");
     if (!wrapStep || wrappedPlanIdRef.current === activePlanForExecution?.plan_id) {
@@ -265,6 +278,13 @@ export default function Trade() {
     }
     setActiveProposalId(plan.linked_proposals[0].proposal_id);
   }, [plan]);
+
+  useEffect(() => {
+    if (activeProposalId || !sortedProposals.length) {
+      return;
+    }
+    setActiveProposalId(sortedProposals[0].proposal_id);
+  }, [activeProposalId, sortedProposals]);
 
   useEffect(() => {
     if (!aiDecisionMakerEnabled || !plan?.linked_proposals.length || !plan.approval_enabled) {
@@ -639,44 +659,137 @@ export default function Trade() {
 
   return (
     <PageScaffold
-      eyebrow="Investment flow"
-      title="Trade"
-      description="Create an AI-managed investment plan from a user-entered deposit amount, inspect real backend guard checks, approve linked swap proposals, then execute through the connected wallet."
+      eyebrow="Decision Control"
+      title="Decision Log"
+      description="Review the latest portfolio decisions, inspect guardrails, approve or reject qualified proposals, and track execution from one audit surface."
     >
-      <NetworkGuard aiDecisionMakerEnabled={aiDecisionMakerEnabled} />
-      <WalletScopeControl />
-
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <MetricPanel
-          label="Portfolio"
-          value={portfolio?.total_value_usd ? `$${portfolio.total_value_usd}` : "Loading"}
-          detail={portfolio?.status_reason ?? "Reading the wallet-scoped portfolio snapshot."}
-          tone={toneFromStatus(portfolio?.status)}
+          label="Decision queue"
+          value={`${sortedProposals.length}`}
+          detail={sortedProposals.length > 0 ? "Tracked proposals are available for review." : "No recorded proposals are available yet."}
+          tone={sortedProposals.length > 0 ? "ready" : "neutral"}
         />
         <MetricPanel
-          label="Risk"
+          label="Selected status"
+          value={selectedProposalLog?.status_code ?? resolvedPlan?.status_code ?? plan?.status_code ?? "Draft"}
+          detail={selectedProposalLog ? "Current ledger selection." : resolvedPlan?.status_reason ?? plan?.status_reason ?? "No proposal selected yet."}
+          tone={
+            selectedProposalLog?.status_code === "PROPOSAL_REJECTED"
+              ? "blocked"
+              : selectedProposalLog?.status_code === "PROPOSAL_APPROVED" || selectedProposalLog?.status_code === "PROPOSAL_EXECUTED"
+                ? "ready"
+                : selectedProposalLog?.status_code
+                  ? "degraded"
+                  : "neutral"
+          }
+        />
+        <MetricPanel
+          label="Risk guard"
           value={resolvedPlan?.risk_assessment?.risk_band ?? risk?.risk_band ?? "Loading"}
           detail={resolvedPlan?.risk_assessment?.reasoning_summary ?? risk?.reasoning_summary ?? "Reading the risk engine before proposing execution."}
           tone={(resolvedPlan?.risk_assessment?.hard_veto_status ?? risk?.hard_veto_status) === "active" ? "blocked" : toneFromStatus(resolvedPlan?.risk_assessment?.status ?? risk?.status)}
         />
         <MetricPanel
-          label="Market"
-          value={market?.status_label ?? "Loading"}
-          detail={market?.status_reason ?? "Checking market ingestion freshness and completeness."}
-          tone={toneFromStatus(market?.status)}
-        />
-        <MetricPanel
-          label="Oracle"
-          value={oracle?.status ?? "Loading"}
-          detail={oracle?.price ? `USDY price ${oracle.price}` : "Checking the USDY oracle feed."}
-          tone={oracle?.status === "ok" ? "ready" : "degraded"}
+          label="Recorded activity"
+          value={`${allActivity.length}`}
+          detail={allActivity.length > 0 ? "Approval and execution events captured for the current wallet context." : "No approval or execution events have been recorded yet."}
+          tone={allActivity.length > 0 ? "ready" : "neutral"}
         />
       </div>
 
-      <section className="grid gap-3 xl:grid-cols-[1.05fr_0.95fr]">
+      <section className="grid gap-3 xl:grid-cols-[1.2fr_0.8fr]">
         <div className="terminal-panel p-4">
           <div className="flex items-center justify-between gap-3">
-            <p className="terminal-label text-primary">Investment configuration</p>
+            <div>
+              <p className="terminal-label text-primary">Decision ledger</p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Every proposal, approval state, and execution event for the current wallet context.
+              </p>
+            </div>
+            <Badge variant="outline" className="border-border text-muted-foreground">
+              {aiDecisionMakerEnabled ? "AI-managed approvals" : "Operator approvals"}
+            </Badge>
+          </div>
+          <div className="mt-4 space-y-3">
+            {sortedProposals.map((proposal) => {
+              const proposalActivityEntries = getEntriesForProposal(proposal.proposal_id);
+              const latestActivity = proposalActivityEntries[0];
+              const approvalBlocked = (proposal.approval_blockers?.length ?? 0) > 0 || proposal.approval_enabled === false;
+              return (
+                <button
+                  key={proposal.proposal_id}
+                  type="button"
+                  onClick={() => setActiveProposalId(proposal.proposal_id)}
+                  className={cn(
+                    "w-full rounded border px-4 py-4 text-left transition-colors hover:border-primary/50",
+                    activeProposalId === proposal.proposal_id ? "border-primary/60 bg-primary/5" : "border-border bg-surface-2",
+                  )}
+                >
+                  <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="grid gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-base font-semibold text-foreground">
+                          {resolveTokenLabel(proposal.token_in, tokenLabelsByAddress)} <ArrowRight className="mx-1 inline h-3.5 w-3.5" /> {resolveTokenLabel(proposal.token_out, tokenLabelsByAddress)}
+                        </p>
+                        <span className={cn("inline-flex items-center border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]", proposalStatusTone[proposal.status_code] ?? "border-border text-muted-foreground")}>
+                          {formatDecisionStatus(proposal.status_code)}
+                        </span>
+                        {approvalBlocked && (
+                          <span className="inline-flex items-center border border-warning/35 bg-warning/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-warning">
+                            guardrail hold
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        Proposal {proposal.proposal_id}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {approvalBlocked
+                          ? proposal.approval_blockers?.[0] ?? "Guard checks are still preventing approval."
+                          : latestActivity?.message ?? "Ready for operator review."}
+                      </p>
+                    </div>
+
+                    <div className="grid gap-3 text-sm xl:min-w-[280px] xl:grid-cols-2">
+                      <div>
+                        <p className="terminal-label">Created</p>
+                        <p className="mt-1 text-foreground">{formatDateTime(proposal.created_at)}</p>
+                      </div>
+                      <div>
+                        <p className="terminal-label">Updated</p>
+                        <p className="mt-1 text-foreground">{formatDateTime(proposal.updated_at)}</p>
+                      </div>
+                      <div>
+                        <p className="terminal-label">Max in</p>
+                        <p className="mt-1 font-mono text-foreground">{proposal.max_amount_in}</p>
+                      </div>
+                      <div>
+                        <p className="terminal-label">Tx hash</p>
+                        <p className="mt-1 font-mono text-foreground">{shortHash(latestActivity?.hash)}</p>
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+
+            {!sortedProposals.length && (
+              <div className="rounded border border-border bg-surface-2 p-4 text-sm text-muted-foreground">
+                No proposals have been recorded yet. Create a new decision draft to start the review and approval flow.
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="terminal-panel p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="terminal-label text-primary">New decision draft</p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Start a new portfolio decision without leaving the ledger.
+              </p>
+            </div>
             <Badge variant="outline" className="border-border text-muted-foreground">
               {resolvedPlan?.status_label ?? plan?.status_label ?? "draft"}
             </Badge>
@@ -754,7 +867,7 @@ export default function Trade() {
 
             <div className="grid gap-3 rounded border border-border bg-surface-2 p-3 md:grid-cols-3">
               <div>
-                <p className="text-xs text-muted-foreground">Available wallet balance</p>
+                <p className="text-xs text-muted-foreground">Wallet balance</p>
                 <p className="mt-1 font-mono text-sm text-foreground">{availableBalance !== null ? availableBalance.toFixed(4) : "unknown"}</p>
               </div>
               <div>
@@ -762,36 +875,24 @@ export default function Trade() {
                 <p className="mt-1 font-mono text-sm text-foreground">{routes?.routes.length ?? 0}</p>
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">Price snapshots</p>
+                <p className="text-xs text-muted-foreground">Price feeds</p>
                 <p className="mt-1 font-mono text-sm text-foreground">{prices?.prices.length ?? 0}</p>
               </div>
             </div>
 
-            {assetSymbol === "MNT" && (
-                <div className="rounded border border-primary/30 bg-primary/10 p-3 text-sm text-foreground">
-                  Native MNT deposits are wrapped to WMNT when the plan executes. Enter the amount you want to deploy; the balance below is shown only as availability context.
-                </div>
-              )}
-
-            {settings?.sepolia_meth_is_test_token && (
-              <div className="rounded border border-border bg-surface-2 p-3 text-sm text-muted-foreground">
-                The <span className="font-medium text-foreground">mETH</span> sleeve is currently backed by a Sepolia demo asset. Wallet transactions, AGNI routes, and balance reconciliation are live; risk valuation uses the configured <span className="font-mono">{settings.sepolia_meth_price_mode}</span> price mode.
-              </div>
-            )}
-
             {!aiDecisionMakerEnabled ? (
               <div className="flex flex-wrap gap-2">
                 <Button onClick={handleCreatePlan} disabled={working || localWarnings.length > 0}>
-                  {createPlan.isPending ? "Creating plan..." : "Create investment plan"}
+                  {createPlan.isPending ? "Creating decision..." : "Create decision draft"}
                 </Button>
                 <Button variant="outline" onClick={() => setShowRiskDialog(true)} disabled={!resolvedPlan?.risk_assessment && !risk}>
                   View risk details
                 </Button>
               </div>
-              ) : (
+            ) : (
               <div className="space-y-2">
                 <div className="rounded border border-success/40 bg-success/10 p-3 text-sm text-success">
-                  Full access AI will prepare the plan, approve linked proposals, then request your confirmation before executing the swap.
+                  Full access AI will prepare the draft, approve linked proposals, then request confirmation before execution.
                 </div>
                 <Button variant="outline" onClick={() => setShowRiskDialog(true)} disabled={!resolvedPlan?.risk_assessment && !risk}>
                   View risk details
@@ -811,121 +912,110 @@ export default function Trade() {
             )}
           </div>
         </div>
-
-        <div className="terminal-panel p-4">
-          <p className="terminal-label text-primary">Investment proposal</p>
-          <div className="mt-3 space-y-3">
-            {!plan && (
-              <div className="rounded border border-border bg-surface-2 p-3 text-sm text-muted-foreground">
-                Create a plan to see allocation targets, guard checks, linked proposals, and transaction steps.
-              </div>
-            )}
-
-            {plan && (
-              <>
-                <div className="rounded border border-border bg-surface-2 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-medium text-foreground">
-                      {resolvedPlan?.deposit_amount ?? plan.deposit_amount} {resolvedPlan?.deposit_asset_symbol ?? plan.deposit_asset_symbol}
-                    </p>
-                    <Badge
-                      variant="outline"
-                      className={
-                        (resolvedPlan?.approval_enabled ?? plan.approval_enabled)
-                          ? "border-success/40 bg-success/10 text-success"
-                          : executionRequired
-                            ? "border-warning/40 bg-warning/10 text-warning"
-                            : "border-border text-muted-foreground"
-                      }
-                      >
-                      {(resolvedPlan?.approval_enabled ?? plan.approval_enabled)
-                        ? aiDecisionMakerEnabled
-                          ? "auto-execution ready"
-                          : "approval ready"
-                        : executionRequired
-                          ? "blocked"
-                          : "no swap required"}
-                    </Badge>
-                  </div>
-                    <p className="mt-2 text-sm text-muted-foreground">{resolvedPlan?.status_reason ?? plan.status_reason}</p>
-                  {(resolvedPlan?.estimated_gas_native ?? plan.estimated_gas_native) && (
-                    <p className="mt-2 text-xs text-muted-foreground">Estimated gas indicator: {resolvedPlan?.estimated_gas_native ?? plan.estimated_gas_native}</p>
-                  )}
-                </div>
-
-                <div className="grid gap-2 rounded border border-border bg-surface-2 p-3">
-                  <p className="font-medium text-foreground">Selected allocation</p>
-                  {(resolvedPlan?.selected_target_allocations ?? plan.selected_target_allocations).map((allocationItem) => (
-                    <div key={`${allocationItem.asset_symbol}-${allocationItem.source}`} className="flex items-center justify-between gap-2 text-sm">
-                      <div className="min-w-0">
-                        <span className="font-medium text-foreground">{allocationItem.asset_symbol}</span>
-                        <span className="ml-2 text-xs text-muted-foreground">
-                          {executionInputSymbol} <ArrowRight className="mx-0.5 inline h-3 w-3" /> {allocationItem.asset_symbol}
-                        </span>
-                      </div>
-                      <span className="font-mono text-foreground">
-                        {(allocationItem.percentage * 100).toFixed(2)}% / {allocationItem.amount.toFixed(4)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="grid gap-2 rounded border border-border bg-surface-2 p-3">
-                  <p className="font-medium text-foreground">Guard checks</p>
-                  {(resolvedPlan?.guard_checks ?? plan.guard_checks).map((check) => (
-                    <div key={check.code} className="flex items-start justify-between gap-3 border-b border-border/60 pb-2 last:border-b-0 last:pb-0">
-                      <div>
-                        <p className="text-sm text-foreground">{check.label}</p>
-                        <p className="text-xs text-muted-foreground">{check.message}</p>
-                      </div>
-                      <span className={check.passed ? "text-success" : check.blocking ? "text-destructive" : "text-warning"}>
-                        {check.passed ? "pass" : check.blocking ? "block" : "warn"}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-
-                {(((resolvedPlan?.approval_blockers ?? plan.approval_blockers).length > 0) || ((resolvedPlan?.warning_messages ?? plan.warning_messages).length > 0)) && (
-                  <div className="space-y-2 rounded border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
-                    {(resolvedPlan?.warning_messages ?? plan.warning_messages).map((warning) => <p key={warning}>{warning}</p>)}
-                    {(resolvedPlan?.approval_blockers ?? plan.approval_blockers).map((blocker) => <p key={blocker}>{blocker}</p>)}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        </div>
       </section>
 
-      <section className="grid gap-3 xl:grid-cols-[1.05fr_0.95fr]">
+      <section className="grid gap-3 xl:grid-cols-[1.1fr_0.9fr]">
         <div className="terminal-panel p-4">
-          <p className="terminal-label text-primary">Transaction sequence</p>
-          <div className="mt-3 space-y-2">
-            {(resolvedPlan?.transaction_steps ?? plan?.transaction_steps ?? []).map((step) => (
-              <div key={`${step.step_index}-${step.step_type}`} className="rounded border border-border bg-surface-2 p-3 text-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-medium text-foreground">
-                    Step {step.step_index}: {step.step_type}
-                  </p>
-                  <span className="text-xs text-muted-foreground">
-                    {aiDecisionMakerEnabled ? "AI managed" : step.requires_user_action ? "user action" : "informational"}
-                  </span>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="terminal-label text-primary">Selected decision</p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Review the active decision summary, intended allocation, and transaction sequence.
+              </p>
+            </div>
+            <Badge variant="outline" className="border-border text-muted-foreground">
+              {selectedProposalLog?.proposal_id ? selectedProposalLog.proposal_id.slice(0, 12) : "No selection"}
+            </Badge>
+          </div>
+          <div className="mt-4 space-y-3">
+            {(resolvedPlan ?? plan) ? (
+              <>
+                <div className="rounded border border-border bg-surface-2 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-base font-semibold text-foreground">
+                        {(resolvedPlan?.deposit_amount ?? plan?.deposit_amount) ?? "-"} {(resolvedPlan?.deposit_asset_symbol ?? plan?.deposit_asset_symbol) ?? ""}
+                      </p>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        {resolvedPlan?.status_reason ?? plan?.status_reason ?? "Decision draft ready for review."}
+                      </p>
+                    </div>
+                    <span className={cn("inline-flex items-center border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]", (resolvedPlan?.approval_enabled ?? plan?.approval_enabled) ? "border-success/35 bg-success/10 text-success" : "border-warning/35 bg-warning/10 text-warning")}>
+                      {(resolvedPlan?.approval_enabled ?? plan?.approval_enabled) ? "approval ready" : "guardrail hold"}
+                    </span>
+                  </div>
                 </div>
-                <p className="mt-1 text-muted-foreground">{step.description}</p>
-              </div>
-            ))}
-            {!(resolvedPlan?.transaction_steps ?? plan?.transaction_steps)?.length && (
-              <div className="rounded border border-border bg-surface-2 p-3 text-sm text-muted-foreground">
-                No transaction sequence is available until a plan is created.
+
+                <div className="grid gap-2 rounded border border-border bg-surface-2 p-4">
+                  <p className="font-medium text-foreground">Selected allocation</p>
+                  {(resolvedPlan?.selected_target_allocations ?? plan?.selected_target_allocations ?? []).map((allocationItem) => (
+                    <div key={`${allocationItem.asset_symbol}-${allocationItem.source}`} className="flex items-center justify-between gap-3 border-b border-border/60 pb-2 text-sm last:border-b-0 last:pb-0">
+                      <div>
+                        <p className="font-medium text-foreground">{allocationItem.asset_symbol}</p>
+                        <p className="text-xs text-muted-foreground">{executionInputSymbol} <ArrowRight className="mx-0.5 inline h-3 w-3" /> {allocationItem.asset_symbol}</p>
+                      </div>
+                      <p className="font-mono text-foreground">{(allocationItem.percentage * 100).toFixed(2)}% / {allocationItem.amount.toFixed(4)}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="grid gap-2 rounded border border-border bg-surface-2 p-4">
+                  <p className="font-medium text-foreground">Transaction sequence</p>
+                  {(resolvedPlan?.transaction_steps ?? plan?.transaction_steps ?? []).map((step) => (
+                    <div key={`${step.step_index}-${step.step_type}`} className="rounded border border-border/60 p-3 text-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-medium text-foreground">Step {step.step_index}: {step.step_type}</p>
+                        <span className="text-xs text-muted-foreground">
+                          {aiDecisionMakerEnabled ? "AI managed" : step.requires_user_action ? "user action" : "informational"}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-muted-foreground">{step.description}</p>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="rounded border border-border bg-surface-2 p-4 text-sm text-muted-foreground">
+                Select a proposal from the ledger or create a new decision draft to inspect transaction steps and target allocations.
               </div>
             )}
           </div>
         </div>
 
         <div className="terminal-panel p-4">
-          <p className="terminal-label text-primary">Linked proposals</p>
-          <div className="mt-3 space-y-3">
-            {(resolvedPlan?.linked_proposals ?? plan?.linked_proposals ?? []).map((proposal) => {
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="terminal-label text-primary">Decision controls</p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Guard checks, linked proposals, and the action history for the current decision.
+              </p>
+            </div>
+            <Badge variant="outline" className="border-border text-muted-foreground">
+              {selectedProposalLog?.status_code ?? "No selection"}
+            </Badge>
+          </div>
+          <div className="mt-4 space-y-3">
+            <div className="grid gap-2 rounded border border-border bg-surface-2 p-4">
+              <p className="font-medium text-foreground">Guard checks</p>
+              {(resolvedPlan?.guard_checks ?? plan?.guard_checks ?? []).map((check) => (
+                <div key={check.code} className="flex items-start justify-between gap-3 border-b border-border/60 pb-2 last:border-b-0 last:pb-0">
+                  <div>
+                    <p className="text-sm text-foreground">{check.label}</p>
+                    <p className="text-xs text-muted-foreground">{check.message}</p>
+                  </div>
+                  <span className={check.passed ? "text-success" : check.blocking ? "text-destructive" : "text-warning"}>
+                    {check.passed ? "pass" : check.blocking ? "block" : "warn"}
+                  </span>
+                </div>
+              ))}
+              {!(resolvedPlan?.guard_checks ?? plan?.guard_checks)?.length && (
+                <p className="text-sm text-muted-foreground">Guard checks will appear after a decision draft is created.</p>
+              )}
+            </div>
+
+            <div className="grid gap-2 rounded border border-border bg-surface-2 p-4">
+              <p className="font-medium text-foreground">Linked proposals</p>
+              {(resolvedPlan?.linked_proposals ?? plan?.linked_proposals ?? []).map((proposal) => {
               const liveRecord = proposals.find((item) => item.proposal_id === proposal.proposal_id);
               return (
                 <button
@@ -936,7 +1026,7 @@ export default function Trade() {
                     "flex w-full items-center justify-between rounded border border-border bg-surface-2 px-3 py-3 text-left text-sm transition-colors hover:border-primary",
                     activeProposalId === proposal.proposal_id ? "border-primary/70 bg-primary/5" : "",
                   )}
-                >
+                  >
                   <div>
                     <p className="font-medium text-foreground">
                       {proposal.token_in_symbol} <ArrowRight className="mx-1 inline h-3.5 w-3.5" /> {proposal.token_out_symbol}
@@ -951,10 +1041,11 @@ export default function Trade() {
             })}
 
             {!(resolvedPlan?.linked_proposals ?? plan?.linked_proposals)?.length && (
-              <div className="rounded border border-border bg-surface-2 p-3 text-sm text-muted-foreground">
+              <div className="rounded border border-border bg-background p-3 text-sm text-muted-foreground">
                 No linked swap proposals are available for the current plan.
               </div>
             )}
+            </div>
 
             {aiDecisionMakerEnabled && !autoExecutionActive && !executionConfirmPending && (resolvedPlan?.approval_enabled ?? plan?.approval_enabled) && (
               <div className="rounded border border-success/40 bg-success/10 px-3 py-2 text-sm text-success">
@@ -988,17 +1079,15 @@ export default function Trade() {
                 Full access AI will approve linked proposals, then request confirmation before execution.
               </div>
             )}
-          </div>
-        </div>
-      </section>
 
-      <section className="terminal-panel p-4">
-        <p className="terminal-label text-primary">Proposal activity</p>
-        <div className="mt-3">
-          <TransactionStatus
-            entries={proposalActivity}
-            emptyLabel="No approval or execution activity has been recorded for the selected proposal yet."
-          />
+            <div className="grid gap-2 rounded border border-border bg-surface-2 p-4">
+              <p className="font-medium text-foreground">Activity trail</p>
+              <TransactionStatus
+                entries={proposalActivity}
+                emptyLabel="No approval or execution activity has been recorded for the selected proposal yet."
+              />
+            </div>
+          </div>
         </div>
       </section>
 

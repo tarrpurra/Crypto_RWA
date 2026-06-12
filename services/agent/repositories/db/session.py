@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from services.agent.app.core.settings import Settings, get_settings
@@ -65,10 +65,53 @@ def get_session_factory() -> sessionmaker[Session]:
 def init_db(settings: Settings | None = None) -> None:
     del settings
     try:
-        Base.metadata.create_all(get_engine())
+        engine = get_engine()
+        Base.metadata.create_all(engine)
+        _sync_schema(engine)
     except Exception as exc:
         logger.error("Failed to initialize database schema: %s", exc)
 
 
 def create_session() -> Session:
     return get_session_factory()()
+
+
+def _sync_schema(engine) -> None:
+    inspector = inspect(engine)
+    _ensure_columns(
+        engine,
+        inspector,
+        "investment_plans",
+        {
+            "deposit_asset_symbol": "VARCHAR(32)",
+            "deposit_amount": "VARCHAR(78)",
+            "deposit_value_usd": "VARCHAR(78)",
+        },
+    )
+    _ensure_columns(
+        engine,
+        inspector,
+        "portfolio_snapshots",
+        {
+            "invested_amount_usd": "VARCHAR(78)",
+            "total_deposits_usd": "VARCHAR(78)",
+            "total_withdrawals_usd": "VARCHAR(78)",
+            "pnl_usd": "VARCHAR(78)",
+            "pnl_percent": "VARCHAR(78)",
+        },
+    )
+
+
+def _ensure_columns(engine, inspector, table_name: str, expected_columns: dict[str, str]) -> None:
+    try:
+        existing_columns = {column["name"] for column in inspector.get_columns(table_name)}
+    except Exception:
+        return
+
+    missing = {name: definition for name, definition in expected_columns.items() if name not in existing_columns}
+    if not missing:
+        return
+
+    with engine.begin() as connection:
+        for column_name, definition in missing.items():
+            connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}"))

@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
+from services.agent.repositories.db.normalization import normalize_asset_symbol
 from services.agent.repositories.db.models import VaultFlowRecord
 from services.agent.repositories.db.session import create_session, init_db
 
@@ -38,13 +39,14 @@ class VaultFlowRepository:
         occurred_at: datetime,
         metadata: dict,
     ) -> VaultFlowRecord:
+        normalized_asset_symbol = normalize_asset_symbol(asset_symbol) or asset_symbol
         with create_session() as session:
             if tx_hash:
                 existing = session.scalar(
                     select(VaultFlowRecord).where(
                         VaultFlowRecord.tx_hash == tx_hash,
                         VaultFlowRecord.user_address == user_address,
-                        VaultFlowRecord.asset_symbol == asset_symbol,
+                        VaultFlowRecord.asset_symbol == normalized_asset_symbol,
                         VaultFlowRecord.flow_type == flow_type,
                     )
                 )
@@ -56,7 +58,7 @@ class VaultFlowRepository:
                 vault_address=vault_address,
                 user_address=user_address,
                 flow_type=flow_type,
-                asset_symbol=asset_symbol,
+                asset_symbol=normalized_asset_symbol,
                 asset_address=asset_address,
                 asset_amount=asset_amount,
                 usd_value=usd_value,

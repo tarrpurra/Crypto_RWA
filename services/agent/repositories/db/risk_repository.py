@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy import select
 
 from services.agent.app.schemas.risk import RiskAssessmentResponse
+from services.agent.risk.engine import RiskEngine
 from services.agent.repositories.db.models import RiskAssessmentRecord
 from services.agent.repositories.db.session import create_session, init_db
 
@@ -67,12 +68,17 @@ class RiskAssessmentRepository:
 
     @staticmethod
     def _assessment_from_record(record: RiskAssessmentRecord) -> RiskAssessmentResponse:
+        normalized_risk_score = RiskEngine._normalize_risk_score(float(record.risk_score))
+        normalized_confidence = RiskEngine._normalize_confidence(float(record.confidence))
         return RiskAssessmentResponse(
             asset=record.asset,
             recommended_action=record.recommended_action,
-            risk_score=float(record.risk_score),
+            risk_score=normalized_risk_score,
+            risk_score_normalized=normalized_risk_score,
             risk_band=record.risk_band,
-            confidence=float(record.confidence),
+            risk_score_scale=RiskEngine._risk_score_scale(),
+            confidence=normalized_confidence,
+            confidence_normalized=normalized_confidence,
             reasoning_summary=record.reasoning_summary,
             data_sources_used=record.data_sources_json,
             hard_veto_status=record.hard_veto_status,
