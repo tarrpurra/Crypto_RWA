@@ -17,6 +17,67 @@ For each entry, record:
 
 ## Change Log
 
+### 2026-06-12
+
+Type:
+Risk score normalization and UI scale contract
+
+Author:
+Codex
+
+Summary:
+
+- normalized backend `risk_score` to an explicit clamped `0..100` severity scale and exposed `risk_score_normalized`, `confidence_normalized`, and a first-class `risk_score_scale` payload with named band thresholds
+- updated risk-assessment reloads from persistence to backfill the normalized score and scale metadata for older records
+- fixed the frontend risk card to use backend risk confidence instead of mixing in allocation confidence, and added the visible risk scale ladder plus `higher is worse` labeling
+
+Affected scope:
+
+- services/agent/app/schemas/risk.py
+- services/agent/risk/engine.py
+- services/agent/repositories/db/risk_repository.py
+- frontend/src/lib/api/types.ts
+- frontend/src/components/dashboard/RiskConfidenceCard.tsx
+
+Impact:
+
+- frontend risk UX now reflects the real deterministic backend severity scale instead of an ambiguous mixed-confidence display
+- compatibility: existing persisted risk assessments continue to load, now enriched with normalized score metadata on read
+- explainability: users can see the actual 0-100 scoring ladder and current band thresholds directly in the dashboard
+
+### 2026-06-12
+
+Type:
+Database schema hardening for invested capital and time-series snapshots
+
+Author:
+Codex
+
+Summary:
+
+- added first-class `investment_plans` columns for `deposit_asset_symbol`, `deposit_amount`, and `deposit_value_usd` so invested capital is queryable without unpacking `plan_json`
+- extended `portfolio_snapshots` with persisted capital-tracking fields needed for portfolio-over-time views: `invested_amount_usd`, `total_deposits_usd`, `total_withdrawals_usd`, `pnl_usd`, and `pnl_percent`
+- added startup-time schema sync for those new columns because the repo still initializes tables with SQLAlchemy `create_all()` and does not yet have a real migration system
+- normalized persisted symbol fields to frontend-facing display names such as `mETH`, `USDY`, `WMNT`, `MockTokenA`, and `MockTokenB`, including cleanup of placeholder variants like `TOKEN_A`, `TOKEN_B`, `MOCK_TOKEN_A`, and `MOCK_TOKEN_B`
+
+Affected scope:
+
+- services/agent/repositories/db/models.py
+- services/agent/repositories/db/session.py
+- services/agent/repositories/db/normalization.py
+- services/agent/repositories/db/investment_plan_repository.py
+- services/agent/repositories/db/portfolio_repository.py
+- services/agent/repositories/db/market_repository.py
+- services/agent/repositories/db/vault_repository.py
+- services/agent/app/schemas/portfolio.py
+- frontend/src/lib/api/types.ts
+
+Impact:
+
+- persistence: invested capital and chart-oriented portfolio metrics are now durable, queryable columns instead of JSON-only payload data
+- compatibility: existing databases pick up the new columns on startup, but the service still needs a proper migration framework for production-safe schema evolution
+- data quality: placeholder token names are normalized in persisted and reloaded records, but existing asset keys and some contract/demo env names still use mock naming and should be rationalized later
+
 ### 2026-06-11
 
 Type:
