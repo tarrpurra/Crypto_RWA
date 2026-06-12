@@ -83,9 +83,43 @@ def compute_rebalance(
         )
         return decision, rebalance_actions
 
+    # Cooldown and Drift Tolerance Settings
+    from services.agent.app.core.settings import get_settings
+    settings = get_settings()
+    
+    # Check cooldown against last recorded trade proposal
+    try:
+        from services.agent.repositories.db.session import create_session
+        from services.agent.repositories.db.models import TradeProposalRecord
+        from sqlalchemy import select
+        with create_session() as session:
+            stmt = select(TradeProposalRecord).order_by(TradeProposalRecord.created_at.desc()).limit(1)
+            last_proposal = session.scalar(stmt)
+            if last_proposal:
+                cooldown_sec = settings.rebalance_cooldown_seconds
+                time_since = (now - last_proposal.created_at).total_seconds()
+                if time_since < cooldown_sec:
+                    logger.info("Rebalance blocked by cooldown. Last proposal was created %.1f seconds ago (cooldown limit: %d seconds).", time_since, cooldown_sec)
+                    decision = AllocationDecision(
+                        decision_id=decision_id,
+                        wallet_or_vault=portfolio.wallet_or_vault,
+                        profile_name=profile_name,
+                        current_weights=current_weights,
+                        target_weights=target_weights,
+                        recommended_action="HOLD",
+                        confidence=0.98,
+                        reasoning=f"No portfolio adjustments are made at this time because a rebalance cooldown is active. The last proposal was created {int(time_since // 60)} minutes ago (cooldown is {int(cooldown_sec // 60)} minutes).",
+                        risk_snapshot_id=risk.snapshot_id,
+                        status_code="RISK_NORMAL",
+                        created_at=now,
+                    )
+                    return decision, []
+    except Exception as exc:
+        logger.warning("Failed to check rebalance cooldown in database: %s", exc)
+
     # Evaluate drift rebalance needs
     significant_drifts: list[tuple[str, float]] = []
-    drift_tolerance = 0.05  # 5.0% drift tolerance
+    drift_tolerance = settings.rebalance_drift_tolerance
     
     for asset, drift in drifts.items():
         if abs(drift) > drift_tolerance:
