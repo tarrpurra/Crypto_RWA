@@ -87,7 +87,6 @@ const App = () => (
                   <Route path="/allocation" element={<Navigate to="/strategy-lab" replace />} />
                   <Route path="/trade" element={<Navigate to="/decision-log" replace />} />
                   <Route path="/approvals" element={<Navigate to="/decision-log" replace />} />
-                  <Route path="/ai-command" element={<Navigate to="/dashboard" replace />} />
                   <Route path="/strategy-lab" element={<DashboardLayout><StrategyStudio /></DashboardLayout>} />
                   <Route path="/settings" element={<DashboardLayout><SettingsPage /></DashboardLayout>} />
                   <Route path="/simplex" element={<SimplexDemo />} />

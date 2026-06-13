@@ -17,12 +17,17 @@ class AllocationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.now = utc_now()
         # Mock database session to prevent live DB connections in tests
-        self.db_patcher = patch("services.agent.strategies.allocation.rebalance.create_session")
+        self.db_patcher = patch("services.agent.repositories.db.session.create_session")
         self.mock_create_session = self.db_patcher.start()
         self.mock_session = MagicMock()
         self.mock_session.__enter__.return_value = self.mock_session
         self.mock_session.scalar.return_value = None
         self.mock_create_session.return_value = self.mock_session
+
+        # Override Balanced profile to contain USDC, USDY, and mETH for test compatibility
+        from services.agent.strategies.allocation.profiles import ALLOCATION_PROFILES
+        self.original_balanced = ALLOCATION_PROFILES["Balanced"]
+        ALLOCATION_PROFILES["Balanced"] = {"USDC": 0.25, "USDY": 0.45, "mETH": 0.30}
 
         self.risk_normal = RiskSnapshot(
             snapshot_id="risk_test_normal",
@@ -49,6 +54,8 @@ class AllocationTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db_patcher.stop()
+        from services.agent.strategies.allocation.profiles import ALLOCATION_PROFILES
+        ALLOCATION_PROFILES["Balanced"] = self.original_balanced
 
     def test_no_rebalance_when_within_drift_tolerance(self) -> None:
         # Balanced target: USDC: 0.25, USDY: 0.45, mETH: 0.30

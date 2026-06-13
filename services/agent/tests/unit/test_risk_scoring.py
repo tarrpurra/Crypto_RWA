@@ -9,12 +9,18 @@ from services.agent.app.schemas.market_data import NormalizedPriceSnapshot
 from services.agent.app.schemas.quotes import NormalizedQuoteSnapshot
 from services.agent.risk.scoring.score_engine import RiskScoreEngine
 from services.agent.modules.oracle.freshness import utc_now
+from services.agent.app.core.status_codes import RuntimeMode
 
 
 class RiskScoringTests(unittest.TestCase):
     def setUp(self) -> None:
         self.now = utc_now()
+        
+        self.market_repo_patcher = patch("services.agent.risk.scoring.score_engine.MarketDataRepository")
+        self.mock_market_repo = self.market_repo_patcher.start()
+        
         self.engine = RiskScoreEngine()
+        self.engine.settings.runtime_mode = RuntimeMode.LIVE
         
         # Base normal balances
         self.balances = [
@@ -33,11 +39,12 @@ class RiskScoringTests(unittest.TestCase):
             created_at=self.now
         )
 
-    @patch("services.agent.repositories.db.market_repository.MarketDataRepository.latest_normalized_prices")
-    @patch("services.agent.repositories.db.market_repository.MarketDataRepository.latest_normalized_quotes")
-    def test_risk_normal_scenario(self, mock_quotes, mock_prices) -> None:
+    def tearDown(self) -> None:
+        self.market_repo_patcher.stop()
+
+    def test_risk_normal_scenario(self) -> None:
         # Define fresh prices & quotes
-        mock_prices.return_value = [
+        self.engine.repo.latest_normalized_prices.return_value = [
             NormalizedPriceSnapshot(
                 snapshot_id="p1", asset_key="USDY", asset_symbol="USDY", asset_address=None, chain_id=5000,
                 price_usd="1.05", confidence_interval_usd="0.001", publish_timestamp=self.now,
@@ -51,7 +58,7 @@ class RiskScoringTests(unittest.TestCase):
                 status_reason="", derivation_method=None
             ),
         ]
-        mock_quotes.return_value = [
+        self.engine.repo.latest_normalized_quotes.return_value = [
             NormalizedQuoteSnapshot(
                 snapshot_id="q1", protocol="agni", route_id="usdy_route", route_label="exactInputSingle",
                 token_in_symbol="USDY", token_out_symbol="USDC", amount_in="1000", amount_out="1050",
@@ -65,12 +72,10 @@ class RiskScoringTests(unittest.TestCase):
         self.assertEqual(risk.risk_band, "RISK_NORMAL")
         self.assertLess(risk.total_score, 25.0)
 
-    @patch("services.agent.repositories.db.market_repository.MarketDataRepository.latest_normalized_prices")
-    @patch("services.agent.repositories.db.market_repository.MarketDataRepository.latest_normalized_quotes")
-    def test_risk_stale_oracle_triggers_veto(self, mock_quotes, mock_prices) -> None:
+    def test_risk_stale_oracle_triggers_veto(self) -> None:
         # Define stale Pyth price (e.g. 400 seconds age)
         stale_time = self.now - timedelta(seconds=400)
-        mock_prices.return_value = [
+        self.engine.repo.latest_normalized_prices.return_value = [
             NormalizedPriceSnapshot(
                 snapshot_id="p1", asset_key="USDY", asset_symbol="USDY", asset_address=None, chain_id=5000,
                 price_usd="1.05", confidence_interval_usd="0.001", publish_timestamp=self.now,
@@ -84,18 +89,16 @@ class RiskScoringTests(unittest.TestCase):
                 status_reason="Stale", derivation_method=None
             ),
         ]
-        mock_quotes.return_value = []
+        self.engine.repo.latest_normalized_quotes.return_value = []
 
         risk = self.engine.compute_risk_snapshot(self.portfolio)
         self.assertEqual(risk.risk_band, "RISK_VETO")
         self.assertEqual(risk.total_score, 100.0)
         self.assertIn("HARD VETO ACTIVE: Proposal execution is blocked.", risk.notes)
 
-    @patch("services.agent.repositories.db.market_repository.MarketDataRepository.latest_normalized_prices")
-    @patch("services.agent.repositories.db.market_repository.MarketDataRepository.latest_normalized_quotes")
-    def test_risk_depeg_triggers_veto(self, mock_quotes, mock_prices) -> None:
+    def test_risk_depeg_triggers_veto(self) -> None:
         # Define USDY oracle at $1.05 and DEX quote price at $1.01 (3.8% depeg)
-        mock_prices.return_value = [
+        self.engine.repo.latest_normalized_prices.return_value = [
             NormalizedPriceSnapshot(
                 snapshot_id="p1", asset_key="USDY", asset_symbol="USDY", asset_address=None, chain_id=5000,
                 price_usd="1.05", confidence_interval_usd="0.001", publish_timestamp=self.now,
@@ -103,7 +106,7 @@ class RiskScoringTests(unittest.TestCase):
                 status_reason="", derivation_method=None
             ),
         ]
-        mock_quotes.return_value = [
+        self.engine.repo.latest_normalized_quotes.return_value = [
             NormalizedQuoteSnapshot(
                 snapshot_id="q1", protocol="agni", route_id="usdy_route", route_label="exactInputSingle",
                 token_in_symbol="USDY", token_out_symbol="USDC", amount_in="1000", amount_out="1010",

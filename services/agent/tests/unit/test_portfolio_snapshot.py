@@ -13,6 +13,21 @@ from services.agent.modules.market_data.balances import PortfolioSnapshotEngine
 
 
 class PortfolioSnapshotEngineTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.market_repo_patcher = patch("services.agent.repositories.db.market_repository.MarketDataRepository")
+        self.mock_market_repo = self.market_repo_patcher.start()
+        self.mock_market_repo.return_value.latest_normalized_quotes.return_value = []
+        self.mock_market_repo.return_value.latest_normalized_prices.return_value = []
+
+        self.portfolio_repo_patcher = patch("services.agent.repositories.db.portfolio_repository.PortfolioSnapshotRepository")
+        self.mock_portfolio_repo = self.portfolio_repo_patcher.start()
+        self.mock_portfolio_repo.return_value.latest_snapshot.return_value = None
+        self.mock_portfolio_repo.return_value.save_snapshot.return_value = None
+
+    def tearDown(self) -> None:
+        self.market_repo_patcher.stop()
+        self.portfolio_repo_patcher.stop()
+
     def test_phase_2_scenario_fixtures_exist(self) -> None:
         scenario_dir = Path(__file__).resolve().parents[1] / "scenarios"
 
@@ -452,12 +467,14 @@ class PortfolioSnapshotEngineTests(unittest.TestCase):
     @patch("services.agent.app.api.portfolio.asyncio.to_thread", new_callable=AsyncMock)
     @patch("services.agent.app.api.portfolio.get_price_service")
     @patch("services.agent.app.api.portfolio.Erc20BalanceReader")
+    @patch("services.agent.app.api.portfolio.MarketDataRepository")
     @patch("services.agent.app.api.portfolio.PortfolioSnapshotRepository")
     @patch("services.agent.app.api.portfolio.get_settings")
     def test_current_portfolio_launches_live_reads_in_parallel(
         self,
         get_settings,
         portfolio_repository_cls,
+        market_repository_cls,
         balance_reader_cls,
         get_price_service,
         to_thread,
@@ -486,12 +503,17 @@ class PortfolioSnapshotEngineTests(unittest.TestCase):
             )
         ]
         get_price_service.return_value.fetch_latest_prices = AsyncMock(return_value=MagicMock(normalized_snapshots=[]))
-        to_thread.side_effect = [None, balance_reader_cls.return_value.read_configured_balances.return_value]
+        to_thread.side_effect = [
+            None,  # cached snapshot lookup before cached return
+            None,  # persisted snapshot task in gather
+            balance_reader_cls.return_value.read_configured_balances.return_value,  # balances task in gather
+            None,  # fallback persisted snapshot lookup
+        ]
 
         snapshot = asyncio.run(current_portfolio(wallet_address="0xportfolio"))
 
         self.assertEqual(snapshot.status_code, "DATA_PARTIAL")
-        self.assertEqual(to_thread.await_count, 2)
+        self.assertEqual(to_thread.await_count, 4)
 
 
 if __name__ == "__main__":
