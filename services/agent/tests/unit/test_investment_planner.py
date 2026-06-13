@@ -39,8 +39,21 @@ class InvestmentPlannerTests(unittest.TestCase):
         # Mock gas price to return 50 Gwei
         self.mock_web3.return_value.eth.gas_price = 50000000
 
+        # Delegate Web3 utility methods to their original implementations to avoid Pydantic validation errors
+        from web3 import Web3 as RealWeb3
+        self.mock_web3.to_hex.side_effect = RealWeb3.to_hex
+        self.mock_web3.to_checksum_address.side_effect = RealWeb3.to_checksum_address
+        self.mock_web3.to_bytes.side_effect = RealWeb3.to_bytes
+
+        # Override Balanced profile to contain USDC, USDY, and mETH for test compatibility
+        from services.agent.strategies.allocation.profiles import ALLOCATION_PROFILES
+        self.original_balanced = ALLOCATION_PROFILES["Balanced"]
+        ALLOCATION_PROFILES["Balanced"] = {"USDC": 0.25, "USDY": 0.45, "mETH": 0.30}
+
     def tearDown(self) -> None:
         self.web3_patcher.stop()
+        from services.agent.strategies.allocation.profiles import ALLOCATION_PROFILES
+        ALLOCATION_PROFILES["Balanced"] = self.original_balanced
 
     def _fresh_quote(self, token_in: str, token_out: str) -> NormalizedQuoteSnapshot:
         return NormalizedQuoteSnapshot(
@@ -117,6 +130,7 @@ class InvestmentPlannerTests(unittest.TestCase):
             deposit_asset_symbol="MNT",
             deposit_amount=Decimal("100"),
             target_weights={"USDC": 0.25, "USDY": 0.45, "mETH": 0.30},
+            prices={"WMNT": Decimal("1"), "USDC": Decimal("1"), "USDY": Decimal("1"), "mETH": Decimal("2500")},
         )
 
         self.assertEqual(quote_service.best_quote_attempt_for_pair.call_count, 3)

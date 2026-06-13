@@ -101,7 +101,6 @@
   --landing-ambient: radial-gradient(circle at 50% 34%, hsl(var(--primary) / 0.16), transparent 0%, transparent 38%), radial-gradient(circle at 70% 22%, hsl(var(--primary) / 0.08), transparent 0%, transparent 28%), linear-gradient(180deg, hsl(var(--primary) / 0.04), hsl(var(--background)) 100%);
   --landing-overlay: radial-gradient(circle at top, hsl(var(--primary) / 0.08), transparent 40%), linear-gradient(to bottom, hsl(var(--background) / 0.06), hsl(var(--background) / 0.55));
   --hero-vignette: radial-gradient(circle_at_50%_30%, transparent_0%, hsl(24 14% 15% / 0.06)_56%, hsl(24 14% 15% / 0.18)_100%);
-  --ai-command-bg: radial-gradient(circle_at_50%_15%, hsl(var(--primary) / 0.14), transparent 55%), radial-gradient(circle_at_80%_80%, hsl(var(--primary) / 0.06), transparent 40%), linear-gradient(180deg, hsl(var(--primary) / 0.04), hsl(var(--background)) 100%);
 
   color-scheme: light;
 }
@@ -198,7 +197,6 @@
   --landing-ambient: radial-gradient(circle at 50% 34%, hsl(var(--primary) / 0.18), transparent 0%, transparent 38%), radial-gradient(circle at 70% 22%, hsl(var(--primary) / 0.09), transparent 0%, transparent 28%), linear-gradient(180deg, hsl(9 7% 5% / 0.14), hsl(38 40% 4% / 0.4));
   --landing-overlay: radial-gradient(circle at top, hsl(var(--primary) / 0.08), transparent 40%), linear-gradient(to bottom, hsl(0 0% 2% / 0.04), hsl(0 0% 2% / 0.34));
   --hero-vignette: radial-gradient(circle_at_50%_30%, transparent_0%, rgb(0 0 0 / 0.14)_56%, rgb(0 0 0 / 0.66)_100%);
-  --ai-command-bg: radial-gradient(circle_at_50%_15%, hsl(var(--primary) / 0.15), transparent 55%), radial-gradient(circle_at_80%_80%, hsl(var(--primary) / 0.05), transparent 40%), linear-gradient(180deg, hsl(9 7% 5% / 0.12), hsl(38 40% 4% / 0.35));
 
   color-scheme: dark;
 }
@@ -318,9 +316,6 @@ body {
   }
   .hero-vignette {
     background: var(--hero-vignette);
-  }
-  .ai-command-backdrop {
-    background: var(--ai-command-bg);
   }
   .shell-grid {
     background-color: transparent;
