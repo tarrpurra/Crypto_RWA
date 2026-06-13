@@ -30,8 +30,8 @@ def generate_deterministic_explanation(
     elif decision.recommended_action == "HOLD":
         summary = (
             f"No portfolio adjustments are recommended at this time. Current exposures "
-            f"closely align with the {decision.profile_name} profile targets (USDC: {decision.target_weights.get('USDC', 0)*100:.1f}%, "
-            f"USDY: {decision.target_weights.get('USDY', 0)*100:.1f}%, mETH: {decision.target_weights.get('mETH', 0)*100:.1f}%). "
+            f"closely align with the {decision.profile_name} profile targets (USDY: {decision.target_weights.get('USDY', 0)*100:.1f}%, "
+            f"mETH: {decision.target_weights.get('mETH', 0)*100:.1f}%). "
             f"Drifts are within the active 1.5% tolerance threshold. Risk levels remain stable at {risk.total_score:.1f} ({risk.risk_band})."
         )
         notes.append("Exposures aligned within tolerance.")

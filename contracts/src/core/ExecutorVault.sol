@@ -25,6 +25,10 @@ contract ExecutorVault {
 
     mapping(address user => mapping(address token => uint256 balance)) public userBalances;
 
+    // ── Share-based ownership tracking ─────────────────────────────────
+    uint256 public totalShares;
+    mapping(address => uint256) public shares;
+
     modifier onlyRole(bytes32 role) {
         if (!_roles[role][msg.sender]) revert Errors.Unauthorized();
         _;
@@ -44,10 +48,54 @@ contract ExecutorVault {
 
     receive() external payable {}
 
-    // ── User Deposit / Withdraw ────────────────────────────────────────
+    // ── Share accounting ───────────────────────────────────────────────
 
-    event Deposited(address indexed user, address indexed token, uint256 amount);
-    event Withdrawn(address indexed user, address indexed token, uint256 amount);
+    /// @notice Mint shares for a user. Called on every deposit.
+    /// @dev Shares are minted 1:1 with the deposit amount as a simplified
+    ///      proportional ownership unit. Backend normalizes share value
+    ///      using off-chain price data for true ownership % calculation.
+    function _mintShares(address user, uint256 shareAmount) internal {
+        shares[user] += shareAmount;
+        totalShares += shareAmount;
+    }
+
+    /// @notice Burn shares for a user. Called on every withdrawal.
+    function _burnShares(address user, uint256 shareAmount) internal {
+        shares[user] -= shareAmount;
+        totalShares -= shareAmount;
+    }
+
+    // ── Read methods (ownership recovery) ──────────────────────────────
+
+    /// @notice Returns the number of shares held by a user.
+    ///         Shares represent proportional vault ownership.
+    ///         Backend computes true USD ownership % using off-chain prices.
+    function balanceOf(address user) external view returns (uint256) {
+        return shares[user];
+    }
+
+    /// @notice Returns the total native MNT balance held by the vault.
+    ///         Full portfolio valuation (multi-token) happens off-chain.
+    function totalAssets() external view returns (uint256) {
+        return address(this).balance;
+    }
+
+    /// @notice Estimates how many native MNT `sharesAmount` would be worth
+    ///         if the vault were liquidated to native MNT only.
+    ///         For multi-token valuation, use the backend `/portfolio/sync`.
+    function previewRedeem(uint256 sharesAmount) external view returns (uint256) {
+        if (totalShares == 0) return 0;
+        return sharesAmount * address(this).balance / totalShares;
+    }
+
+    /// @notice Returns a user's shares and their estimated native MNT value.
+    function userPosition(address user) external view returns (uint256 userShares, uint256 estimatedAssets) {
+        userShares = shares[user];
+        if (totalShares == 0) return (0, 0);
+        estimatedAssets = userShares * address(this).balance / totalShares;
+    }
+
+    // ── User Deposit / Withdraw ────────────────────────────────────────
 
     function depositToken(address token, uint256 amount) external {
         if (token == address(0)) revert Errors.ZeroAddress();
@@ -55,16 +103,19 @@ contract ExecutorVault {
 
         IERC20(token).transferFrom(msg.sender, address(this), amount);
         userBalances[msg.sender][token] += amount;
+        _mintShares(msg.sender, amount);
 
-        emit Deposited(msg.sender, token, amount);
+        emit Events.Deposited(msg.sender, token, amount, amount);
     }
 
     function depositNative() external payable {
         if (msg.value == 0) revert Errors.InvalidAmount();
 
         userBalances[msg.sender][address(0)] += msg.value;
+        _mintShares(msg.sender, msg.value);
 
-        emit Deposited(msg.sender, address(0), msg.value);
+        emit Events.Deposited(msg.sender, address(0), msg.value, msg.value);
+        emit Events.NativeDeposited(msg.sender, msg.value, msg.value);
     }
 
     function withdrawToken(address token, address to, uint256 amount) external {
@@ -74,9 +125,10 @@ contract ExecutorVault {
         if (userBalances[msg.sender][token] < amount) revert Errors.InsufficientBalance();
 
         userBalances[msg.sender][token] -= amount;
+        _burnShares(msg.sender, amount);
         IERC20(token).transfer(to, amount);
 
-        emit Withdrawn(msg.sender, token, amount);
+        emit Events.Withdrawn(msg.sender, token, amount, amount);
     }
 
     function withdrawNative(address payable to, uint256 amount) external {
@@ -85,10 +137,11 @@ contract ExecutorVault {
         if (userBalances[msg.sender][address(0)] < amount) revert Errors.InsufficientBalance();
 
         userBalances[msg.sender][address(0)] -= amount;
+        _burnShares(msg.sender, amount);
         (bool success,) = to.call{value: amount}("");
         if (!success) revert Errors.ExternalCallFailed();
 
-        emit Withdrawn(msg.sender, address(0), amount);
+        emit Events.Withdrawn(msg.sender, address(0), amount, amount);
     }
 
     function getUserBalance(address user, address token) external view returns (uint256) {
@@ -132,6 +185,7 @@ contract ExecutorVault {
         uint256 realized = _executeSwap(payload, routerCalldata, amountIn);
         tradeApprovalManager.markExecuted(payload);
         _emitTradeExecuted(payload, amountIn, realized);
+        emit Events.ProposalExecuted(payload.proposalId, payload.planHash, msg.sender);
     }
 
     function emergencyWithdrawToken(address token, address to, uint256 amount) external onlyRole(Roles.RECOVERY_ROLE) {

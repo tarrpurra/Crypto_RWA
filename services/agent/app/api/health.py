@@ -61,7 +61,7 @@ def _system_status(settings) -> tuple[str, str, str]:
 
 
 def _default_amount_in(symbol: str) -> Decimal:
-    if symbol.upper() in {"USDY", "USDC"}:
+    if symbol.upper() == "USDY":
         return Decimal("1000")
     if symbol.upper() in {"WMNT", "MNT"}:
         return Decimal("10")

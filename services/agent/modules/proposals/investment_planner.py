@@ -171,10 +171,7 @@ def _symbol_price(
         aliases.add("WMNT")
     elif normalized == "WMNT":
         aliases.add("MNT")
-    elif normalized == "USDC":
-        aliases.add("USDC.E")
-    elif normalized == "USDC.E":
-        aliases.add("USDC")
+
 
     for alias in aliases:
         price = prices.get(alias)
@@ -277,7 +274,7 @@ def _latest_price_map() -> dict[str, Decimal]:
 
 def _quote_derived_price(symbol: str, prices: dict[str, Decimal]) -> Decimal | None:
     quote_service = get_quote_service()
-    for stable_symbol in ("USDC", "USDY"):
+    for stable_symbol in ("USDY",):
         stable_price = prices.get(stable_symbol.upper())
         if stable_price is None:
             continue

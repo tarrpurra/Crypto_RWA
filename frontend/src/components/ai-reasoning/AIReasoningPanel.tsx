@@ -124,6 +124,7 @@ function buildCardData(props: AIReasoningPanelProps) {
     hasConnectedWallet,
     aiDecisionMakerEnabled,
     swapRecommendations,
+    availableRouteCount,
   } = props;
 
   const action = (allocation?.decision.recommended_action ??
@@ -184,57 +185,106 @@ function buildCardData(props: AIReasoningPanelProps) {
   const leadPosition = [...(allocation?.current_weights ? Object.entries(allocation.current_weights) : [])]
     .sort((a, b) => b[1] - a[1])[0];
 
-  const timeline: TimelineStep[] = [
-    {
-      title: "Portfolio Scan",
-      status: hasConnectedWallet ? "complete" : "warning",
-      detail: leadPosition
-        ? `${leadPosition[0]} exposure detected at ${(leadPosition[1] * 100).toFixed(2)}%.`
-        : "Current portfolio balances and sleeve weights were loaded.",
-    },
-    {
-      title: "Market Fetch",
-      status: sources.length > 0 ? "complete" : "warning",
-      detail:
-        sources.length > 0
-          ? "USDY, mETH, reserve, and route market data were loaded."
-          : "Market data inputs are still loading or unavailable.",
-    },
-    {
-      title: "Oracle Check",
-      status: hardVeto
+  const buckets = risk?.buckets ?? [];
+
+  function bucketByName(name: string) {
+    return buckets.find((b) => b.bucket === name);
+  }
+
+  function bucketToStepStatus(b: { status_code: string; hard_veto: boolean }): TimelineStatus {
+    if (b.hard_veto) return "blocked";
+    if (b.status_code === "RISK_NORMAL") return "complete";
+    return "warning";
+  }
+
+  function formatBucketName(name: string) {
+    return name
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  const knownBuckets = new Set(["portfolio_valuation", "concentration_drift", "quote_availability", "oracle_freshness", "policy_guard"]);
+
+  const timeline: TimelineStep[] = [];
+
+  const valBucket = bucketByName("portfolio_valuation");
+  timeline.push({
+    title: "Portfolio Scan",
+    status: hasConnectedWallet ? "complete" : "warning",
+    detail: valBucket?.reason
+      ?? (leadPosition
+        ? `${leadPosition[0]} exposure at ${(leadPosition[1] * 100).toFixed(2)}%.`
+        : "Current portfolio balances and sleeve weights were loaded."),
+  });
+
+  const mktBucket = bucketByName("quote_availability");
+  timeline.push({
+    title: "Market Fetch",
+    status: mktBucket ? bucketToStepStatus(mktBucket) : sources.length > 0 ? "complete" : "warning",
+    detail: mktBucket?.reason
+      ?? (sources.length > 0
+        ? "USDY, mETH, reserve, and route market data loaded."
+        : "Market data inputs are still loading or unavailable."),
+  });
+
+  const concBucket = bucketByName("concentration_drift");
+  if (concBucket && concBucket.status_code !== "RISK_NORMAL") {
+    timeline.push({
+      title: "Concentration Check",
+      status: bucketToStepStatus(concBucket),
+      detail: concBucket.reason,
+    });
+  }
+
+  const oracleBucket = bucketByName("oracle_freshness");
+  timeline.push({
+    title: "Oracle Check",
+    status: oracleBucket
+      ? bucketToStepStatus(oracleBucket)
+      : hardVeto
         ? "blocked"
         : risk?.freshness_status === "fresh"
           ? "complete"
           : "warning",
-      detail:
-        risk?.freshness_status === "fresh"
-          ? "Oracle freshness is within the safe execution threshold."
-          : hardVeto
-            ? "Oracle or freshness policy failed and blocked execution."
-            : "Freshness checks require review before execution.",
-    },
-    {
-      title: "Policy Guard",
-      status: hardVeto || warnings > 0 ? "blocked" : "complete",
-      detail:
-        hardVeto
-          ? "One or more portfolio or policy guards blocked new allocation."
-          : warnings > 0
-            ? "Guard conditions require approval before allocation can proceed."
-            : "No active policy guard is blocking the proposal.",
-    },
-    {
-      title: "Final Decision",
-      status: action === "PAUSE" ? "paused" : needsApproval ? "warning" : "complete",
-      detail:
-        action === "PAUSE"
-          ? "Pause strategy and request human approval."
-          : needsApproval
-            ? "Recommendation is ready but still requires human approval."
-            : "Decision is ready to move into execution.",
-    },
-  ].slice(0, 6);
+    detail: oracleBucket?.reason
+      ?? (risk?.freshness_status === "fresh"
+        ? "Oracle freshness is within the safe execution threshold."
+        : hardVeto
+          ? "Oracle or freshness policy failed and blocked execution."
+          : "Freshness checks require review before execution."),
+  });
+
+  const otherBuckets = buckets.filter((b) => !knownBuckets.has(b.bucket));
+  for (const b of otherBuckets) {
+    timeline.push({
+      title: formatBucketName(b.bucket),
+      status: bucketToStepStatus(b),
+      detail: b.reason,
+    });
+  }
+
+  const policyBucket = bucketByName("policy_guard");
+  timeline.push({
+    title: "Policy Guard",
+    status: hardVeto || warnings > 0 ? "blocked" : "complete",
+    detail: policyBucket?.reason
+      ?? (hardVeto
+        ? "One or more portfolio or policy guards blocked new allocation."
+        : warnings > 0
+          ? "Guard conditions require approval before allocation can proceed."
+          : "No active policy guard is blocking the proposal."),
+  });
+
+  timeline.push({
+    title: "Final Decision",
+    status: action === "PAUSE" ? "paused" : needsApproval ? "warning" : "complete",
+    detail:
+      action === "PAUSE"
+        ? "Pause strategy and request human approval."
+        : needsApproval
+          ? "Recommendation is ready but still requires human approval."
+          : "Decision is ready to move into execution.",
+  });
 
   const evidence: EvidenceItem[] = [
     ...(leadPosition
@@ -292,7 +342,7 @@ function buildCardData(props: AIReasoningPanelProps) {
     riskScore: risk?.risk_score_normalized ?? risk?.risk_score ?? 0,
     confidence,
     signals: sources.length,
-    routes: swapRecommendations.length,
+    routes: availableRouteCount ?? swapRecommendations.length,
     warnings,
     executionGate,
     mainReason:
@@ -343,8 +393,16 @@ export function AIReasoningPanel(props: AIReasoningPanelProps) {
 
   return (
     <section className="ai-reasoning-panel rounded-lg overflow-hidden">
-      <button
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => setExpanded((value) => !value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            setExpanded((value) => !value);
+          }
+        }}
         className="w-full p-4 text-left transition-colors hover:bg-primary/[0.03] sm:p-5"
       >
         <div className="flex flex-col gap-4">
@@ -363,7 +421,11 @@ export function AIReasoningPanel(props: AIReasoningPanelProps) {
 
             <div className="ml-4 flex shrink-0 items-center gap-3">
               {hasConnectedWallet && (
-                <div className="hidden items-center gap-2 pr-2 sm:flex">
+                <div
+                  className="hidden items-center gap-2 pr-2 sm:flex"
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
+                >
                   <span className="whitespace-nowrap text-[0.65rem] uppercase tracking-wider text-muted-foreground">
                     AI access
                   </span>
@@ -420,7 +482,7 @@ export function AIReasoningPanel(props: AIReasoningPanelProps) {
             </p>
           </div>
         </div>
-      </button>
+      </div>
 
       {showWarning && (
         <div className="border-t border-primary/20 px-5 pb-5 pt-4">

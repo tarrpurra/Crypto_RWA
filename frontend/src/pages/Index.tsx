@@ -23,10 +23,12 @@ import {
 import { useAllocationRecommendation } from "@/hooks/useAllocation";
 import { useDashboardSummary } from "@/hooks/useDashboardSummary";
 import { useInvestmentScope } from "@/hooks/useInvestmentScope";
+import { useMarketRoutes } from "@/hooks/useMarket";
 import { usePortfolioSnapshots } from "@/hooks/usePortfolio";
-import { useSettings, useUpdateSettings } from "@/hooks/useSystem";
+import { useChainStatus, useSettings, useUpdateSettings } from "@/hooks/useSystem";
 import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 import { useVaultBalance, useWalletBalance } from "@/hooks/useVault";
+import { normalizeAddress } from "@/lib/addresses";
 
 const assetOptions = ["USDY", "mETH", "MNT"] as const;
 const riskProfiles = ["Defensive", "Balanced", "Yield-Seeking"] as const;
@@ -43,9 +45,11 @@ const Index = () => {
   const [depositModalOpen, setDepositModalOpen] = useState(false);
   const [withdrawModalOpen, setWithdrawModalOpen] = useState(false);
   const settingsQuery = useSettings();
+  const chainStatusQuery = useChainStatus();
   const updateSettings = useUpdateSettings();
   const dashboardSummaryQuery = useDashboardSummary();
   const allocationQuery = useAllocationRecommendation();
+  const routesQuery = useMarketRoutes();
   const snapshotsQuery = usePortfolioSnapshots(10);
   const decisionsQuery = useDecisions();
   const { effectiveWalletAddress, connectedWalletAddress, isSupportedChain } =
@@ -54,6 +58,10 @@ const Index = () => {
   const walletBalanceQuery = useWalletBalance();
 
   const settings = settingsQuery.data;
+  const chainStatus = chainStatusQuery.data;
+  const resolvedVaultAddress =
+    normalizeAddress(vaultBalanceQuery.data?.vault_address) ??
+    normalizeAddress(chainStatus?.executor_vault?.address);
   const dashboardSummary = dashboardSummaryQuery.data;
   const portfolio = dashboardSummary?.portfolio ?? null;
   const vaultData = vaultBalanceQuery.data;
@@ -86,6 +94,7 @@ const Index = () => {
   const allocation = allocationQuery.data;
   const snapshots = snapshotsQuery.data;
   const decisions = decisionsQuery.data;
+  const availableRouteCount = routesQuery.data?.routes?.length ?? 0;
   const pendingProposal = dashboardSummary?.pending_proposal ?? null;
   const hasConnectedSupportedWallet = Boolean(
     connectedWalletAddress && isSupportedChain,
@@ -370,6 +379,7 @@ const Index = () => {
               onAiAccessChange={updateAiAccess}
               isAiAccessPending={updateSettings.isPending}
               swapRecommendations={swapRecommendations}
+              availableRouteCount={availableRouteCount}
             />
           </>
         ) : (
@@ -394,6 +404,9 @@ const Index = () => {
         open={depositModalOpen}
         onClose={() => setDepositModalOpen(false)}
         walletData={resolvedWalletData}
+        vaultAddress={resolvedVaultAddress}
+        wmntAddress={normalizeAddress(settings?.sepolia_wmnt_address) ?? undefined}
+        nativeMntEnabled={settings?.native_mnt_enabled ?? false}
         suggestedAsset={primarySwapRecommendation?.token_in_symbol ?? undefined}
         suggestedAmount={
           suggestedLaunchAmount > 0 ? String(suggestedLaunchAmount) : undefined
@@ -403,6 +416,9 @@ const Index = () => {
         open={withdrawModalOpen}
         onClose={() => setWithdrawModalOpen(false)}
         vaultData={resolvedVaultData}
+        vaultAddress={resolvedVaultAddress}
+        wmntAddress={normalizeAddress(settings?.sepolia_wmnt_address) ?? undefined}
+        nativeMntEnabled={settings?.native_mnt_enabled ?? false}
       />
     </div>
   );

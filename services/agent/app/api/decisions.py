@@ -381,10 +381,11 @@ async def execute_proposal(proposal_id: str) -> ProposalExecuteResponse:
     )
     data_status = (portfolio.status_code or "").upper()
 
+    is_testnet = risk.target_chain in {"mantle-sepolia", "sepolia", "mantle_sepolia"}
     block_reasons: list[str] = []
-    if risk.hard_veto_status == "active":
+    if risk.hard_veto_status == "active" and not is_testnet:
         block_reasons.append(f"risk hard veto is active ({risk.hard_veto_status})")
-    if risk.risk_band in ("RISK_VETO", "RISK_PAUSE_REQUIRED"):
+    if risk.risk_band in ("RISK_VETO", "RISK_PAUSE_REQUIRED") and not is_testnet:
         block_reasons.append(f"risk band is {risk.risk_band}")
     if data_status in ("DATA_PARTIAL", "DATA_MISSING"):
         block_reasons.append(f"portfolio data status is {data_status}")

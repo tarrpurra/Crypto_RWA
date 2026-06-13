@@ -18,16 +18,15 @@ class RiskScoringTests(unittest.TestCase):
         
         # Base normal balances
         self.balances = [
-            AssetBalance(asset_symbol="USDC", balance=250000.0, value_usd=250000.0, weight=0.25),
-            AssetBalance(asset_symbol="USDY", balance=428571.4, value_usd=450000.0, weight=0.45),
-            AssetBalance(asset_symbol="mETH", balance=85.71, value_usd=300000.0, weight=0.30),
+            AssetBalance(asset_symbol="USDY", balance=550000.0, value_usd=550000.0, weight=0.55),
+            AssetBalance(asset_symbol="mETH", balance=128.57, value_usd=450000.0, weight=0.45),
         ]
         self.portfolio = PortfolioSnapshot(
             snapshot_id="port_test_normal",
             wallet_or_vault="0xvault",
             total_value_usd=1000000.0,
             balances=self.balances,
-            weights={"USDC": 0.25, "USDY": 0.45, "mETH": 0.30},
+            weights={"USDY": 0.55, "mETH": 0.45},
             status_code="DATA_FRESH",
             status_reason="",
             created_at=self.now

@@ -142,8 +142,6 @@ def _resolve_price(symbol: str, prices: dict[str, Decimal], settings: Settings) 
         return prices["WMNT"]
     if upper == "WMNT" and "MNT" in prices:
         return prices["MNT"]
-    if upper in {"USDC", "USDC.E"} and settings.target_chain == TargetChain.MANTLE_SEPOLIA and settings.simulation_fallback_enabled:
-        return Decimal("1")
     if upper == "USDY" and settings.target_chain == TargetChain.MANTLE_SEPOLIA:
         if settings.sepolia_usdy_reference_price_usd:
             try:

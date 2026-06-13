@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 
+from services.agent.app.api.portfolio import current_portfolio
 from services.agent.app.core.settings import get_settings
 from services.agent.app.schemas.vault import (
     DepositPrepareRequest,
@@ -17,6 +18,7 @@ from services.agent.app.schemas.vault import (
     WithdrawPrepareRequest,
     WithdrawPrepareResponse,
 )
+from services.agent.modules.dashboard.cache import clear_cached
 from services.agent.modules.market_data.balances import Erc20BalanceReader
 from services.agent.modules.market_data import get_price_service
 from services.agent.modules.oracle.freshness import utc_now
@@ -510,6 +512,18 @@ async def record_vault_flow(req: VaultFlowRecordRequest) -> VaultFlowRecordRespo
         occurred_at=occurred_at,
         metadata=req.metadata,
     )
+
+    try:
+        await current_portfolio(wallet_address=req.user_address, force_refresh=True)
+        logger.info("Portfolio snapshot refreshed after flow recording for user=%s", req.user_address)
+    except Exception as exc:
+        logger.warning("Portfolio snapshot refresh after flow recording failed: %s", exc)
+
+    try:
+        cache_key = f"dashboard_summary:{req.user_address.lower()}"
+        clear_cached(cache_key)
+    except Exception as exc:
+        logger.warning("Dashboard cache invalidation after flow recording failed: %s", exc)
 
     return VaultFlowRecordResponse(
         status="ok",

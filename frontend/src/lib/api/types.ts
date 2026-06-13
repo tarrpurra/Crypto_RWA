@@ -507,6 +507,30 @@ export interface WithdrawPrepareResponse extends StatusEnvelope {
   sufficient_balance: boolean;
 }
 
+export interface VaultFlowRecordRequest {
+  user_address: string;
+  asset_symbol: string;
+  asset_amount: string;
+  flow_type?: "deposit" | "withdrawal" | "adjustment";
+  usd_value?: string | null;
+  asset_address?: string | null;
+  tx_hash?: string | null;
+  occurred_at?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface VaultFlowRecordResponse extends StatusEnvelope {
+  flow_id: string;
+  vault_address: string;
+  user_address: string;
+  flow_type: string;
+  asset_symbol: string;
+  asset_amount: string;
+  usd_value: string;
+  tx_hash?: string | null;
+  occurred_at: string;
+}
+
 export interface InvestmentPlanResponse extends StatusEnvelope {
   generated_at: string
   plan_id: string

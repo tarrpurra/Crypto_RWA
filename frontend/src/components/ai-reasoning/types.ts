@@ -83,6 +83,7 @@ export interface AIReasoningPanelProps {
   onAiAccessChange: (enabled: boolean) => void;
   isAiAccessPending: boolean;
   swapRecommendations: SwapRecommendation[];
+  availableRouteCount?: number;
   aiReasoningData?: AIReasoningData;
 }
 

@@ -212,6 +212,143 @@ class Erc20BalanceReader:
             )
 
 
+class VaultShareReader:
+    """Reads user vault position using vault contract shares + token balances.
+
+    Uses share-based ownership: user's share % = vault.shares(user) / vault.totalShares().
+    Multiplies by vault's token balances to compute user's per-token position.
+    This works even when Postgres is empty, since all data comes from chain.
+    """
+
+    VAULT_ABI = [
+        {
+            "constant": True,
+            "inputs": [{"name": "user", "type": "address"}],
+            "name": "balanceOf",
+            "outputs": [{"name": "", "type": "uint256"}],
+            "stateMutability": "view",
+            "type": "function",
+        },
+        {
+            "constant": True,
+            "inputs": [],
+            "name": "totalShares",
+            "outputs": [{"name": "", "type": "uint256"}],
+            "stateMutability": "view",
+            "type": "function",
+        },
+        {
+            "constant": True,
+            "inputs": [
+                {"name": "user", "type": "address"},
+                {"name": "tokens", "type": "address[]"},
+            ],
+            "name": "getUserBalances",
+            "outputs": [{"name": "", "type": "uint256[]"}],
+            "stateMutability": "view",
+            "type": "function",
+        },
+        {
+            "constant": True,
+            "inputs": [],
+            "name": "totalAssets",
+            "outputs": [{"name": "", "type": "uint256"}],
+            "stateMutability": "view",
+            "type": "function",
+        },
+    ]
+
+    def __init__(self, rpc_url: str, vault_address: str) -> None:
+        from web3 import HTTPProvider, Web3
+
+        self.web3 = Web3(HTTPProvider(rpc_url))
+        self.vault_address = self.web3.to_checksum_address(vault_address)
+        self.vault_contract = self.web3.eth.contract(address=self.vault_address, abi=self.VAULT_ABI)
+
+    def read_user_position(
+        self,
+        *,
+        user_address: str,
+        asset_registry: dict[str, dict[str, object]],
+        chain_id: int,
+    ) -> list[BalanceObservation]:
+        """Read user's vault position using shares + token balances from chain.
+
+        Returns BalanceObservation list with per-asset amounts calculated as
+        user_share = vault_balance * (shares[user] / totalShares).
+        """
+        observed_at = utc_now()
+        checksum_user = self.web3.to_checksum_address(user_address)
+
+        shares_result = self.vault_contract.functions.balanceOf(checksum_user).call()
+        user_shares = int(shares_result)
+
+        if user_shares == 0:
+            return []
+
+        total_shares = int(self.vault_contract.functions.totalShares().call())
+        if total_shares == 0:
+            return []
+
+        ownership_pct = Decimal(user_shares) / Decimal(total_shares)
+        if ownership_pct == 0:
+            return []
+
+        token_addresses: list[str] = []
+        asset_map: dict[str, dict[str, object]] = {}
+        for asset in asset_registry.values():
+            if int(asset["chain_id"]) != chain_id:
+                continue
+            if not asset.get("verified") or not asset.get("address"):
+                continue
+            addr = str(asset["address"])
+            token_addresses.append(addr)
+            asset_map[addr.lower()] = asset
+
+        if not token_addresses:
+            return []
+
+        checksum_tokens = [self.web3.to_checksum_address(a) for a in token_addresses]
+        raw_balances = self.vault_contract.functions.getUserBalances(checksum_user, checksum_tokens).call()
+
+        balances: list[BalanceObservation] = []
+        for i, addr in enumerate(token_addresses):
+            raw_vault_balance = int(raw_balances[i])
+            if raw_vault_balance == 0:
+                continue
+
+            user_amount = int(Decimal(raw_vault_balance) * ownership_pct)
+            asset = asset_map.get(addr.lower(), {})
+            decimals = int(asset.get("decimals", 18))
+
+            balances.append(
+                BalanceObservation(
+                    asset_key=str(asset.get("asset_key", "")),
+                    asset_symbol=str(asset.get("symbol", "")),
+                    asset_address=addr,
+                    chain_id=chain_id,
+                    balance=_scaled_token_amount(user_amount, decimals),
+                    decimals=decimals,
+                    observed_timestamp=observed_at,
+                    balance_source="vault_shares_getUserBalances",
+                    status="ok",
+                    status_code="DATA_FRESH",
+                    status_reason=(
+                        f"User position derived from vault shares: "
+                        f"{user_shares}/{total_shares} ({float(ownership_pct * 100):.2f}%)"
+                    ),
+                    metadata={
+                        "user_shares": str(user_shares),
+                        "total_shares": str(total_shares),
+                        "ownership_pct": str(ownership_pct),
+                        "raw_vault_balance": str(raw_vault_balance),
+                    },
+                )
+            )
+
+        return balances
+
+
 class PortfolioSnapshotEngine:
     def build_snapshot(
         self,

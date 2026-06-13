@@ -51,19 +51,18 @@ class AllocationTests(unittest.TestCase):
         self.db_patcher.stop()
 
     def test_no_rebalance_when_within_drift_tolerance(self) -> None:
-        # Balanced target: USDC: 0.25, USDY: 0.45, mETH: 0.30
+        # Balanced target: USDY: 0.55, mETH: 0.45
         # Current portfolio has exactly balanced weights
         balances = [
-            AssetBalance(asset_symbol="USDC", balance=250000.0, value_usd=250000.0, weight=0.25),
-            AssetBalance(asset_symbol="USDY", balance=428571.4, value_usd=450000.0, weight=0.45),
-            AssetBalance(asset_symbol="mETH", balance=85.71, value_usd=300000.0, weight=0.30),
+            AssetBalance(asset_symbol="USDY", balance=550000.0, value_usd=550000.0, weight=0.55),
+            AssetBalance(asset_symbol="mETH", balance=128.57, value_usd=450000.0, weight=0.45),
         ]
         portfolio = PortfolioSnapshot(
             snapshot_id="port_test_balanced",
             wallet_or_vault="0xvault",
             total_value_usd=1000000.0,
             balances=balances,
-            weights={"USDC": 0.25, "USDY": 0.45, "mETH": 0.30},
+            weights={"USDY": 0.55, "mETH": 0.45},
             status_code="DATA_FRESH",
             status_reason="",
             created_at=self.now
@@ -74,18 +73,17 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual(len(actions), 0)
 
     def test_rebalance_triggered_when_outside_drift_tolerance(self) -> None:
-        # Current portfolio is heavily skewed (mETH is 50%, USDC is 5%)
+        # Current portfolio is heavily skewed (mETH is 65%, USDY is 35%)
         balances = [
-            AssetBalance(asset_symbol="USDC", balance=50000.0, value_usd=50000.0, weight=0.05),
-            AssetBalance(asset_symbol="USDY", balance=428571.4, value_usd=450000.0, weight=0.45),
-            AssetBalance(asset_symbol="mETH", balance=142.85, value_usd=500000.0, weight=0.50),
+            AssetBalance(asset_symbol="USDY", balance=350000.0, value_usd=350000.0, weight=0.35),
+            AssetBalance(asset_symbol="mETH", balance=185.71, value_usd=650000.0, weight=0.65),
         ]
         portfolio = PortfolioSnapshot(
             snapshot_id="port_test_skewed",
             wallet_or_vault="0xvault",
             total_value_usd=1000000.0,
             balances=balances,
-            weights={"USDC": 0.05, "USDY": 0.45, "mETH": 0.50},
+            weights={"USDY": 0.35, "mETH": 0.65},
             status_code="DATA_FRESH",
             status_reason="",
             created_at=self.now
@@ -93,18 +91,17 @@ class AllocationTests(unittest.TestCase):
 
         decision, actions = compute_rebalance(portfolio, self.risk_normal, "Balanced")
         self.assertEqual(decision.recommended_action, "REBALANCE")
-        # Should want to SELL mETH and BUY USDC
+        # Should want to SELL mETH and BUY USDY
         self.assertGreater(len(actions), 0)
         
         sell_meth = next((a for a in actions if a.asset_symbol == "mETH" and a.action == "SELL"), None)
-        buy_usdc = next((a for a in actions if a.asset_symbol == "USDC" and a.action == "BUY"), None)
+        buy_usdy = next((a for a in actions if a.asset_symbol == "USDY" and a.action == "BUY"), None)
         self.assertIsNotNone(sell_meth)
-        self.assertIsNotNone(buy_usdc)
+        self.assertIsNotNone(buy_usdy)
 
     def test_block_execution_during_veto(self) -> None:
         balances = [
-            AssetBalance(asset_symbol="USDC", balance=50000.0, value_usd=50000.0, weight=0.05),
-            AssetBalance(asset_symbol="USDY", balance=428571.4, value_usd=450000.0, weight=0.45),
+            AssetBalance(asset_symbol="USDY", balance=500000.0, value_usd=500000.0, weight=0.50),
             AssetBalance(asset_symbol="mETH", balance=142.85, value_usd=500000.0, weight=0.50),
         ]
         portfolio = PortfolioSnapshot(
@@ -112,7 +109,7 @@ class AllocationTests(unittest.TestCase):
             wallet_or_vault="0xvault",
             total_value_usd=1000000.0,
             balances=balances,
-            weights={"USDC": 0.05, "USDY": 0.45, "mETH": 0.50},
+            weights={"USDY": 0.50, "mETH": 0.50},
             status_code="DATA_FRESH",
             status_reason="",
             created_at=self.now
@@ -145,7 +142,6 @@ class AllocationTests(unittest.TestCase):
 
     def test_missing_position_pricing_does_not_look_normal(self) -> None:
         balances = [
-            AssetBalance(asset_symbol="USDC", balance=1.0, value_usd=0.0, weight=0.0),
             AssetBalance(asset_symbol="USDY", balance=1.0, value_usd=0.0, weight=0.0),
             AssetBalance(asset_symbol="mETH", balance=1.0, value_usd=0.0, weight=0.0),
         ]
@@ -154,7 +150,7 @@ class AllocationTests(unittest.TestCase):
             wallet_or_vault="0xvault",
             total_value_usd=1000000.0,
             balances=balances,
-            weights={"USDC": 0.0, "USDY": 0.0, "mETH": 0.0},
+            weights={"USDY": 0.0, "mETH": 0.0},
             status_code="DATA_FRESH",
             status_reason="",
             created_at=self.now
@@ -175,17 +171,14 @@ class AllocationTests(unittest.TestCase):
         clipped_usdy = clip_trade_amount("USDY", 80000.0, total_port_value)
         self.assertEqual(clipped_usdy, 50000.0)
 
-        # USDC limit: 20% of portfolio ($200k) or $75k -> should clip to $75k
-        clipped_usdc = clip_trade_amount("USDC", 90000.0, total_port_value)
-        self.assertEqual(clipped_usdc, 75000.0)
+        # MNT limit: 20% of portfolio ($200k) or $75k -> should clip to $75k
+        clipped_mnt = clip_trade_amount("MNT", 90000.0, total_port_value)
+        self.assertEqual(clipped_mnt, 75000.0)
 
-    def test_sepolia_chain_profiles_strip_usdc(self) -> None:
+    def test_sepolia_chain_profiles_renormalized(self) -> None:
         profile_name, weights = get_allocation_profile_for_chain("Balanced", "mantle_sepolia")
 
         self.assertEqual(profile_name, "Balanced")
-        self.assertNotIn("USDC", weights)
-        self.assertAlmostEqual(weights["USDY"], 0.6)
-        self.assertAlmostEqual(weights["mETH"], 0.4)
         self.assertAlmostEqual(sum(weights.values()), 1.0)
 
 

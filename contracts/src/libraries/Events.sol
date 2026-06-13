@@ -14,6 +14,11 @@ library Events {
     event ProposalMarkedExecuted(bytes32 indexed proposalId, address indexed actor);
     event ProposalMarkedExpired(bytes32 indexed proposalId, address indexed actor);
 
+    event Deposited(address indexed user, address indexed token, uint256 amount, uint256 sharesMinted);
+    event Withdrawn(address indexed user, address indexed token, uint256 amount, uint256 sharesBurned);
+    event NativeDeposited(address indexed user, uint256 nativeAmount, uint256 sharesMinted);
+    event SharePriceUpdated(uint256 oldPrice, uint256 newPrice, address indexed actor);
+
     event TradeExecuted(
         bytes32 indexed proposalId,
         address indexed router,
@@ -24,5 +29,7 @@ library Events {
         address recipient,
         address actor
     );
+
+    event ProposalExecuted(bytes32 indexed proposalId, bytes32 indexed planHash, address indexed executor);
     event EmergencyWithdrawal(address indexed token, address indexed to, uint256 amount, address indexed actor);
 }

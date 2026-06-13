@@ -33,7 +33,8 @@ MARKET_BUCKET_WEIGHTS = {
 }
 
 MARKET_BUCKETS = {"oracle_freshness", "usdy_depeg", "liquidity_slippage"}
-USD_STABLE_SYMBOLS = {"USDC", "USDC.E", "USDT", "DAI", "MUSD"}
+USD_STABLE_SYMBOLS = {"USDT", "DAI", "MUSD"}
+TESTNET_CHAINS = {"mantle-sepolia", "sepolia", "mantle_sepolia"}
 
 
 def _as_aware_utc(value: datetime) -> datetime:
@@ -62,6 +63,7 @@ class RiskEngine:
         prices: Sequence[NormalizedPriceSnapshot] | None = None,
         quotes: Sequence[NormalizedQuoteSnapshot] | None = None,
     ) -> RiskAssessmentResponse:
+        is_testnet = target_chain in TESTNET_CHAINS
         buckets = [
             self._portfolio_valuation_bucket(portfolio),
             self._quote_availability_bucket(quote_validation_status),
@@ -70,11 +72,23 @@ class RiskEngine:
             self._data_quality_bucket(portfolio),
         ]
         if prices is not None:
-            buckets.append(self._oracle_freshness_bucket(prices))
+            oracle_bucket = self._oracle_freshness_bucket(prices)
+            if is_testnet:
+                oracle_bucket.hard_veto = False
+                oracle_bucket.score = min(oracle_bucket.score, 30.0)
+            buckets.append(oracle_bucket)
         if prices is not None and quotes is not None:
-            buckets.append(self._usdy_depeg_bucket(prices, quotes))
+            depeg_bucket = self._usdy_depeg_bucket(prices, quotes)
+            if is_testnet:
+                depeg_bucket.hard_veto = False
+                depeg_bucket.score = min(depeg_bucket.score, 25.0)
+            buckets.append(depeg_bucket)
         if quotes is not None:
-            buckets.append(self._liquidity_slippage_bucket(quotes))
+            slippage_bucket = self._liquidity_slippage_bucket(quotes)
+            if is_testnet:
+                slippage_bucket.hard_veto = False
+                slippage_bucket.score = min(slippage_bucket.score, 25.0)
+            buckets.append(slippage_bucket)
 
         bucket_weights = self._bucket_weight_map(buckets)
         buckets = self._with_bucket_weights(buckets, bucket_weights)

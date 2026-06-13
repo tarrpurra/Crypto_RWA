@@ -342,7 +342,7 @@ describe("Index", () => {
         wallet_or_vault: walletState.walletAddress,
         profile_name: "balanced",
         current_weights: { MNT: 1 },
-        target_weights: { USDC: 0.5, mETH: 0.3, USDY: 0.2 },
+        target_weights: { USDY: 0.5, mETH: 0.3, MNT: 0.2 },
         recommended_action: "REBALANCE",
         confidence: 0.9,
         reasoning: "Portfolio should be rebalanced.",
@@ -351,7 +351,7 @@ describe("Index", () => {
         created_at: "2026-05-27T00:00:00Z",
       },
       rebalance_actions: [
-        { asset_symbol: "USDC", action: "BUY", amount: 50, route_id: "agni:usdc" },
+        { asset_symbol: "USDY", action: "BUY", amount: 50, route_id: "agni:usdy" },
       ],
     };
 

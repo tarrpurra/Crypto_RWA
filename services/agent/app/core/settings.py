@@ -123,7 +123,6 @@ class Settings(BaseSettings):
     meth_mainnet_address: str | None = "0xcDA86A272531e8640cD7F1a92c01839911B90bb0"
     meth_sepolia_address: str | None = None
     wmnt_mainnet_address: str | None = "0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"
-    usdc_mainnet_address: str | None = "0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9"
     weth_mainnet_address: str | None = "0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111"
 
     eth_usd_pyth_feed_id: str | None = "0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace"
@@ -354,20 +353,6 @@ class Settings(BaseSettings):
                 "ratio_feed_id": None,
                 "ondo_oracle_address": None,
                 "decimals": 18,
-            },
-            "USDC_MAINNET": {
-                "asset_key": "USDC_MAINNET",
-                "symbol": "USDC",
-                "chain_id": self.mantle_mainnet_chain_id,
-                "address": self.usdc_mainnet_address,
-                "price_strategy": "route_helper",
-                "primary_reference_source": "dex_quote_only",
-                "dex_quote_required": True,
-                "verified": bool(self.usdc_mainnet_address),
-                "pyth_feed_id": None,
-                "ratio_feed_id": None,
-                "ondo_oracle_address": None,
-                "decimals": 6,
             },
             "WMNT_MAINNET": {
                 "asset_key": "WMNT_MAINNET",

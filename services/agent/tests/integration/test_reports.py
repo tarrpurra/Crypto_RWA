@@ -34,7 +34,7 @@ class ReportEndpointTests(unittest.TestCase):
         )
 
         response = self.client.get(
-            "/reports/latest?wallet_address=0xportfolio&deposit_asset_symbol=USDC&deposit_amount=100&risk_profile=Balanced"
+            "/reports/latest?wallet_address=0xportfolio&deposit_asset_symbol=USDY&deposit_amount=100&risk_profile=Balanced"
         )
 
         self.assertEqual(response.status_code, 200)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from decimal import Decimal, InvalidOperation
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Response
 
@@ -10,7 +11,13 @@ from services.agent.app.core.status_codes import DataStatusCode
 from services.agent.app.core.settings import get_settings
 from services.agent.app.schemas.portfolio import PortfolioSnapshotHistoryResponse, PortfolioSnapshotResponse
 from services.agent.modules.market_data import get_price_service
-from services.agent.modules.market_data.balances import Erc20BalanceReader, PortfolioSnapshotEngine, fetch_portfolio_snapshot
+from services.agent.modules.market_data.balances import (
+    Erc20BalanceReader,
+    PortfolioSnapshotEngine,
+    VaultShareReader,
+    fetch_portfolio_snapshot,
+)
+from services.agent.modules.oracle.freshness import utc_now
 from services.agent.repositories.db.market_repository import MarketDataRepository
 from services.agent.repositories.db.portfolio_repository import PortfolioSnapshotRepository
 
@@ -102,6 +109,41 @@ def _normalize_zero_position(position):
     )
 
 
+PORTFOLIO_STALE_SECONDS = 180
+
+
+def _snapshot_is_stale(snapshot: PortfolioSnapshotResponse) -> bool:
+    """Check if a persisted portfolio snapshot is stale and should be refreshed.
+
+    A snapshot is stale if older than PORTFOLIO_STALE_SECONDS or
+    if its status code indicates missing/partial data.
+    """
+    if snapshot.status_code not in (DataStatusCode.DATA_FRESH.value,):
+        return True
+    elapsed = (utc_now() - snapshot.generated_at).total_seconds()
+    return elapsed > PORTFOLIO_STALE_SECONDS
+
+
+def _read_vault_portfolio(
+    settings,
+    user_address: str,
+) -> list:
+    vault_address = settings.executor_vault_address
+    if not vault_address:
+        logger.info("No executor_vault_address configured; skipping vault position read.")
+        return []
+    try:
+        reader = VaultShareReader(settings.effective_http_rpc_url, vault_address)
+        return reader.read_user_position(
+            user_address=user_address,
+            asset_registry=settings.active_portfolio_asset_registry,
+            chain_id=settings.effective_chain_id,
+        )
+    except Exception as exc:
+        logger.warning("Vault position read failed for %s: %s", user_address, exc)
+        return []
+
+
 def _normalize_zero_snapshot(snapshot: PortfolioSnapshotResponse) -> PortfolioSnapshotResponse:
     if not snapshot.positions or snapshot.status_code == DataStatusCode.DATA_FRESH.value:
         return snapshot
@@ -149,6 +191,9 @@ async def current_portfolio(
         _save_snapshot_best_effort(snapshot)
         return snapshot
 
+    force_refresh = force_refresh or False
+    persisted_snapshot = None
+
     if not force_refresh:
         try:
             persisted_snapshot = await asyncio.to_thread(
@@ -156,26 +201,43 @@ async def current_portfolio(
             )
         except Exception as exc:
             logger.warning("Portfolio snapshot lookup failed before cached return: %s", exc)
-            persisted_snapshot = None
-        if persisted_snapshot is not None:
+
+        if persisted_snapshot is not None and not _snapshot_is_stale(persisted_snapshot):
             served_snapshot = _normalize_zero_snapshot(persisted_snapshot)
             served_metadata = dict(served_snapshot.metadata)
             served_metadata.update({"served_from": "latest_snapshot", "force_refresh": False})
             return served_snapshot.model_copy(update={"metadata": served_metadata})
 
+        if persisted_snapshot is not None:
+            logger.info(
+                "Persisted snapshot for %s is stale; forcing refresh from chain.",
+                portfolio_address,
+            )
+
     persisted_snapshot_task = asyncio.to_thread(
         lambda: PortfolioSnapshotRepository().latest_snapshot(portfolio_address=portfolio_address),
     )
-    balances_task = asyncio.to_thread(
-        lambda: Erc20BalanceReader(settings.effective_http_rpc_url).read_configured_balances(
-            portfolio_address=portfolio_address,
-            asset_registry=settings.active_portfolio_asset_registry,
-            chain_id=settings.effective_chain_id,
-        ),
-    )
+
+    vault_balances = _read_vault_portfolio(settings, portfolio_address)
+    if vault_balances:
+        logger.info(
+            "Read %d vault-share-derived positions for %s from chain.",
+            len(vault_balances),
+            portfolio_address,
+        )
+        balances_task = asyncio.to_thread(lambda: vault_balances)
+    else:
+        logger.info("No vault position found; falling back to ERC-20 balance read for %s.", portfolio_address)
+        balances_task = asyncio.to_thread(
+            lambda: Erc20BalanceReader(settings.effective_http_rpc_url).read_configured_balances(
+                portfolio_address=portfolio_address,
+                asset_registry=settings.active_portfolio_asset_registry,
+                chain_id=settings.effective_chain_id,
+            ),
+        )
+
     price_task = get_price_service().fetch_latest_prices()
 
-    persisted_snapshot = None
     balances = []
     price_bundle = None
     try:
@@ -198,11 +260,14 @@ async def current_portfolio(
     if not balances:
         try:
             balances = await asyncio.to_thread(
-                lambda: Erc20BalanceReader(settings.effective_http_rpc_url).read_configured_balances(
-                    portfolio_address=portfolio_address,
-                    asset_registry=settings.active_portfolio_asset_registry,
-                    chain_id=settings.effective_chain_id,
-                )
+                lambda: (
+                    _read_vault_portfolio(settings, portfolio_address)
+                    or Erc20BalanceReader(settings.effective_http_rpc_url).read_configured_balances(
+                        portfolio_address=portfolio_address,
+                        asset_registry=settings.active_portfolio_asset_registry,
+                        chain_id=settings.effective_chain_id,
+                    )
+                ),
             )
         except Exception as exc:
             snapshot = PortfolioSnapshotEngine().build_snapshot(
@@ -319,3 +384,121 @@ def portfolio_snapshot_history(limit: int = 20, wallet_address: str | None = Non
         status_reason="Recent portfolio snapshots loaded." if snapshots else "No persisted portfolio snapshots are available.",
         snapshots=snapshots,
     )
+
+
+@router.post("/sync", response_model=PortfolioSnapshotResponse)
+async def sync_portfolio_from_vault(wallet_address: str) -> PortfolioSnapshotResponse:
+    """Force-rebuild a user's portfolio snapshot from vault chain state.
+
+    This is the recovery endpoint: it reads vault shares + token balances
+    directly from the blockchain, builds a new snapshot, persists it,
+    and returns the reconstructed portfolio. If Postgres was deleted,
+    this endpoint brings the user's portfolio back.
+    """
+    settings = get_settings()
+    if not wallet_address:
+        return PortfolioSnapshotResponse(
+            snapshot_id=str(uuid4()),
+            generated_at=utc_now(),
+            portfolio_address=None,
+            chain_id=settings.effective_chain_id,
+            base_currency=settings.portfolio_base_currency,
+            total_value_usd=None,
+            positions=[],
+            data_sources_used=[],
+            status="degraded",
+            status_code="DATA_MISSING",
+            status_label="DATA_MISSING",
+            status_reason="wallet_address is required for portfolio sync from vault.",
+            metadata={"recovery_mode": True},
+        )
+
+    vault_address = settings.executor_vault_address
+    if not vault_address:
+        return PortfolioSnapshotResponse(
+            snapshot_id=str(uuid4()),
+            generated_at=utc_now(),
+            portfolio_address=wallet_address,
+            chain_id=settings.effective_chain_id,
+            base_currency=settings.portfolio_base_currency,
+            total_value_usd=None,
+            positions=[],
+            data_sources_used=[],
+            status="degraded",
+            status_code="DATA_MISSING",
+            status_label="DATA_MISSING",
+            status_reason="ExecutorVault address is not configured. Cannot sync from vault.",
+            metadata={"recovery_mode": True},
+        )
+
+    balances: list = []
+    try:
+        reader = VaultShareReader(settings.effective_http_rpc_url, vault_address)
+        balances = reader.read_user_position(
+            user_address=wallet_address,
+            asset_registry=settings.active_portfolio_asset_registry,
+            chain_id=settings.effective_chain_id,
+        )
+    except Exception as exc:
+        logger.warning("Vault share reader failed during sync for %s: %s", wallet_address, exc)
+
+    if not balances:
+        try:
+            logger.info("Vault shares returned zero; falling back to ERC-20 read during sync for %s.", wallet_address)
+            balances = Erc20BalanceReader(settings.effective_http_rpc_url).read_configured_balances(
+                portfolio_address=wallet_address,
+                asset_registry=settings.active_portfolio_asset_registry,
+                chain_id=settings.effective_chain_id,
+            )
+        except Exception as exc:
+            return PortfolioSnapshotResponse(
+                snapshot_id=str(uuid4()),
+                generated_at=utc_now(),
+                portfolio_address=wallet_address,
+                chain_id=settings.effective_chain_id,
+                base_currency=settings.portfolio_base_currency,
+                total_value_usd=None,
+                positions=[],
+                data_sources_used=[],
+                status="degraded",
+                status_code="DATA_MISSING",
+                status_label="DATA_MISSING",
+                status_reason=f"Portfolio sync failed: both vault and ERC-20 sources unavailable: {exc}",
+                metadata={"recovery_mode": True},
+            )
+
+    prices: list = []
+    try:
+        price_bundle = await get_price_service().fetch_latest_prices()
+        prices = price_bundle.normalized_snapshots if price_bundle else []
+    except Exception as exc:
+        logger.warning("Live price refresh failed during portfolio sync: %s", exc)
+        try:
+            persisted_prices = MarketDataRepository().latest_normalized_prices()
+            if persisted_prices:
+                prices = persisted_prices
+        except Exception:
+            pass
+
+    snapshot = PortfolioSnapshotEngine().build_snapshot(
+        balances=balances,
+        prices=prices,
+        portfolio_address=wallet_address,
+        chain_id=settings.effective_chain_id,
+        base_currency=settings.portfolio_base_currency,
+        target_weights=settings.parsed_portfolio_target_weights,
+        missing_reason="Portfolio sync completed with partial data.",
+    )
+
+    recovery_metadata = dict(snapshot.metadata)
+    recovery_metadata.update(
+        {
+            "recovery_mode": True,
+            "rebuilt_from": "vault_shares",
+            "vault_address": vault_address,
+        }
+    )
+    snapshot = snapshot.model_copy(update={"metadata": recovery_metadata})
+
+    _save_snapshot_best_effort(snapshot)
+    return snapshot
