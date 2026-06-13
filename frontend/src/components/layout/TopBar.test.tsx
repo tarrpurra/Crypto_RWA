@@ -22,13 +22,13 @@ function renderTopBar(pathname = "/risk") {
 }
 
 describe("TopBar", () => {
-  it("renders the AIYield navigation items", () => {
+  it("renders the YieldMind navigation items", () => {
     renderTopBar();
 
-    expect(screen.getByText("AIYield")).toBeInTheDocument();
+    expect(screen.getByText("YieldMind")).toBeInTheDocument();
     expect(screen.getByText("Dashboard")).toBeInTheDocument();
     expect(screen.getByText("Risk")).toBeInTheDocument();
-    expect(screen.getByText("Trade")).toBeInTheDocument();
+    expect(screen.getByText("Decision Log")).toBeInTheDocument();
     expect(screen.getAllByText("Settings").length).toBeGreaterThan(0);
     expect(screen.getByText("LOCAL")).toBeInTheDocument();
     expect(screen.getByTestId("topbar-nav")).toBeInTheDocument();
