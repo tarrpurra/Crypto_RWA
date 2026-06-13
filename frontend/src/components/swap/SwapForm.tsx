@@ -5,7 +5,6 @@ import { useAccount, useBalance, useChainId } from "wagmi";
 import { mantleSepoliaTestnet } from "wagmi/chains";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { marketApi } from "@/lib/api/market";
@@ -114,8 +113,7 @@ export function SwapForm() {
   };
 
   return (
-    <Card className="w-full max-w-md border-border bg-card">
-      <CardContent className="p-4">
+    <div className="w-full">
         <div className="flex items-center justify-between">
           <p className="terminal-label text-xs text-muted-foreground">Investment launcher</p>
           <span className="text-xs text-muted-foreground">Deposit first</span>
@@ -198,7 +196,6 @@ export function SwapForm() {
             Open trade flow
           </Button>
         </div>
-      </CardContent>
-    </Card>
+    </div>
   );
 }

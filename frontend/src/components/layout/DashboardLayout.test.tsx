@@ -10,10 +10,6 @@ vi.mock("@/components/layout/TopBar", () => ({
   TopBar: () => <div>Top bar</div>,
 }));
 
-vi.mock("@/components/swap/SwapPanel", () => ({
-  SwapPanel: () => <div>Swap panel</div>,
-}));
-
 describe("DashboardLayout", () => {
   function renderLayout(pathname: string, children: React.ReactNode) {
     const client = createTestQueryClient();
@@ -37,7 +33,7 @@ describe("DashboardLayout", () => {
 
     expect(root).toHaveClass("w-full", "min-h-screen", "overflow-visible");
     expect(shell).toHaveClass("w-full", "flex-1");
-    expect(main).toHaveClass("flex", "min-w-0", "flex-1", "overflow-visible");
+    expect(main).toHaveClass("min-w-0", "overflow-visible");
     expect(screen.getByText("Overview body")).toBeInTheDocument();
   });
 
