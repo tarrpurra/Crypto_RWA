@@ -305,6 +305,25 @@ body {
   .shell-backdrop {
     background: hsl(var(--background));
   }
+  .landing-page {
+    --background: 34 50% 5%;
+    --foreground: 46 58% 90%;
+    --lp-bg: 34 50% 5%;
+    --lp-surface: 34 54% 8%;
+    --lp-surface-2: 28 54% 10%;
+    --lp-fg: 46 58% 90%;
+    --lp-fg-secondary: 40 29% 49%;
+    --lp-fg-muted: 40 29% 49%;
+    --lp-border: 33 53% 15%;
+    --lp-border-muted: 33 53% 15%;
+    --lp-gold: 38 67% 50%;
+    --lp-glass-rgb: 21 15 7;
+    --lp-glass-alpha: 0.72;
+    --landing-ambient: radial-gradient(circle at 50% 34%, hsl(var(--primary) / 0.18), transparent 0%, transparent 38%), radial-gradient(circle at 70% 22%, hsl(var(--primary) / 0.09), transparent 0%, transparent 28%), linear-gradient(180deg, hsl(9 7% 5% / 0.14), hsl(38 40% 4% / 0.4));
+    --landing-overlay: radial-gradient(circle at top, hsl(var(--primary) / 0.08), transparent 40%), linear-gradient(to bottom, hsl(0 0% 2% / 0.04), hsl(0 0% 2% / 0.34));
+    --hero-vignette: radial-gradient(circle_at_50%_30%, transparent_0%, rgb(0 0 0 / 0.14)_56%, rgb(0 0 0 / 0.66)_100%);
+    color-scheme: dark;
+  }
   .landing-ambient {
     background: var(--landing-ambient);
   }

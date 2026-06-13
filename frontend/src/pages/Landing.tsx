@@ -80,7 +80,7 @@ const Landing = () => {
   const isSettled = phase === "entered";
 
   return (
-    <div className="relative min-h-[100dvh] overflow-x-hidden bg-background text-foreground">
+    <div className="landing-page relative min-h-[100dvh] overflow-x-hidden bg-lp-bg text-lp-fg">
       <motion.div
         initial={reduceMotion ? false : { opacity: 0.12, clipPath: `circle(6.5rem at ${activationOrigin})`, scale: 0.96 }}
         animate={{

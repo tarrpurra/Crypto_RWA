@@ -5,7 +5,7 @@ import { mantleSepoliaTestnet } from "wagmi/chains";
 import { AlertTriangle, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 
-import { MetricPanel, PageScaffold, toneFromStatus } from "@/components/rwa/PageScaffold";
+import { PageScaffold } from "@/components/rwa/PageScaffold";
 import { RiskDetailsModal } from "@/components/swap/RiskDetailsModal";
 import { TransactionStatus } from "@/components/swap/TransactionStatus";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMarketIngestionStatus, useLatestPrices, useMarketRoutes } from "@/hooks/useMarket";
 import { useCurrentPortfolio } from "@/hooks/usePortfolio";
 import { useInvestmentScope } from "@/hooks/useInvestmentScope";
@@ -62,11 +63,43 @@ function formatDateTime(value: string | null | undefined) {
   return parsed.toLocaleString();
 }
 
+function formatSessionTime(value: string | null | undefined) {
+  if (!value) {
+    return "Pending";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function formatUnixDateTime(value: number | null | undefined) {
+  if (!value) {
+    return "Not recorded";
+  }
+  const parsed = new Date(value * 1000);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
+  }
+  return parsed.toLocaleString();
+}
+
 function formatDecisionStatus(value: string | null | undefined) {
   if (!value) {
     return "Draft";
   }
   return value.replaceAll("_", " ").toLowerCase();
+}
+
+function formatCompactLabel(value: string | null | undefined) {
+  if (!value) {
+    return "Unknown";
+  }
+  return value
+    .replaceAll("_", " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
 function resolveTokenLabel(token: string, tokenLabelsByAddress: Map<string, string>) {
@@ -138,6 +171,8 @@ export default function DecisionLog() {
   const [allocationMode, setAllocationMode] = useState<(typeof allocationModes)[number]>("AI Suggested");
   const [manualAllocation, setManualAllocation] = useState("70/30");
   const [activeProposalId, setActiveProposalId] = useState<string | null>(null);
+  const [activeSessionTab, setActiveSessionTab] = useState("summary");
+  const [showOlderSessions, setShowOlderSessions] = useState(false);
   const [showRiskDialog, setShowRiskDialog] = useState(false);
   const [plan, setPlan] = useState<InvestmentPlanResponse | null>(null);
   const [autoExecutionPlanId, setAutoExecutionPlanId] = useState<string | null>(null);
@@ -246,6 +281,11 @@ export default function DecisionLog() {
     () => [...proposals].sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime()),
     [proposals],
   );
+  const visibleProposals = useMemo(
+    () => showOlderSessions ? sortedProposals : sortedProposals.slice(0, 5),
+    [showOlderSessions, sortedProposals],
+  );
+  const hiddenProposalCount = Math.max(sortedProposals.length - visibleProposals.length, 0);
   const selectedProposalLog = useMemo(
     () => sortedProposals.find((proposal) => proposal.proposal_id === activeProposalId) ?? null,
     [activeProposalId, sortedProposals],
@@ -647,6 +687,14 @@ export default function DecisionLog() {
     toast.info("Execution cancelled by operator.");
   };
 
+  const handleRefreshChecks = () => {
+    setActiveSessionTab("checks");
+    toast.info("Refreshing guard checks.");
+    void riskQuery.refetch();
+    void proposalDetailQuery.refetch();
+    void proposalsQuery.refetch();
+  };
+
   const working =
     wrapMnt.isPending ||
     createPlan.isPending ||
@@ -657,438 +705,591 @@ export default function DecisionLog() {
     executionConfirmPending ||
     executionInProgress;
 
+  const selectedSessionPlan = resolvedPlan ?? plan;
+  const selectedLinkedProposals = selectedSessionPlan?.linked_proposals ?? [];
+  const activeLinkedProposal =
+    selectedLinkedProposals.find((proposal) => proposal.proposal_id === activeProposalId) ??
+    selectedLinkedProposals[0] ??
+    null;
+  const selectedGuardChecks = selectedSessionPlan?.guard_checks ?? [];
+  const selectedAllocations = selectedSessionPlan?.selected_target_allocations ?? [];
+  const selectedAiAllocations = selectedSessionPlan?.ai_target_allocations ?? [];
+  const selectedSteps = selectedSessionPlan?.transaction_steps ?? [];
+  const selectedWarnings = selectedSessionPlan?.warning_messages ?? [];
+  const selectedApprovalBlockers = selectedSessionPlan?.approval_blockers ?? [];
+  const latestProposalActivity = proposalActivity[0];
+  const selectedStatusText = selectedProposalLog?.status_code
+    ? formatDecisionStatus(selectedProposalLog.status_code)
+    : selectedSessionPlan?.status_label ?? "Draft";
+  const selectedGuardBlocked = selectedProposalLog?.status_code === "PROPOSAL_REJECTED" || !selectedSessionPlan?.approval_enabled;
+  const selectedGuardState = selectedSessionPlan
+    ? selectedGuardBlocked
+      ? "Guardrail hold"
+      : "Approval ready"
+    : "No active draft";
+  const selectedRouteLabel = selectedProposalLog
+    ? `${resolveTokenLabel(selectedProposalLog.token_in, tokenLabelsByAddress)} to ${resolveTokenLabel(selectedProposalLog.token_out, tokenLabelsByAddress)}`
+    : activeLinkedProposal
+      ? `${activeLinkedProposal.token_in_symbol} to ${activeLinkedProposal.token_out_symbol}`
+      : `${executionInputSymbol} to target allocation`;
+  const selectedAmountLabel = selectedSessionPlan
+    ? `${selectedSessionPlan.deposit_amount} ${selectedSessionPlan.deposit_asset_symbol}`
+    : activeLinkedProposal
+      ? `${activeLinkedProposal.amount.toFixed(4)} ${activeLinkedProposal.token_in_symbol}`
+      : amount
+        ? `${amount} ${assetSymbol}`
+        : "No amount selected";
+  const selectedMainReason = selectedProposalLog?.status_code === "PROPOSAL_REJECTED"
+    ? "Proposal rejected by operator."
+    : selectedSessionPlan?.status_reason ??
+      selectedSessionPlan?.risk_assessment?.reasoning_summary ??
+      risk?.reasoning_summary ??
+      "Create a decision draft to review the AI recommendation.";
+  const selectedCurrentBlocker = selectedProposalLog?.status_code === "PROPOSAL_REJECTED"
+    ? "Execution cannot continue until a new approved proposal is created."
+    : hasBlockers[0] ??
+      selectedApprovalBlockers[0] ??
+      (selectedSessionPlan?.approval_enabled
+        ? "No current blocker. The selected proposal can move through approval or execution."
+        : "Create a decision draft before execution can continue.");
+  const selectedRecommendedAction =
+    selectedSessionPlan?.risk_assessment?.recommended_action ??
+    risk?.recommended_action ??
+    "Create decision draft";
+  const selectedRiskLabel = formatCompactLabel(
+    selectedSessionPlan?.risk_assessment?.recommended_action ??
+    selectedSessionPlan?.risk_assessment?.risk_band ??
+    risk?.recommended_action ??
+    risk?.risk_band,
+  );
+  const selectedExecutionLabel = hasBlockers.length > 0 || selectedProposalLog?.status_code === "PROPOSAL_REJECTED"
+    ? "Execution blocked"
+    : selectedPlanProposal?.status_code === "PROPOSAL_EXECUTED"
+      ? "Executed"
+      : selectedPlanProposal?.status_code === "PROPOSAL_APPROVED"
+        ? "Ready to execute"
+        : "Review pending";
+  const selectedSessionId = selectedProposalLog?.proposal_id
+    ? shortHash(selectedProposalLog.proposal_id)
+    : selectedSessionPlan?.plan_id
+      ? shortHash(selectedSessionPlan.plan_id)
+      : "No session";
+  const runtimeModeLabel = formatCompactLabel(
+    selectedSessionPlan?.risk_assessment?.runtime_mode ??
+    risk?.runtime_mode ??
+    "Local mode",
+  );
+  const selectedEvidenceItems = [
+    { label: "Proposal hash", value: selectedProposalLog?.plan_hash ?? selectedSessionPlan?.plan_id ?? "Not recorded" },
+    { label: "Calldata hash", value: "Not submitted" },
+    { label: "Router", value: selectedProposalLog?.router ?? "Not recorded" },
+    { label: "Selector", value: selectedProposalLog?.selector ?? "Not recorded" },
+    { label: "Token in", value: selectedProposalLog ? resolveTokenLabel(selectedProposalLog.token_in, tokenLabelsByAddress) : activeLinkedProposal?.token_in_symbol ?? "Not recorded" },
+    { label: "Token out", value: selectedProposalLog ? resolveTokenLabel(selectedProposalLog.token_out, tokenLabelsByAddress) : activeLinkedProposal?.token_out_symbol ?? "Not recorded" },
+    { label: "Recipient", value: selectedProposalLog?.recipient ?? "Not recorded" },
+    { label: "Max input", value: selectedProposalLog?.max_amount_in ?? "Not recorded" },
+    { label: "Min amount out", value: selectedProposalLog?.min_amount_out ?? "Not recorded" },
+    { label: "Native value", value: selectedProposalLog?.native_value ?? "Not recorded" },
+    { label: "Deadline", value: formatUnixDateTime(selectedProposalLog?.deadline) },
+    { label: "Expiry", value: formatUnixDateTime(selectedProposalLog?.proposal_expiry) },
+    { label: "Nonce", value: selectedProposalLog?.nonce ?? "Not recorded" },
+    { label: "Risk snapshot", value: selectedProposalLog?.risk_snapshot_id ?? selectedSessionPlan?.risk_assessment?.generated_at ?? "Not recorded" },
+    { label: "Tx hash", value: latestProposalActivity?.hash ?? "Not submitted" },
+  ];
+
   return (
     <PageScaffold
       eyebrow="Decision Control"
       title="Decision Log"
       description="Review the latest portfolio decisions, inspect guardrails, approve or reject qualified proposals, and track execution from one audit surface."
     >
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricPanel
-          label="Decision queue"
-          value={`${sortedProposals.length}`}
-          detail={sortedProposals.length > 0 ? "Tracked proposals are available for review." : "No recorded proposals are available yet."}
-          tone={sortedProposals.length > 0 ? "ready" : "neutral"}
-        />
-        <MetricPanel
-          label="Selected status"
-          value={selectedProposalLog?.status_code ?? resolvedPlan?.status_code ?? plan?.status_code ?? "Draft"}
-          detail={selectedProposalLog ? "Current ledger selection." : resolvedPlan?.status_reason ?? plan?.status_reason ?? "No proposal selected yet."}
-          tone={
-            selectedProposalLog?.status_code === "PROPOSAL_REJECTED"
-              ? "blocked"
-              : selectedProposalLog?.status_code === "PROPOSAL_APPROVED" || selectedProposalLog?.status_code === "PROPOSAL_EXECUTED"
-                ? "ready"
-                : selectedProposalLog?.status_code
-                  ? "degraded"
-                  : "neutral"
-          }
-        />
-        <MetricPanel
-          label="Risk guard"
-          value={resolvedPlan?.risk_assessment?.risk_band ?? risk?.risk_band ?? "Loading"}
-          detail={resolvedPlan?.risk_assessment?.reasoning_summary ?? risk?.reasoning_summary ?? "Reading the risk engine before proposing execution."}
-          tone={(resolvedPlan?.risk_assessment?.hard_veto_status ?? risk?.hard_veto_status) === "active" ? "blocked" : toneFromStatus(resolvedPlan?.risk_assessment?.status ?? risk?.status)}
-        />
-        <MetricPanel
-          label="Recorded activity"
-          value={`${allActivity.length}`}
-          detail={allActivity.length > 0 ? "Approval and execution events captured for the current wallet context." : "No approval or execution events have been recorded yet."}
-          tone={allActivity.length > 0 ? "ready" : "neutral"}
-        />
-      </div>
+      <header className="space-y-3">
+        <div>
+          <h1 className="font-display text-2xl text-foreground">Decision Log</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Recent AI decision sessions only. Older logs are hidden by default.
+          </p>
+        </div>
+        <div className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-2 border border-primary/20 bg-background/80 px-4 py-2 text-sm">
+          <span className="font-medium text-foreground">{sortedProposals.length} Proposals</span>
+          <span className="text-muted-foreground">Selected: <span className="text-foreground">{formatCompactLabel(selectedProposalLog?.status_code ?? selectedSessionPlan?.status_label)}</span></span>
+          <span className="text-muted-foreground">Risk: <span className="text-foreground">{selectedRiskLabel}</span></span>
+          <span className="text-muted-foreground">Execution: <span className="text-foreground">{selectedExecutionLabel}</span></span>
+          <span className="text-muted-foreground">Activity: <span className="text-foreground">{allActivity.length}</span></span>
+          <span className="text-muted-foreground">Mode: <span className="text-foreground">{runtimeModeLabel}</span></span>
+        </div>
+      </header>
 
-      <section className="grid gap-3 xl:grid-cols-[1.2fr_0.8fr]">
-        <div className="terminal-panel p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="terminal-label text-primary">Decision ledger</p>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Every proposal, approval state, and execution event for the current wallet context.
-              </p>
+      <section className="grid min-h-[620px] gap-3 xl:h-[calc(100vh-12rem)] xl:grid-cols-[340px_minmax(0,1fr)] xl:overflow-hidden">
+        <aside className="terminal-panel flex min-h-0 flex-col">
+          <div className="border-b border-border/70 px-4 py-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="terminal-label text-primary">Recent sessions</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {showOlderSessions ? "Showing all recorded AI runs." : "Showing latest 5 only."}
+                </p>
+              </div>
+              <Badge variant="outline" className="border-border/70 text-muted-foreground">
+                {aiDecisionMakerEnabled ? "AI" : "Operator"}
+              </Badge>
             </div>
-            <Badge variant="outline" className="border-border text-muted-foreground">
-              {aiDecisionMakerEnabled ? "AI-managed approvals" : "Operator approvals"}
-            </Badge>
           </div>
-          <div className="mt-4 space-y-3">
-            {sortedProposals.map((proposal) => {
+
+          <div className="min-h-0 flex-1 overflow-y-auto scrollbar-thin">
+            {visibleProposals.map((proposal) => {
               const proposalActivityEntries = getEntriesForProposal(proposal.proposal_id);
               const latestActivity = proposalActivityEntries[0];
               const approvalBlocked = (proposal.approval_blockers?.length ?? 0) > 0 || proposal.approval_enabled === false;
+              const sessionAmount = Number.parseFloat(proposal.max_amount_in || "0");
               return (
                 <button
                   key={proposal.proposal_id}
                   type="button"
                   onClick={() => setActiveProposalId(proposal.proposal_id)}
                   className={cn(
-                    "w-full rounded border px-4 py-4 text-left transition-colors hover:border-primary/50",
-                    activeProposalId === proposal.proposal_id ? "border-primary/60 bg-primary/5" : "border-border bg-surface-2",
+                    "w-full border-b border-border/60 px-4 py-3 text-left transition-colors",
+                    activeProposalId === proposal.proposal_id ? "bg-primary/6" : "bg-transparent hover:bg-surface-2/70",
                   )}
                 >
-                  <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                    <div className="grid gap-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-base font-semibold text-foreground">
-                          {resolveTokenLabel(proposal.token_in, tokenLabelsByAddress)} <ArrowRight className="mx-1 inline h-3.5 w-3.5" /> {resolveTokenLabel(proposal.token_out, tokenLabelsByAddress)}
-                        </p>
-                        <span className={cn("inline-flex items-center border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]", proposalStatusTone[proposal.status_code] ?? "border-border text-muted-foreground")}>
-                          {formatDecisionStatus(proposal.status_code)}
-                        </span>
-                        {approvalBlocked && (
-                          <span className="inline-flex items-center border border-warning/35 bg-warning/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-warning">
-                            guardrail hold
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        Proposal {proposal.proposal_id}
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        {approvalBlocked
-                          ? proposal.approval_blockers?.[0] ?? "Guard checks are still preventing approval."
-                          : latestActivity?.message ?? "Ready for operator review."}
-                      </p>
-                    </div>
-
-                    <div className="grid gap-3 text-sm xl:min-w-[280px] xl:grid-cols-2">
-                      <div>
-                        <p className="terminal-label">Created</p>
-                        <p className="mt-1 text-foreground">{formatDateTime(proposal.created_at)}</p>
-                      </div>
-                      <div>
-                        <p className="terminal-label">Updated</p>
-                        <p className="mt-1 text-foreground">{formatDateTime(proposal.updated_at)}</p>
-                      </div>
-                      <div>
-                        <p className="terminal-label">Max in</p>
-                        <p className="mt-1 font-mono text-foreground">{proposal.max_amount_in}</p>
-                      </div>
-                      <div>
-                        <p className="terminal-label">Tx hash</p>
-                        <p className="mt-1 font-mono text-foreground">{shortHash(latestActivity?.hash)}</p>
-                      </div>
-                    </div>
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-sm font-semibold text-foreground">
+                      {resolveTokenLabel(proposal.token_in, tokenLabelsByAddress)}
+                      <ArrowRight className="mx-1 inline h-3.5 w-3.5 text-muted-foreground" />
+                      {resolveTokenLabel(proposal.token_out, tokenLabelsByAddress)}
+                    </p>
+                    <span className={cn(
+                      "shrink-0 text-[11px] font-semibold",
+                      proposal.status_code === "PROPOSAL_REJECTED"
+                        ? "text-destructive"
+                        : proposal.status_code === "PROPOSAL_APPROVED" || proposal.status_code === "PROPOSAL_EXECUTED"
+                          ? "text-success"
+                          : "text-muted-foreground",
+                    )}>
+                      {formatCompactLabel(proposal.status_code)}
+                    </span>
                   </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {formatSessionTime(proposal.updated_at)} - {Number.isFinite(sessionAmount) && sessionAmount > 0 ? `${sessionAmount.toFixed(4)} ${resolveTokenLabel(proposal.token_in, tokenLabelsByAddress)}` : "Amount pending"}
+                  </p>
+                  <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">
+                    {approvalBlocked
+                      ? proposal.approval_blockers?.[0] ?? "Guard checks are still preventing approval."
+                      : latestActivity?.message ?? "Ready for operator review."}
+                  </p>
                 </button>
               );
             })}
 
             {!sortedProposals.length && (
-              <div className="rounded border border-border bg-surface-2 p-4 text-sm text-muted-foreground">
-                No proposals have been recorded yet. Create a new decision draft to start the review and approval flow.
+              <div className="px-4 py-4 text-sm text-muted-foreground">
+                No proposals have been recorded yet. Create a new decision draft to start the review flow.
               </div>
             )}
           </div>
-        </div>
 
-        <div className="terminal-panel p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="terminal-label text-primary">New decision draft</p>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Start a new portfolio decision without leaving the ledger.
-              </p>
+          {hiddenProposalCount > 0 && (
+            <div className="border-t border-border/70 p-3">
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => setShowOlderSessions(true)}
+              >
+                View older sessions
+              </Button>
             </div>
-            <Badge variant="outline" className="border-border text-muted-foreground">
-              {resolvedPlan?.status_label ?? plan?.status_label ?? "draft"}
-            </Badge>
-          </div>
+          )}
+        </aside>
 
-          <div className="mt-4 grid gap-4">
-            <div className="grid gap-2 md:grid-cols-2">
-              <label className="grid gap-2">
-                <span className="text-xs text-muted-foreground">Deposit asset</span>
-                <Select value={assetSymbol} onValueChange={(value) => setAssetSymbol(value as typeof assetSymbol)}>
-                  <SelectTrigger className="bg-surface-2">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {assetOptions.map((option) => (
-                      <SelectItem key={option} value={option}>
-                        {option}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </label>
-              <label className="grid gap-2">
-                <span className="text-xs text-muted-foreground">Deposit amount</span>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={amount}
-                  onChange={(event) => setAmount(event.target.value)}
-                  className="bg-surface-2"
-                />
-              </label>
-            </div>
-
-            <div className="grid gap-2 md:grid-cols-2">
-              <label className="grid gap-2">
-                <span className="text-xs text-muted-foreground">Risk profile</span>
-                <Select value={riskProfile} onValueChange={(value) => setRiskProfile(value as typeof riskProfile)}>
-                  <SelectTrigger className="bg-surface-2">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {riskProfiles.map((profile) => (
-                      <SelectItem key={profile} value={profile}>
-                        {profile}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </label>
-              <label className="grid gap-2">
-                <span className="text-xs text-muted-foreground">Allocation mode</span>
-                <Select value={allocationMode} onValueChange={(value) => setAllocationMode(value as typeof allocationMode)}>
-                  <SelectTrigger className="bg-surface-2">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {allocationModes.map((mode) => (
-                      <SelectItem key={mode} value={mode}>
-                        {mode}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </label>
-            </div>
-
-            {allocationMode === "Manual" && (
-              <label className="grid gap-2">
-                <span className="text-xs text-muted-foreground">Manual split, USDY/mETH</span>
-                <Input value={manualAllocation} onChange={(event) => setManualAllocation(event.target.value)} placeholder="70/30" className="bg-surface-2 font-mono" />
-              </label>
-            )}
-
-            <div className="grid gap-3 rounded border border-border bg-surface-2 p-3 md:grid-cols-3">
+        <section className="terminal-panel flex min-h-0 flex-col overflow-hidden">
+          <header className="border-b border-border/70 px-5 py-5">
+            <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-xs text-muted-foreground">Wallet balance</p>
-                <p className="mt-1 font-mono text-sm text-foreground">{availableBalance !== null ? availableBalance.toFixed(4) : "unknown"}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Routes</p>
-                <p className="mt-1 font-mono text-sm text-foreground">{routes?.routes.length ?? 0}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Price feeds</p>
-                <p className="mt-1 font-mono text-sm text-foreground">{prices?.prices.length ?? 0}</p>
-              </div>
-            </div>
-
-            {!aiDecisionMakerEnabled ? (
-              <div className="flex flex-wrap gap-2">
-                <Button onClick={handleCreatePlan} disabled={working || localWarnings.length > 0}>
-                  {createPlan.isPending ? "Creating decision..." : "Create decision draft"}
-                </Button>
-                <Button variant="outline" onClick={() => setShowRiskDialog(true)} disabled={!resolvedPlan?.risk_assessment && !risk}>
-                  View risk details
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <div className="rounded border border-success/40 bg-success/10 p-3 text-sm text-success">
-                  Full access AI will prepare the draft, approve linked proposals, then request confirmation before execution.
+                <p className="terminal-label text-primary">Selected session</p>
+                <p className="mt-3 text-2xl font-semibold uppercase tracking-[0.06em] text-foreground">
+                  {selectedStatusText}
+                </p>
+                <p className="mt-2 text-sm font-medium text-foreground">
+                  {selectedRouteLabel} - {selectedAmountLabel}
+                </p>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+                  {selectedMainReason}
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary">
+                    Risk: {selectedRiskLabel}
+                  </span>
+                  <span className="rounded-full bg-warning/10 px-2.5 py-1 text-[11px] font-medium text-warning">
+                    {selectedExecutionLabel}
+                  </span>
                 </div>
-                <Button variant="outline" onClick={() => setShowRiskDialog(true)} disabled={!resolvedPlan?.risk_assessment && !risk}>
-                  View risk details
-                </Button>
               </div>
-            )}
-
-            {localWarnings.length > 0 && (
-              <div className="space-y-2 rounded border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
-                {localWarnings.map((warning) => (
-                  <div key={warning} className="flex items-start gap-2">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <p>{warning}</p>
-                  </div>
-                ))}
+              <div className="space-y-1 text-right">
+                <p className="text-xs text-muted-foreground">Session</p>
+                <p className="font-mono text-sm text-foreground">{selectedSessionId}</p>
+                <p className="text-xs text-muted-foreground">{selectedGuardState}</p>
               </div>
-            )}
-          </div>
-        </div>
-      </section>
-
-      <section className="grid gap-3 xl:grid-cols-[1.1fr_0.9fr]">
-        <div className="terminal-panel p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="terminal-label text-primary">Selected decision</p>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Review the active decision summary, intended allocation, and transaction sequence.
-              </p>
             </div>
-            <Badge variant="outline" className="border-border text-muted-foreground">
-              {selectedProposalLog?.proposal_id ? selectedProposalLog.proposal_id.slice(0, 12) : "No selection"}
-            </Badge>
-          </div>
-          <div className="mt-4 space-y-3">
-            {(resolvedPlan ?? plan) ? (
-              <>
-                <div className="rounded border border-border bg-surface-2 p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="text-base font-semibold text-foreground">
-                        {(resolvedPlan?.deposit_amount ?? plan?.deposit_amount) ?? "-"} {(resolvedPlan?.deposit_asset_symbol ?? plan?.deposit_asset_symbol) ?? ""}
-                      </p>
-                      <p className="mt-2 text-sm text-muted-foreground">
-                        {resolvedPlan?.status_reason ?? plan?.status_reason ?? "Decision draft ready for review."}
-                      </p>
+          </header>
+
+          <Tabs value={activeSessionTab} onValueChange={setActiveSessionTab} className="flex min-h-0 flex-1 flex-col">
+            <div className="overflow-x-auto border-b border-border/70 px-5 py-2">
+              <TabsList className="h-auto justify-start gap-1 rounded-none bg-transparent p-0">
+                <TabsTrigger value="summary" className="rounded-full px-2.5 py-1 text-[12px] data-[state=active]:bg-primary/12 data-[state=active]:shadow-none">Summary</TabsTrigger>
+                <TabsTrigger value="checks" className="rounded-full px-2.5 py-1 text-[12px] data-[state=active]:bg-primary/12 data-[state=active]:shadow-none">Checks</TabsTrigger>
+                <TabsTrigger value="reasoning" className="rounded-full px-2.5 py-1 text-[12px] data-[state=active]:bg-primary/12 data-[state=active]:shadow-none">Reasoning</TabsTrigger>
+                <TabsTrigger value="allocation" className="rounded-full px-2.5 py-1 text-[12px] data-[state=active]:bg-primary/12 data-[state=active]:shadow-none">Allocation</TabsTrigger>
+                <TabsTrigger value="transaction" className="rounded-full px-2.5 py-1 text-[12px] data-[state=active]:bg-primary/12 data-[state=active]:shadow-none">Transaction</TabsTrigger>
+                <TabsTrigger value="evidence" className="rounded-full px-2.5 py-1 text-[12px] data-[state=active]:bg-primary/12 data-[state=active]:shadow-none">Evidence</TabsTrigger>
+              </TabsList>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 scrollbar-thin">
+              <TabsContent value="summary" className="m-0 space-y-4">
+                <div className="max-w-3xl space-y-3">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Decision summary</p>
+                    <div className="mt-2 space-y-1 text-sm leading-6 text-muted-foreground">
+                      <p>The AI proposed swapping {selectedAmountLabel} into {selectedRouteLabel.split(" to ").at(-1) ?? "the target asset"}.</p>
+                      <p>{selectedMainReason}</p>
+                      <p>{selectedCurrentBlocker}</p>
                     </div>
-                    <span className={cn("inline-flex items-center border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]", (resolvedPlan?.approval_enabled ?? plan?.approval_enabled) ? "border-success/35 bg-success/10 text-success" : "border-warning/35 bg-warning/10 text-warning")}>
-                      {(resolvedPlan?.approval_enabled ?? plan?.approval_enabled) ? "approval ready" : "guardrail hold"}
+                  </div>
+                  <div className="flex flex-wrap gap-x-5 gap-y-2 border-t border-border/70 pt-3 text-xs text-muted-foreground">
+                    <span>Status: <span className="text-foreground">{formatCompactLabel(selectedStatusText)}</span></span>
+                    <span>Risk: <span className="text-foreground">{selectedRiskLabel}</span></span>
+                    <span>Route: <span className="text-foreground">{selectedRouteLabel}</span></span>
+                    <span>Amount: <span className="text-foreground">{selectedAmountLabel}</span></span>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 border-t border-border/70 pt-4">
+                  <Button onClick={handleCreatePlan} disabled={working || localWarnings.length > 0}>
+                    {createPlan.isPending ? "Creating..." : "Create draft"}
+                  </Button>
+                  <Button variant="outline" onClick={handleRefreshChecks}>
+                    Re-run checks
+                  </Button>
+                  <Button variant="outline" onClick={() => setActiveSessionTab("evidence")}>
+                    View evidence
+                  </Button>
+                  <Button variant="outline" onClick={() => setShowRiskDialog(true)} disabled={!selectedSessionPlan?.risk_assessment && !risk}>
+                    View risk details
+                  </Button>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {!aiDecisionMakerEnabled ? (
+                    <>
+                      <Button onClick={handleApprove} disabled={!activeProposalId || working || autoExecutionActive || !selectedSessionPlan?.approval_enabled}>
+                        {approveProposal.isPending ? "Approving..." : "Approve plan"}
+                      </Button>
+                      <Button variant="outline" onClick={handleReject} disabled={!activeProposalId || working || autoExecutionActive}>
+                        Reject plan
+                      </Button>
+                      <Button onClick={handleExecute} disabled={!activeProposalId || working || autoExecutionActive || selectedPlanProposal?.status_code !== "PROPOSAL_APPROVED" || hasBlockers.length > 0}>
+                        {executeProposal.isPending ? "Executing..." : "Execute proposal"}
+                      </Button>
+                    </>
+                  ) : (
+                    <div className="px-3 py-2 text-sm text-success">
+                      Full access AI will approve linked proposals, then request confirmation before execution.
+                    </div>
+                  )}
+                </div>
+
+                {aiDecisionMakerEnabled && !autoExecutionActive && !executionConfirmPending && selectedSessionPlan?.approval_enabled && (
+                  <div className="text-sm text-success">
+                    Full access AI is enabled. Linked proposals will auto-approve, then request confirmation before execution.
+                  </div>
+                )}
+                {autoExecutionActive && !executionConfirmPending && (
+                  <div className="text-sm text-primary">
+                    Full access AI is approving the linked proposals.
+                  </div>
+                )}
+                {executionConfirmPending && (
+                  <div className="text-sm text-warning">
+                    All proposals approved. Confirm execution to submit the swap transaction.
+                  </div>
+                )}
+
+                {localWarnings.length > 0 && (
+                  <div className="space-y-2 border-t border-border/70 pt-4 text-sm text-warning">
+                    {localWarnings.map((warning) => (
+                      <div key={warning} className="flex items-start gap-2">
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                        <p>{warning}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <details className="border-t border-border/70 pt-4" open={!selectedSessionPlan}>
+                  <summary className="cursor-pointer text-sm font-medium text-foreground">Draft inputs</summary>
+                  <div className="mt-4 grid gap-4">
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <label className="grid gap-2">
+                        <span className="text-xs text-muted-foreground">Deposit asset</span>
+                        <Select value={assetSymbol} onValueChange={(value) => setAssetSymbol(value as typeof assetSymbol)}>
+                          <SelectTrigger className="bg-background">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {assetOptions.map((option) => (
+                              <SelectItem key={option} value={option}>
+                                {option}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </label>
+                      <label className="grid gap-2">
+                        <span className="text-xs text-muted-foreground">Deposit amount</span>
+                        <Input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={amount}
+                          onChange={(event) => setAmount(event.target.value)}
+                          className="bg-background"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <label className="grid gap-2">
+                        <span className="text-xs text-muted-foreground">Risk profile</span>
+                        <Select value={riskProfile} onValueChange={(value) => setRiskProfile(value as typeof riskProfile)}>
+                          <SelectTrigger className="bg-background">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {riskProfiles.map((profile) => (
+                              <SelectItem key={profile} value={profile}>
+                                {profile}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </label>
+                      <label className="grid gap-2">
+                        <span className="text-xs text-muted-foreground">Allocation mode</span>
+                        <Select value={allocationMode} onValueChange={(value) => setAllocationMode(value as typeof allocationMode)}>
+                          <SelectTrigger className="bg-background">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {allocationModes.map((mode) => (
+                              <SelectItem key={mode} value={mode}>
+                                {mode}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </label>
+                    </div>
+
+                    {allocationMode === "Manual" && (
+                      <label className="grid gap-2">
+                        <span className="text-xs text-muted-foreground">Manual split, USDY/mETH</span>
+                        <Input value={manualAllocation} onChange={(event) => setManualAllocation(event.target.value)} placeholder="70/30" className="bg-background font-mono" />
+                      </label>
+                    )}
+
+                    <div className="flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground">
+                      <span>Wallet balance: <span className="font-mono text-foreground">{availableBalance !== null ? availableBalance.toFixed(4) : "unknown"}</span></span>
+                      <span>Routes: <span className="font-mono text-foreground">{routes?.routes.length ?? 0}</span></span>
+                      <span>Price feeds: <span className="font-mono text-foreground">{prices?.prices.length ?? 0}</span></span>
+                    </div>
+                  </div>
+                </details>
+              </TabsContent>
+
+              <TabsContent value="checks" className="m-0 space-y-2">
+                {selectedGuardChecks.map((check) => (
+                  <div key={check.code} className="grid gap-2 py-2 text-sm md:grid-cols-[1fr_auto] md:items-start">
+                    <div>
+                      <p className="font-medium text-foreground">{check.label}</p>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">{check.message}</p>
+                    </div>
+                    <span className={cn(
+                      "w-fit rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]",
+                      check.passed ? "bg-success/10 text-success" : check.blocking ? "bg-destructive/10 text-destructive" : "bg-warning/10 text-warning",
+                    )}>
+                      {check.passed ? "pass" : check.blocking ? "block" : "warn"}
                     </span>
                   </div>
+                ))}
+                {!selectedGuardChecks.length && (
+                  <div className="text-sm text-muted-foreground">
+                    Guard checks will appear after a decision draft is created.
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="reasoning" className="m-0 space-y-4">
+                <div className="max-w-3xl">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-sm font-medium text-foreground">AI reasoning</p>
+                    <Badge variant="outline" className="border-border/70 text-muted-foreground">
+                      {selectedRecommendedAction}
+                    </Badge>
+                  </div>
+                  <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                    {selectedSessionPlan?.risk_assessment?.reasoning_summary ?? risk?.reasoning_summary ?? "No AI reasoning is available for the selected session yet."}
+                  </p>
                 </div>
 
-                <div className="grid gap-2 rounded border border-border bg-surface-2 p-4">
-                  <p className="font-medium text-foreground">Selected allocation</p>
-                  {(resolvedPlan?.selected_target_allocations ?? plan?.selected_target_allocations ?? []).map((allocationItem) => (
-                    <div key={`${allocationItem.asset_symbol}-${allocationItem.source}`} className="flex items-center justify-between gap-3 border-b border-border/60 pb-2 text-sm last:border-b-0 last:pb-0">
+                <div className="flex flex-wrap gap-x-5 gap-y-2 border-t border-border/70 pt-3 text-xs text-muted-foreground">
+                  <span>Risk score: <span className="font-mono text-foreground">{selectedSessionPlan?.risk_assessment?.risk_score ?? risk?.risk_score ?? "Pending"}</span></span>
+                  <span>Confidence: <span className="font-mono text-foreground">{selectedSessionPlan?.risk_assessment?.confidence ?? risk?.confidence ?? "Pending"}</span></span>
+                  <span>Human approval: <span className="text-foreground">{selectedSessionPlan?.risk_assessment?.required_human_approval_status ?? risk?.required_human_approval_status ?? "Pending"}</span></span>
+                </div>
+
+                {(selectedApprovalBlockers.length > 0 || selectedWarnings.length > 0) && (
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    {selectedApprovalBlockers.length > 0 && (
+                      <div>
+                        <p className="text-sm font-medium text-warning">Approval blockers</p>
+                        <ul className="mt-2 space-y-2 text-sm text-warning">
+                          {selectedApprovalBlockers.map((blocker) => (
+                            <li key={blocker}>{blocker}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {selectedWarnings.length > 0 && (
+                      <div>
+                        <p className="text-sm font-medium text-foreground">Warnings</p>
+                        <ul className="mt-2 space-y-2 text-sm text-muted-foreground">
+                          {selectedWarnings.map((warning) => (
+                            <li key={warning}>{warning}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="allocation" className="m-0 space-y-4">
+                <div className="max-w-3xl space-y-2">
+                  {selectedAllocations.map((allocationItem) => (
+                    <div key={`${allocationItem.asset_symbol}-${allocationItem.source}`} className="flex items-center justify-between gap-3 py-2 text-sm">
                       <div>
                         <p className="font-medium text-foreground">{allocationItem.asset_symbol}</p>
-                        <p className="text-xs text-muted-foreground">{executionInputSymbol} <ArrowRight className="mx-0.5 inline h-3 w-3" /> {allocationItem.asset_symbol}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {executionInputSymbol}
+                          <ArrowRight className="mx-1 inline h-3 w-3" />
+                          {allocationItem.asset_symbol}
+                        </p>
                       </div>
                       <p className="font-mono text-foreground">{(allocationItem.percentage * 100).toFixed(2)}% / {allocationItem.amount.toFixed(4)}</p>
                     </div>
                   ))}
-                </div>
-
-                <div className="grid gap-2 rounded border border-border bg-surface-2 p-4">
-                  <p className="font-medium text-foreground">Transaction sequence</p>
-                  {(resolvedPlan?.transaction_steps ?? plan?.transaction_steps ?? []).map((step) => (
-                    <div key={`${step.step_index}-${step.step_type}`} className="rounded border border-border/60 p-3 text-sm">
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="font-medium text-foreground">Step {step.step_index}: {step.step_type}</p>
-                        <span className="text-xs text-muted-foreground">
-                          {aiDecisionMakerEnabled ? "AI managed" : step.requires_user_action ? "user action" : "informational"}
-                        </span>
-                      </div>
-                      <p className="mt-2 text-muted-foreground">{step.description}</p>
-                    </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <div className="rounded border border-border bg-surface-2 p-4 text-sm text-muted-foreground">
-                Select a proposal from the ledger or create a new decision draft to inspect transaction steps and target allocations.
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="terminal-panel p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="terminal-label text-primary">Decision controls</p>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Guard checks, linked proposals, and the action history for the current decision.
-              </p>
-            </div>
-            <Badge variant="outline" className="border-border text-muted-foreground">
-              {selectedProposalLog?.status_code ?? "No selection"}
-            </Badge>
-          </div>
-          <div className="mt-4 space-y-3">
-            <div className="grid gap-2 rounded border border-border bg-surface-2 p-4">
-              <p className="font-medium text-foreground">Guard checks</p>
-              {(resolvedPlan?.guard_checks ?? plan?.guard_checks ?? []).map((check) => (
-                <div key={check.code} className="flex items-start justify-between gap-3 border-b border-border/60 pb-2 last:border-b-0 last:pb-0">
-                  <div>
-                    <p className="text-sm text-foreground">{check.label}</p>
-                    <p className="text-xs text-muted-foreground">{check.message}</p>
-                  </div>
-                  <span className={check.passed ? "text-success" : check.blocking ? "text-destructive" : "text-warning"}>
-                    {check.passed ? "pass" : check.blocking ? "block" : "warn"}
-                  </span>
-                </div>
-              ))}
-              {!(resolvedPlan?.guard_checks ?? plan?.guard_checks)?.length && (
-                <p className="text-sm text-muted-foreground">Guard checks will appear after a decision draft is created.</p>
-              )}
-            </div>
-
-            <div className="grid gap-2 rounded border border-border bg-surface-2 p-4">
-              <p className="font-medium text-foreground">Linked proposals</p>
-              {(resolvedPlan?.linked_proposals ?? plan?.linked_proposals ?? []).map((proposal) => {
-              const liveRecord = proposals.find((item) => item.proposal_id === proposal.proposal_id);
-              return (
-                <button
-                  key={proposal.proposal_id}
-                  type="button"
-                  onClick={() => setActiveProposalId(proposal.proposal_id)}
-                  className={cn(
-                    "flex w-full items-center justify-between rounded border border-border bg-surface-2 px-3 py-3 text-left text-sm transition-colors hover:border-primary",
-                    activeProposalId === proposal.proposal_id ? "border-primary/70 bg-primary/5" : "",
+                  {!selectedAllocations.length && (
+                    <p className="text-sm text-muted-foreground">No selected allocation is available for this session.</p>
                   )}
-                  >
-                  <div>
-                    <p className="font-medium text-foreground">
-                      {proposal.token_in_symbol} <ArrowRight className="mx-1 inline h-3.5 w-3.5" /> {proposal.token_out_symbol}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Amount {proposal.amount.toFixed(4)} / status {liveRecord?.status_code ?? proposal.status_code}
-                    </p>
+                </div>
+
+                {selectedAiAllocations.length > 0 && (
+                  <div className="border-t border-border/70 pt-4">
+                    <p className="text-sm font-medium text-foreground">AI suggested allocation</p>
+                    <div className="mt-2 space-y-2">
+                      {selectedAiAllocations.map((allocationItem) => (
+                        <div key={`${allocationItem.asset_symbol}-${allocationItem.source}-ai`} className="flex items-center justify-between gap-3 text-sm">
+                          <span className="font-medium text-foreground">{allocationItem.asset_symbol}</span>
+                          <span className="font-mono text-foreground">{(allocationItem.percentage * 100).toFixed(2)}% / {allocationItem.amount.toFixed(4)}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <span className="font-mono text-xs text-muted-foreground">{proposal.proposal_id.slice(0, 12)}...</span>
-                </button>
-              );
-            })}
+                )}
+              </TabsContent>
 
-            {!(resolvedPlan?.linked_proposals ?? plan?.linked_proposals)?.length && (
-              <div className="rounded border border-border bg-background p-3 text-sm text-muted-foreground">
-                No linked swap proposals are available for the current plan.
-              </div>
-            )}
+              <TabsContent value="transaction" className="m-0 space-y-3">
+                {selectedSteps.map((step) => (
+                  <div key={`${step.step_index}-${step.step_type}`} className="py-2 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="font-medium text-foreground">Step {step.step_index}: {step.step_type}</p>
+                      <span className="text-xs text-muted-foreground">
+                        {aiDecisionMakerEnabled ? "AI managed" : step.requires_user_action ? "user action" : "informational"}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-muted-foreground">{step.description}</p>
+                  </div>
+                ))}
+                {!selectedSteps.length && (
+                  <div className="text-sm text-muted-foreground">
+                    Transaction steps will appear after a decision draft is created.
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="evidence" className="m-0 space-y-5">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Execution evidence</p>
+                  <div className="mt-3 grid gap-x-6 gap-y-3 md:grid-cols-2">
+                    {selectedEvidenceItems.map((item) => (
+                      <div key={item.label}>
+                        <p className="text-xs text-muted-foreground">{item.label}</p>
+                        <p className="mt-1 break-all font-mono text-xs text-foreground">{item.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="border-t border-border/70 pt-4">
+                  <p className="text-sm font-medium text-foreground">Linked proposals</p>
+                  <div className="mt-3 space-y-2">
+                    {selectedLinkedProposals.map((proposal) => {
+                      const liveRecord = proposals.find((item) => item.proposal_id === proposal.proposal_id);
+                      return (
+                        <button
+                          key={proposal.proposal_id}
+                          type="button"
+                          onClick={() => setActiveProposalId(proposal.proposal_id)}
+                          className={cn(
+                            "flex w-full items-center justify-between py-2 text-left text-sm transition-colors hover:text-primary",
+                            activeProposalId === proposal.proposal_id ? "text-primary" : "",
+                          )}
+                        >
+                          <div>
+                            <p className="font-medium text-foreground">
+                              {proposal.token_in_symbol}
+                              <ArrowRight className="mx-1 inline h-3.5 w-3.5" />
+                              {proposal.token_out_symbol}
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Amount {proposal.amount.toFixed(4)} / status {liveRecord?.status_code ?? proposal.status_code}
+                            </p>
+                          </div>
+                          <span className="font-mono text-xs text-muted-foreground">{proposal.proposal_id.slice(0, 12)}...</span>
+                        </button>
+                      );
+                    })}
+                    {!selectedLinkedProposals.length && (
+                      <div className="text-sm text-muted-foreground">
+                        No linked swap proposals are available for the current plan.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="border-t border-border/70 pt-4">
+                  <p className="text-sm font-medium text-foreground">Events</p>
+                  <div className="mt-3">
+                    <TransactionStatus
+                      entries={proposalActivity}
+                      emptyLabel="No approval or execution activity has been recorded for the selected proposal yet."
+                    />
+                  </div>
+                </div>
+              </TabsContent>
             </div>
-
-            {aiDecisionMakerEnabled && !autoExecutionActive && !executionConfirmPending && (resolvedPlan?.approval_enabled ?? plan?.approval_enabled) && (
-              <div className="rounded border border-success/40 bg-success/10 px-3 py-2 text-sm text-success">
-                Full access AI is enabled. Linked proposals will auto-approve, then request confirmation before execution.
-              </div>
-            )}
-            {autoExecutionActive && !executionConfirmPending && (
-              <div className="rounded border border-primary/40 bg-primary/10 px-3 py-2 text-sm text-primary">
-                Full access AI is approving the linked proposals.
-              </div>
-            )}
-            {executionConfirmPending && (
-              <div className="rounded border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning">
-                All proposals approved. Confirm execution to submit the swap transaction.
-              </div>
-            )}
-            {!aiDecisionMakerEnabled ? (
-              <div className="flex flex-wrap gap-2">
-                <Button onClick={handleApprove} disabled={!activeProposalId || working || autoExecutionActive || !(resolvedPlan?.approval_enabled ?? plan?.approval_enabled)}>
-                  {approveProposal.isPending ? "Approving..." : "Approve investment plan"}
-                </Button>
-                <Button variant="outline" onClick={handleReject} disabled={!activeProposalId || working || autoExecutionActive}>
-                  Reject plan
-                </Button>
-                <Button onClick={handleExecute} disabled={!activeProposalId || working || autoExecutionActive || selectedPlanProposal?.status_code !== "PROPOSAL_APPROVED" || hasBlockers.length > 0}>
-                  {executeProposal.isPending ? "Executing..." : "Execute selected proposal"}
-                </Button>
-              </div>
-            ) : (
-              <div className="rounded border border-success/40 bg-success/10 px-3 py-2 text-sm text-success">
-                Full access AI will approve linked proposals, then request confirmation before execution.
-              </div>
-            )}
-
-            <div className="grid gap-2 rounded border border-border bg-surface-2 p-4">
-              <p className="font-medium text-foreground">Activity trail</p>
-              <TransactionStatus
-                entries={proposalActivity}
-                emptyLabel="No approval or execution activity has been recorded for the selected proposal yet."
-              />
-            </div>
-          </div>
-        </div>
+          </Tabs>
+        </section>
       </section>
 
       <RiskDetailsModal

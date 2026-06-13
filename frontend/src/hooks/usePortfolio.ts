@@ -20,6 +20,7 @@ export function usePortfolioSnapshots(limit = 20) {
     queryKey: ["portfolio", "snapshots", limit, effectiveWalletAddress],
     queryFn: () => portfolioApi.snapshots(limit, effectiveWalletAddress),
     enabled: Boolean(effectiveWalletAddress),
-    refetchInterval: 60_000,
+    staleTime: 60 * 60_000,
+    refetchInterval: 60 * 60_000,
   });
 }
