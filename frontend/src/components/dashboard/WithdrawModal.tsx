@@ -233,6 +233,9 @@ function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, n
       }
 
       const receipt = await publicClient?.waitForTransactionReceipt({ hash });
+      if (receipt?.status === "reverted") {
+        throw new Error("Transaction execution reverted on-chain.");
+      }
       logger.info("vault.withdraw.confirmed", {
         wallet_address: normalizedWalletAddress,
         vault_address: normalizedVaultAddress,

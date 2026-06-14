@@ -20,6 +20,13 @@ class RiskScoringTests(unittest.TestCase):
         self.engine = RiskScoreEngine()
         self.engine.settings.target_chain = TargetChain.MANTLE_MAINNET
         
+        from services.agent.app.core.status_codes import RuntimeMode
+        self.engine.settings.runtime_mode = RuntimeMode.LIVE
+        self.engine.settings.pyth_eth_usd_hard_block_seconds = 300
+        self.engine.settings.pyth_eth_usd_warn_seconds = 120
+        self.engine.settings.ondo_usdy_oracle_hard_block_seconds = 600
+        self.engine.settings.ondo_usdy_oracle_warn_seconds = 300
+        
         # Base normal balances
         self.balances = [
             AssetBalance(asset_symbol="USDY", balance=600000.0, value_usd=600000.0, weight=0.60),
@@ -109,7 +116,7 @@ class RiskScoringTests(unittest.TestCase):
         mock_quotes.return_value = [
             NormalizedQuoteSnapshot(
                 snapshot_id="q1", protocol="agni", route_id="usdy_route", route_label="exactInputSingle",
-                token_in_symbol="USDY", token_out_symbol="mETH", amount_in="1000", amount_out="1010",
+                token_in_symbol="USDY", token_out_symbol="USDT", amount_in="1000", amount_out="1010",
                 quoted_price="1.01", estimated_slippage_bps="10", route_depth_usd="100000",
                 sample_timestamp=self.now, freshness_status="ok", status_code="QUOTE_FRESH",
                 status_reason=""

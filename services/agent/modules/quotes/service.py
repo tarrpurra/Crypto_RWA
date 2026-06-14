@@ -9,8 +9,7 @@ from services.agent.app.core.settings import Settings, TargetChain, get_settings
 from services.agent.app.core.status_codes import DataStatusCode
 from services.agent.app.schemas.market_data import AssetMetadata
 from services.agent.app.schemas.quotes import NormalizedQuoteSnapshot, RawQuoteSnapshot, RouteDescriptor
-from services.agent.modules.market_data.snapshots import QuoteIngestionBundle
-from services.agent.modules.market_data import PRICE_SNAPSHOT_STORE
+from services.agent.modules.market_data.snapshots import PRICE_SNAPSHOT_STORE, QuoteIngestionBundle
 from services.agent.modules.oracle.freshness import age_seconds, utc_now
 from services.agent.modules.quotes.agni_discovery import AgniDiscoveryService
 from services.agent.modules.quotes.agni_quotes import AgniQuoteService

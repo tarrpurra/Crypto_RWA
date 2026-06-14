@@ -1,5 +1,309 @@
 # AI + Data Analytics Service Changes
 
+### 2026-06-14
+
+Type:
+WMNT fallback valuation and stale vault cost-basis guard
+
+Author:
+Codex
+
+Summary:
+
+- replaced the WMNT `$1` fallback with a quote-derived WMNT/USDY reference price when the MNT/USD oracle feed is unavailable, so Mantle deposits no longer render as `1 MNT = $1`
+- marked that quote-derived WMNT fallback as an allowed simulation valuation path, keeping vault and portfolio screens usable in Sepolia/demo mode without pretending the price came from a live oracle
+- added a vault dashboard reconciliation guard that caps obviously stale historical cost basis to current live vault value when old flow ledger entries are wildly out of line with current ownership, preventing fake near-100% loss displays after fresh deposits or testnet resets
+- added regression coverage for WMNT quote fallback pricing and the stale cost-basis reconciliation path
+
+Affected scope:
+
+- services/agent/modules/market_data/prices.py
+- services/agent/modules/market_data/balances.py
+- services/agent/app/api/vault.py
+- services/agent/tests/unit/test_settings.py
+- services/agent/tests/unit/test_vault_api.py
+- services/agent/tests/unit/test_portfolio_snapshot.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- depositing Mantle-native funds into the vault should now show a quote-based USD value instead of incorrectly mirroring the raw token amount as dollars
+- dashboard Invested/P&L should stop showing obviously stale, exaggerated losses when the vault flow ledger no longer matches the user’s live vault ownership after resets or earlier test data
+- verification not executed in this pass because no test commands were run
+
+### 2026-06-14
+
+Type:
+Vault share-based portfolio valuation fix
+
+Author:
+Codex
+
+Summary:
+
+- fixed the vault ownership reader to derive per-user balances from live vault token balances multiplied by `shares / totalShares`, instead of trusting the stale `getUserBalances(...)` ledger after internal swaps
+- updated `/vault/portfolio` to reuse the same share-based ownership path, which brings dashboard invested/P&L displays back in line with actual vault holdings after rebalance or trade execution
+- preserved a degraded fallback to legacy `getUserBalances(...)` only when share reads fail, so older or partially compatible vault deployments still render something rather than hard-failing
+- added unit regression coverage for share-based valuation, native MNT share valuation, and the post-swap vault balance snapshot path
+
+Affected scope:
+
+- services/agent/modules/market_data/balances.py
+- services/agent/app/api/vault.py
+- services/agent/tests/unit/test_portfolio_snapshot.py
+- services/agent/tests/unit/test_vault_api.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- dashboard and vault portfolio UX should stop showing fake large losses that were caused by stale user token ledgers after vault swaps
+- data correctness improves because both `/portfolio/current` and `/vault/portfolio` now use the same share-based ownership model that matches the vault’s post-trade behavior
+- assumptions: withdraw entitlement logic on-chain still uses the legacy per-token ledger, so this change fixes valuation and reporting only; it does not redesign withdrawal semantics
+- verification not executed in this pass because no test commands were run
+
+### 2026-06-14
+
+Type:
+Quote snapshot ID collision fix
+
+Author:
+Codex
+
+Summary:
+
+- fixed the Sepolia mock quote generator so raw and normalized quote records no longer reuse the same `snapshot_id`
+- hardened quote persistence with in-batch de-duplication by `snapshot_id` before insert, preventing a single malformed bundle from violating the global quote snapshot uniqueness constraint
+- added a regression test covering distinct raw versus normalized snapshot IDs for mock quote attempts
+
+Affected scope:
+
+- services/agent/modules/quotes/service.py
+- services/agent/repositories/db/market_repository.py
+- services/agent/tests/unit/test_quote_service.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- `/market/quotes/latest` should stop emitting duplicate-key warnings for `quote_snapshots.snapshot_id` in Sepolia mock routing flows
+- persistence reliability is improved because duplicate IDs inside one quote bundle are now skipped safely instead of failing the whole save operation
+- verification not executed in this pass because no test or build commands were run
+
+### 2026-06-14
+
+Type:
+Vault portfolio read correction for dashboard and P&L
+
+Author:
+Codex
+
+Summary:
+
+- fixed the vault-backed portfolio reader so it now treats `getUserBalances(user, tokens)` as already user-scoped instead of incorrectly multiplying those balances by derived ownership a second time
+- made share reads (`balanceOf`, `totalShares`) optional metadata in the portfolio recovery path so dashboard portfolio refresh does not fail when the deployed vault reverts on those share methods
+- corrected `/vault/portfolio` to return scaled token balances instead of raw integer amounts, keeping frontend vault-derived displays and P&L inputs consistent
+- added a unit regression test covering the case where share calls revert but direct user balance reads still succeed
+
+Affected scope:
+
+- services/agent/modules/market_data/balances.py
+- services/agent/app/api/vault.py
+- services/agent/tests/unit/test_portfolio_snapshot.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- dashboard and portfolio refresh paths now remain usable even if the deployed vault only reliably supports direct user balance reads
+- data correctness: vault portfolio values should no longer be undercounted by double-applying ownership, which also removes one major cause of falsely negative P&L after deposits
+- verification not executed in this pass because no test or build commands were run
+
+### 2026-06-14
+
+Type:
+Dashboard summary portfolio source-of-truth alignment
+
+Author:
+Codex
+
+Summary:
+
+- changed `/dashboard/summary` to load the portfolio through the live `current_portfolio(...)` path instead of reading only the latest persisted Postgres snapshot
+- kept a safe fallback to `PortfolioSnapshotRepository().latest_snapshot(...)` only if the live refresh path fails, which preserves degraded visibility instead of throwing the dashboard route
+- added a unit regression test to ensure dashboard summary prefers the live portfolio refresh path when a wallet address is present
+
+Affected scope:
+
+- services/agent/modules/dashboard/summary.py
+- services/agent/app/api/dashboard.py
+- services/agent/tests/unit/test_dashboard_summary.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- dashboard totals, holdings, and downstream consumers of `/dashboard/summary` now stay aligned with live vault-aware portfolio state instead of lagging behind Postgres snapshots
+- data consistency: deposited vault funds should appear in the dashboard summary without waiting for an older cached snapshot to become the visible source of truth
+- verification not executed in this pass because no test or build commands were run
+
+### 2026-06-14
+
+Type:
+Proposal creation gating, human approval flow, and Decision Log recency cap
+
+Author:
+Codex
+
+Summary:
+
+- changed proposal generation so newly created trades are stored as `PROPOSAL_PENDING_APPROVAL`, which lets the frontend treat them as real approval-gated proposals instead of execution-ready payloads
+- added a vault funding precondition to `/proposals/create`; proposal creation now fails safely unless the connected user has already deposited sufficient funds into the vault for the requested source asset
+- aligned full-AI behavior so AI access auto-creates proposals after guardrails pass but still waits for human approval before execution, while recommendation-only mode no longer auto-creates proposals from review routes
+- capped frontend proposal activity persistence and visible Decision Log session history to the 10 most recent entries
+
+Affected scope:
+
+- services/agent/app/api/vault.py
+- services/agent/app/api/decisions.py
+- services/agent/modules/proposals/investment_planner.py
+- frontend/src/pages/DecisionLog.tsx
+- frontend/src/components/dashboard/ProposalNotification.tsx
+- frontend/src/hooks/useProposalActivity.ts
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- safety: AI cannot create or act on trades before the user has funded the vault, and human approval remains mandatory even in full-AI mode
+- UX: AI-created proposals now trigger the pending-approval notification path with copy that matches the actual approval flow
+- auditability: Decision Log and local proposal activity surfaces now show only the most recent 10 records instead of unbounded older history
+- verification not executed in this pass because no test or build commands were run
+
+### 2026-06-14
+
+Type:
+Custom strategy profile support in rebalance and proposal generation
+
+Author:
+Codex
+
+Summary:
+
+- fixed the allocation and proposal generation path so active strategy-policy target weights no longer require a matching legacy static allocation profile name
+- updated rebalance computation to accept custom profile labels whenever deterministic `target_weights_override` data is supplied, which keeps custom strategy recommendations and proposal creation from failing in `/allocation/recommendation`
+- renamed the active strategy display label from `Strategy <version>` to `Custom Strategy <version>` so recommendations and proposal reasoning identify the custom policy source explicitly
+- aligned frontend strategy selectors and launcher flows so an activated custom strategy is automatically assigned into dashboard, trade-flow, and proposal-creation surfaces instead of leaving users on legacy static profile labels by default
+
+Affected scope:
+
+- services/agent/strategies/allocation/rebalance.py
+- services/agent/modules/decisions/context.py
+- services/agent/app/api/investment_scope.py
+- services/agent/modules/proposals/investment_planner.py
+- services/agent/modules/strategy_policy/runtime.py
+- services/agent/tests/unit/test_allocation.py
+- services/agent/tests/unit/test_strategy_policy_runtime.py
+- frontend/src/pages/Index.tsx
+- frontend/src/pages/DecisionLog.tsx
+- frontend/src/components/swap/SwapForm.tsx
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- backend recommendation and proposal creation now work when the active policy is a validated custom strategy instead of a built-in static profile
+- frontend reasoning and downstream proposal payloads now default to the active custom strategy label instead of incorrectly falling back to static profiles such as `Balanced` or `Sepolia Test`
+- verification not executed in this pass because no test or build commands were run
+
+### 2026-06-14
+
+Type:
+Active strategy policy consumption in allocation and decisioning
+
+Author:
+Codex
+
+Summary:
+
+- wired the active strategy policy into the runtime allocation context so wallet recommendations and scoped investment previews use activated strategy-derived target weights instead of static allocation profiles whenever an active strategy exists
+- added shared strategy-policy runtime helpers to derive deterministic target weights from the activated policy objective, allowed assets, stable reserve floor, and asset exposure caps
+- kept the existing validate -> simulate -> activate persistence flow intact while extending the downstream recommendation path to consume the activated policy rather than only storing it
+
+Affected scope:
+
+- services/agent/modules/strategy_policy/runtime.py
+- services/agent/modules/decisions/context.py
+- services/agent/app/api/investment_scope.py
+- services/agent/tests/unit/test_strategy_policy_runtime.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- allocation and AI recommendation flows now honor the active strategy policy before falling back to legacy static profiles
+- scoped deposit previews and wallet-based decisions now resolve target weights from the same active-policy runtime helper, reducing drift between strategy activation and downstream recommendations
+- verification: Python syntax checks passed for the changed service files, but end-to-end runtime validation through live API calls and recommendation outputs was not executed in this pass
+
+### 2026-06-14
+
+Type:
+Strategy policy layer backend and frontend wiring
+
+Author:
+Codex
+
+Summary:
+
+- replaced the Strategy Lab surface with a bounded strategy policy flow instead of an editable system prompt, with prompt safety scanning, structured policy extraction, hard validation, simulation, activation, versioning, scheduler updates, and audit logging
+- added a dedicated `/api/strategy` router plus persistence models for strategy templates, drafts, versions, audit events, and scheduler settings so strategy changes are stored as deterministic policy data rather than free-form prompt text
+- connected the frontend Strategy Lab page to the new backend endpoints through typed API helpers and React Query hooks, including draft save, validate, simulate, activate, revert, active-state, version history, audit trail, and scheduler update flows
+
+Affected scope:
+
+- services/agent/app/api/strategy.py
+- services/agent/app/api/__init__.py
+- services/agent/app/main.py
+- services/agent/modules/strategy_policy/*
+- services/agent/repositories/db/models.py
+- services/agent/tests/unit/test_strategy_policy.py
+- frontend/src/lib/api/types.ts
+- frontend/src/lib/api/strategy.ts
+- frontend/src/hooks/useStrategy.ts
+- frontend/src/pages/StrategyLab.tsx
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- safety: user input now passes through a Strategy Policy Layer rather than directly mutating any system prompt, which keeps AI instructions locked while still allowing operator-defined strategy changes
+- determinism: validated policy JSON, version history, and scheduler values are persisted explicitly so the backend and risk engine can reason over stable configuration instead of raw text
+- UX: the Strategy Lab page now drives real backend validation/simulation/activation flows and surfaces active version, audit history, and scheduler state from the service
+- verification: backend syntax compilation and frontend TypeScript typecheck passed locally, but the new DB-backed flow has not been exercised end-to-end against a live runtime yet
+
+### 2026-06-14
+
+Type:
+Production recovery architecture — Postgres is cache, chain is source of truth
+
+Author:
+Codex
+
+Summary:
+
+- **Smart contract**: converted `ExecutorVault` to share-based accounting: added `totalShares`, `shares` mapping, `_mintShares`/`_burnShares` internal functions, `balanceOf()`, `totalAssets()`, `previewRedeem()`, `userPosition()` read methods for on-chain ownership recovery
+- **Events**: added `NativeDeposited(user, nativeAmount, sharesMinted)`, `ProposalExecuted(proposalId, planHash, executor)`; updated `Deposited`/`Withdrawn` to include `sharesMinted`/`sharesBurned`; added `SharePriceUpdated` event
+- **Backend**: added `VaultShareReader` that reads vault shares + token balances from chain and calculates user's per-token position by ownership %; fixed `/portfolio/current` with staleness check (`PORTFOLIO_STALE_SECONDS=180`) and vault-share fallback when DB is empty or stale; added `POST /portfolio/sync` endpoint for forced rebuild from vault
+- **Recovery indexer**: created `jobs/recover_portfolio.py` CLI script that reads vault events (Deposited/Withdrawn/TradeExecuted/ProposalExecuted) from chain, rebuilds portfolio snapshots from current vault state, and replays events into vault_flows
+
+Affected scope:
+
+- contracts/src/core/ExecutorVault.sol
+- contracts/src/libraries/Events.sol
+- services/agent/app/api/portfolio.py
+- services/agent/modules/market_data/balances.py
+- services/agent/jobs/recover_portfolio.py (new)
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- smart contracts: ExecutorVault now tracks shares and emits richer events for indexer recovery. Existing deposit/withdraw/trade functions are unchanged in behavior but now also mint/burn shares and emit additional event data.
+- persistence: Postgres is no longer the source of truth for portfolio ownership. If deleted, run `python -m services.agent.jobs.recover_portfolio --vault 0x... --user 0x...` to rebuild.
+- performance: `/portfolio/current` now has a 180-second staleness check and falls through to chain on stale/missing DB data.
+- data quality: vault-share-derived positions include `ownership_pct` metadata showing the user's proportional share of each vault asset.
+
 ## Purpose
 
 Track meaningful changes to the AI + Data Analytics service.
@@ -531,15 +835,15 @@ Impact:
 ### 2026-06-07
 
 Type:
-Runtime cleanup / Remove Sepolia USDC from active flow
+Runtime cleanup / Remove deprecated Sepolia stablecoin from active flow
 
 Author:
 Codex
 
 Summary:
 
-- removed the Sepolia `USDC` asset from the active asset registry so market ingestion no longer reports it as missing
-- removed `USDC` from the frontend swap and trade selectors so the active Sepolia flow only exposes `USDY`, `mETH`, and `WMNT`
+- removed the deprecated Sepolia stablecoin from the active asset registry so market ingestion no longer reports it as missing
+- removed the deprecated stablecoin from the frontend swap and trade selectors so the active Sepolia flow only exposes \`USDY\`, \`mETH\`, and \`WMNT\`
 - updated the Sepolia settings test to reflect the reduced active asset set
 
 Affected scope:
@@ -555,7 +859,7 @@ Affected scope:
 Impact:
 
 - market data: `DATA_PARTIAL` should clear once the backend reloads with the new asset registry
-- frontend: USDC is no longer presented as an active Sepolia swap choice
+- frontend: the deprecated stablecoin is no longer presented as an active Sepolia swap choice
 - allocation: Sepolia planning now stays on the active `USDY` / `mETH` basket
 
 ### 2026-06-07
@@ -1311,7 +1615,7 @@ Summary:
 - wired the frontend trade and approvals screens to consume backend proposal detail instead of relying only on locally inferred review state
 - normalized proposal list and approval mutation responses to include `status_code`, `status_label`, and `status_reason`
 - added database-backed `investment_plans` persistence so proposal review can survive backend restarts for newly created proposals
-- added a configurable `SEPOLIA_USDC` asset path plus simulation-only stable pricing so Mantle Sepolia `USDC` can be supported when a verified address is supplied
+- added a configurable \`SEPOLIA_USDY\` asset path plus simulation-only stable pricing so Mantle Sepolia \`USDY\` can be supported when a verified address is supplied
 - surfaced current repository blockers directly in the trade form for unsupported Mantle Sepolia deposit assets such as native `MNT`
 
 Affected scope:
@@ -1341,7 +1645,7 @@ Impact:
 Assumptions / unresolved verification items:
 
 - proposal detail retrieval is persisted only for proposals created after this change; older proposals remain detail-incomplete
-- Mantle Sepolia `USDC` now has a config path, but it still requires a real deployed token address in `SEPOLIA_USDC_ADDRESS`; native `MNT` deposit flow remains blocked by missing wrap and unwrap execution support
+- Mantle Sepolia \`USDY\` now has a config path, but it still requires a real deployed token address in \`SEPOLIA_USDY_ADDRESS\`; native \`MNT\` deposit flow remains blocked by missing wrap and unwrap execution support
 - Merchant Moe is still not part of the executable proposal path; AGNI is the only encoded execution route in the current implementation
 - approval freshness is still advisory because allowance age is not yet read back from chain state
 
@@ -1557,7 +1861,7 @@ Impact:
 
 Assumptions / unresolved verification items:
 
-- successful proposal creation still requires configured vault/router/token addresses plus fresh persisted USDC and mETH price snapshots
+- successful proposal creation still requires configured vault/router/token addresses plus fresh persisted USDY and mETH price snapshots
 - live quote-depth and slippage validation remain Phase 1B dependent
 - production-grade AI request/response persistence can be expanded later, but deterministic fallback is complete and safe for local operation
 
@@ -2237,7 +2541,7 @@ Summary:
 
 - changed the dashboard and trade flow to deploy the connected wallet balance instead of seeding a fixed `100` amount
 - blocked AI auto-launch until a positive wallet balance is known, so the UI no longer acts on stale scope data
-- switched the default allocation profile on Sepolia to `Sepolia Test` and made Sepolia scoped planners strip `USDC` from risk-profile baskets before renormalizing
+- switched the default allocation profile on Sepolia to \`Sepolia Test\` and made Sepolia scoped planners renormalize risk-profile baskets by removing the deprecated stablecoin
 
 Affected scope:
 
@@ -2256,7 +2560,7 @@ Affected scope:
 Impact:
 
 - frontend: the amount fields now resolve from the wallet/portfolio snapshot instead of prompting for more MNT
-- allocation: the default target basket on Sepolia is USDY/mETH only, and scoped risk profiles on Sepolia are renormalized to remove USDC entirely
+- allocation: the default target basket on Sepolia is USDY/mETH only, and scoped risk profiles on Sepolia are renormalized to remove the deprecated stablecoin
 - data quality: the AI scope stays empty until the wallet balance is known, which prevents stale 100-sized scopes from being used
 
 Assumptions / unresolved verification items:

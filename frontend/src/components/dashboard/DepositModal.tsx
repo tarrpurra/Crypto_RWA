@@ -334,6 +334,9 @@ function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, n
       });
 
       const receipt = await publicClient?.waitForTransactionReceipt({ hash });
+      if (receipt?.status === "reverted") {
+        throw new Error("Transaction execution reverted on-chain.");
+      }
       logger.info("vault.deposit.confirmed", {
         wallet_address: normalizedWalletAddress,
         vault_address: normalizedVaultAddress,

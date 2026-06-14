@@ -19,7 +19,7 @@ from services.agent.app.schemas.vault import (
     WithdrawPrepareResponse,
 )
 from services.agent.modules.dashboard.cache import clear_cached
-from services.agent.modules.market_data.balances import Erc20BalanceReader, ZERO_ADDRESS, configured_vault_assets
+from services.agent.modules.market_data.balances import Erc20BalanceReader, VaultShareReader, ZERO_ADDRESS
 from services.agent.modules.market_data import get_price_service
 from services.agent.modules.oracle.freshness import utc_now
 from services.agent.repositories.db.vault_repository import VaultFlowRepository
@@ -72,6 +72,14 @@ def _compute_pnl(total_value_usd: Decimal, net_invested_usd: Decimal) -> tuple[s
         return pnl_usd_str, None
     pnl_percent = (pnl_usd / net_invested_usd) * Decimal("100")
     return pnl_usd_str, _format_decimal(pnl_percent)
+
+
+def _reconcile_dashboard_cost_basis(total_value_usd: Decimal, net_invested_usd: Decimal) -> tuple[Decimal, bool]:
+    if total_value_usd <= 0 or net_invested_usd <= 0:
+        return net_invested_usd, False
+    if net_invested_usd <= (total_value_usd * Decimal("5")):
+        return net_invested_usd, False
+    return total_value_usd, True
 
 
 def _summary_metadata(summary) -> dict[str, object]:
@@ -252,8 +260,7 @@ async def get_vault_balance_snapshot(user_address: str | None = None) -> VaultBa
         )
 
     try:
-        web3 = _web3(settings.effective_http_rpc_url)
-        vault_contract = _get_vault_contract(web3, vault_address)
+        reader = VaultShareReader(settings.effective_http_rpc_url, vault_address)
     except Exception as exc:
         return VaultBalanceResponse(
             status="degraded",
@@ -267,16 +274,12 @@ async def get_vault_balance_snapshot(user_address: str | None = None) -> VaultBa
             metadata={"cost_basis_tracking": False},
         )
 
-    asset_registry = settings.active_portfolio_asset_registry
-    token_assets = configured_vault_assets(asset_registry, settings.effective_chain_id)
-    token_addresses: list[str] = [str(asset["address"]) for asset in token_assets]
-    token_symbols: list[str] = [str(asset["symbol"]) for asset in token_assets]
-
     try:
-        checksum_user = web3.to_checksum_address(user_address)
-        checksum_tokens = [web3.to_checksum_address(a) for a in token_addresses]
-        checksum_tokens.append(web3.to_checksum_address(ZERO_ADDRESS))
-        raw_balances = vault_contract.functions.getUserBalances(checksum_user, checksum_tokens).call()
+        balances = reader.read_user_position(
+            user_address=user_address,
+            asset_registry=settings.active_portfolio_asset_registry,
+            chain_id=settings.effective_chain_id,
+        )
     except Exception as exc:
         logger.warning("Vault balance read failed: %s", exc)
         return VaultBalanceResponse(
@@ -292,9 +295,26 @@ async def get_vault_balance_snapshot(user_address: str | None = None) -> VaultBa
         )
 
     price_service = get_price_service()
+    prices = []
     try:
         price_bundle = await price_service.fetch_latest_prices()
-        prices = price_bundle.normalized_snapshots if price_bundle else []
+        if price_bundle:
+            prices = price_bundle.normalized_snapshots
+            has_missing = any(p.price_usd is None or p.status_code == "DATA_MISSING" for p in prices)
+            if has_missing:
+                from services.agent.repositories.db.market_repository import MarketDataRepository
+                try:
+                    persisted_prices = MarketDataRepository().latest_normalized_prices()
+                    persisted_by_symbol = {p.asset_symbol.upper(): p for p in persisted_prices if p.price_usd is not None}
+                    merged_prices = []
+                    for p in prices:
+                        if (p.price_usd is None or p.status_code == "DATA_MISSING") and p.asset_symbol.upper() in persisted_by_symbol:
+                            merged_prices.append(persisted_by_symbol[p.asset_symbol.upper()])
+                        else:
+                            merged_prices.append(p)
+                    prices = merged_prices
+                except Exception as exc:
+                    logger.warning("Failed to merge missing prices in vault API: %s", exc)
     except Exception:
         prices = []
 
@@ -302,38 +322,23 @@ async def get_vault_balance_snapshot(user_address: str | None = None) -> VaultBa
 
     items: list[VaultBalanceItem] = []
     total_value = Decimal("0")
-    token_addresses.append(ZERO_ADDRESS)
-    token_symbols.append("MNT")
-
-    for i, symbol in enumerate(token_symbols):
-        raw_bal = raw_balances[i] if i < len(raw_balances) else 0
-        addr = token_addresses[i] if i < len(token_addresses) else ""
-        if raw_bal == 0 and addr == ZERO_ADDRESS:
+    for balance in balances:
+        if balance.balance is None:
             continue
         try:
-            asset_data = next(
-                (a for a in asset_registry.values() if str(a["symbol"]).lower() == symbol.lower()),
-                None,
-            )
-            decimals = int(asset_data.get("decimals", 18)) if asset_data else 18
-        except (ValueError, StopIteration):
-            decimals = 18
-
-        balance_str = _scaled_token_amount(raw_bal, decimals)
-        try:
-            bal_dec = Decimal(balance_str) if balance_str else Decimal("0")
+            bal_dec = Decimal(balance.balance)
         except (InvalidOperation, ValueError):
-            bal_dec = Decimal("0")
+            continue
 
-        sym_lower = symbol.lower()
+        sym_lower = balance.asset_symbol.lower()
         price = price_by_symbol.get(sym_lower, Decimal("0"))
         value = bal_dec * price
         total_value += value
         items.append(
             VaultBalanceItem(
-                asset_symbol=symbol,
-                asset_address=token_addresses[i],
-                balance=balance_str,
+                asset_symbol=balance.asset_symbol,
+                asset_address=balance.asset_address,
+                balance=balance.balance,
                 value_usd=_format_decimal(value),
                 share=0.0,
             )
@@ -360,8 +365,16 @@ async def get_vault_balance_snapshot(user_address: str | None = None) -> VaultBa
     pnl_percent = None
     metadata = {"cost_basis_tracking": False}
     if summary is not None:
-        pnl_usd, pnl_percent = _compute_pnl(total_value, summary.net_invested_usd)
+        effective_invested_usd, reconciled = _reconcile_dashboard_cost_basis(total_value, summary.net_invested_usd)
+        invested_amount_usd = _format_decimal(effective_invested_usd)
+        pnl_usd, pnl_percent = _compute_pnl(total_value, effective_invested_usd)
         metadata = _summary_metadata(summary)
+        if reconciled:
+            metadata["cost_basis_tracking_mode"] = "reconciled_live_value"
+            metadata["cost_basis_reconciled"] = True
+            metadata["cost_basis_reconciliation_reason"] = (
+                "Historical vault flow basis was far above current live vault ownership, so the dashboard capped invested capital to live value."
+            )
 
     return VaultBalanceResponse(
         status="ok",
@@ -519,6 +532,20 @@ async def record_vault_flow(req: VaultFlowRecordRequest) -> VaultFlowRecordRespo
                 detail=f"usd_value is required when no latest price is available for {req.asset_symbol}.",
             )
         usd_value = _format_decimal(_safe_decimal(req.asset_amount) * asset_price)
+
+    if req.tx_hash:
+        try:
+            web3 = _web3(settings.effective_http_rpc_url)
+            receipt = web3.eth.get_transaction_receipt(req.tx_hash)
+            if receipt is not None and receipt.get("status") != 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Failed to record flow: Transaction reverted on-chain.",
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("Could not verify transaction status on-chain for tx_hash=%s: %s", req.tx_hash, exc)
 
     flow_id = f"vault_flow_{uuid4().hex}"
     occurred_at = req.occurred_at or utc_now()

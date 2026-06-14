@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 
 from services.agent.app.core.settings import Settings, TargetChain, get_settings
@@ -347,11 +348,14 @@ class PriceService:
                     data_source_label="pyth_direct",
                 )
             if asset.address:
-                return self._build_configured_reference_price(
+                quote_derived = self._build_wmnt_quote_reference_price(asset, hermes_response, parsed_by_feed_id)
+                if quote_derived is not None:
+                    return quote_derived
+                return self._missing_snapshot(
                     asset,
-                    source="native_mnt_parity",
-                    price="1",
-                    reason="WMNT uses a derived native MNT parity price while the MNT/USD Pyth feed is unavailable.",
+                    "WMNT could not be priced because the MNT/USD Pyth feed is unavailable and no usable WMNT/USDY quote fallback was found.",
+                    status="unverified",
+                    status_code=DataStatusCode.DATA_PARTIAL.value,
                 )
             return self._missing_snapshot(asset, "WMNT address is not configured.", status="unverified")
 
@@ -646,6 +650,69 @@ class PriceService:
             raw_snapshot_ids=[raw_snapshot.snapshot_id],
         )
         return [raw_snapshot], normalized
+
+    def _build_wmnt_quote_reference_price(
+        self,
+        asset: AssetMetadata,
+        hermes_response,
+        parsed_by_feed_id: dict[str, object],
+    ) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot] | None:
+        usdy_asset = next(
+            (
+                candidate
+                for candidate in self.asset_metadata_for_target_chain()
+                if candidate.symbol == "USDY" and candidate.address
+            ),
+            None,
+        )
+        if usdy_asset is None:
+            return None
+
+        _, usdy_snapshot = self._build_usdy_price(usdy_asset, hermes_response, parsed_by_feed_id)
+        if not usdy_snapshot.price_usd:
+            return None
+
+        try:
+            usdy_price = Decimal(usdy_snapshot.price_usd)
+        except (InvalidOperation, ValueError):
+            return None
+        if usdy_price <= 0:
+            return None
+
+        try:
+            from services.agent.modules.quotes.service import QuoteService
+            best_quote = QuoteService(self.settings).best_quote_for_pair("WMNT", "USDY")
+        except Exception as exc:
+            logger.warning("WMNT quote fallback lookup failed: %s: %r", type(exc).__name__, exc)
+            return None
+        if best_quote is None or not best_quote.amount_in or not best_quote.amount_out:
+            return None
+        if best_quote.status_code not in {
+            DataStatusCode.QUOTE_FRESH.value,
+            DataStatusCode.QUOTE_STALE.value,
+            DataStatusCode.DATA_PARTIAL.value,
+        }:
+            return None
+
+        try:
+            amount_in = Decimal(best_quote.amount_in)
+            amount_out = Decimal(best_quote.amount_out)
+        except (InvalidOperation, ValueError):
+            return None
+        if amount_in <= 0 or amount_out <= 0:
+            return None
+
+        derived_price = (amount_out / amount_in) * usdy_price
+        quoted_pair = f"{best_quote.token_in_symbol}/{best_quote.token_out_symbol}"
+        reason = (
+            f"WMNT uses a quote-derived USD fallback from {quoted_pair} because the MNT/USD Pyth feed is unavailable."
+        )
+        return self._build_configured_reference_price(
+            asset,
+            source="wmnt_usdy_quote",
+            price=format(derived_price.normalize(), "f"),
+            reason=reason,
+        )
 
     def _build_direct_snapshot(
         self,

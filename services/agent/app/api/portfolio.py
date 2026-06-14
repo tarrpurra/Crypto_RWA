@@ -327,6 +327,22 @@ async def current_portfolio(
                 logger.warning("No persisted normalized prices were available, continuing with an empty price set.")
     if price_bundle is not None:
         prices = price_bundle.normalized_snapshots
+        has_missing = any(p.price_usd is None or p.status_code == DataStatusCode.DATA_MISSING.value for p in prices)
+        if has_missing:
+            logger.info("Some live prices are missing; attempting to merge with latest persisted prices.")
+            try:
+                persisted_prices = MarketDataRepository().latest_normalized_prices()
+                persisted_by_symbol = {p.asset_symbol.upper(): p for p in persisted_prices if p.price_usd is not None}
+                merged_prices = []
+                for p in prices:
+                    if (p.price_usd is None or p.status_code == DataStatusCode.DATA_MISSING.value) and p.asset_symbol.upper() in persisted_by_symbol:
+                        logger.info("Falling back to persisted price for %s: %s", p.asset_symbol, persisted_by_symbol[p.asset_symbol.upper()].price_usd)
+                        merged_prices.append(persisted_by_symbol[p.asset_symbol.upper()])
+                    else:
+                        merged_prices.append(p)
+                prices = merged_prices
+            except Exception as exc:
+                logger.warning("Failed to merge missing prices with persisted prices: %s", exc)
         _save_prices_best_effort(price_bundle)
 
     snapshot = PortfolioSnapshotEngine().build_snapshot(

@@ -24,12 +24,13 @@ class MarketDataRepository:
                 session.merge(self._price_record_from_normalized(snapshot))
             session.commit()
 
-    def latest_normalized_prices(self) -> list[NormalizedPriceSnapshot]:
+    def latest_normalized_prices(self, include_null_prices: bool = False) -> list[NormalizedPriceSnapshot]:
         with create_session() as session:
+            stmt = select(PriceSnapshotRecord).where(PriceSnapshotRecord.record_kind == "normalized")
+            if not include_null_prices:
+                stmt = stmt.where(PriceSnapshotRecord.price.is_not(None))
             records = session.scalars(
-                select(PriceSnapshotRecord)
-                .where(PriceSnapshotRecord.record_kind == "normalized")
-                .order_by(PriceSnapshotRecord.created_at.desc())
+                stmt.order_by(PriceSnapshotRecord.created_at.desc())
             ).all()
         seen: set[str] = set()
         results: list[NormalizedPriceSnapshot] = []

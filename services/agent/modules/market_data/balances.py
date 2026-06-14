@@ -21,7 +21,7 @@ from services.agent.repositories.db.portfolio_repository import PortfolioSnapsho
 logger = logging.getLogger("services.agent.market_data.balances")
 
 FRESH_PRICE_CODES = {"DATA_FRESH", "ORACLE_FRESH", "QUOTE_FRESH"}
-SIMULATION_PRICE_METHODS = {"sepolia_stable_fallback", "sepolia_mock_fixed_price", "native_mnt_parity", "manual_mirror"}
+SIMULATION_PRICE_METHODS = {"sepolia_stable_fallback", "sepolia_mock_fixed_price", "native_mnt_parity", "manual_mirror", "wmnt_usdy_quote"}
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 ERC20_BALANCE_ABI = [
     {
@@ -247,9 +247,14 @@ class Erc20BalanceReader:
 class VaultShareReader:
     """Reads user vault position using vault contract shares + token balances.
 
-    Uses share-based ownership: user's share % = vault.shares(user) / vault.totalShares().
-    Multiplies by vault's token balances to compute user's per-token position.
-    This works even when Postgres is empty, since all data comes from chain.
+    Preferred path: user's share % = vault.shares(user) / vault.totalShares().
+    Multiply that ownership by the vault's live token balances to estimate the
+    user's current sleeve after internal swaps. This is the only reliable
+    representation once the vault has traded shared assets.
+
+    Fallback path: if share reads fail, fall back to the legacy
+    `getUserBalances(user, tokens)` ledger so recovery and degraded UIs can
+    still render something rather than hard-failing.
     """
 
     VAULT_ABI = [
@@ -304,11 +309,7 @@ class VaultShareReader:
         asset_registry: dict[str, dict[str, object]],
         chain_id: int,
     ) -> list[BalanceObservation]:
-        """Read user's vault position directly from the vault contract.
-
-        `getUserBalances(user, tokens)` is already user-scoped. Share data is
-        retained only as metadata for explainability and recovery diagnostics.
-        """
+        """Read user's vault position directly from the vault contract."""
         observed_at = utc_now()
         checksum_user = self.web3.to_checksum_address(user_address)
 
@@ -341,6 +342,93 @@ class VaultShareReader:
             total_shares = None
             ownership_pct = None
 
+        if ownership_pct is not None and user_shares is not None and total_shares is not None:
+            return self._read_share_based_position(
+                observed_at=observed_at,
+                token_addresses=token_addresses,
+                asset_map=asset_map,
+                chain_id=chain_id,
+                user_shares=user_shares,
+                total_shares=total_shares,
+                ownership_pct=ownership_pct,
+            )
+
+        return self._read_legacy_user_balances(
+            observed_at=observed_at,
+            checksum_user=checksum_user,
+            token_addresses=token_addresses,
+            asset_map=asset_map,
+            chain_id=chain_id,
+            user_shares=user_shares,
+            total_shares=total_shares,
+            ownership_pct=ownership_pct,
+        )
+
+    def _read_share_based_position(
+        self,
+        *,
+        observed_at,
+        token_addresses: list[str],
+        asset_map: dict[str, dict[str, object]],
+        chain_id: int,
+        user_shares: int,
+        total_shares: int,
+        ownership_pct: Decimal,
+    ) -> list[BalanceObservation]:
+        balances: list[BalanceObservation] = []
+        share_pct_text = f"{float(ownership_pct * 100):.2f}%"
+
+        for addr in token_addresses:
+            raw_vault_balance = self._read_raw_vault_balance(addr)
+            if raw_vault_balance <= 0:
+                continue
+
+            raw_user_balance = (raw_vault_balance * user_shares) // total_shares if total_shares > 0 else 0
+            if raw_user_balance <= 0:
+                continue
+
+            asset = asset_map.get(addr.lower(), {})
+            decimals = int(asset.get("decimals", 18))
+            balances.append(
+                BalanceObservation(
+                    asset_key=str(asset.get("asset_key", "")),
+                    asset_symbol=str(asset.get("symbol", "")),
+                    asset_address=addr,
+                    chain_id=chain_id,
+                    balance=_scaled_token_amount(raw_user_balance, decimals),
+                    decimals=decimals,
+                    observed_timestamp=observed_at,
+                    balance_source="vault_share_of_vault_balances",
+                    status="ok",
+                    status_code="DATA_FRESH",
+                    status_reason=(
+                        "User position derived from live vault balances and proportional share ownership "
+                        f"({share_pct_text})."
+                    ),
+                    metadata={
+                        "user_shares": str(user_shares),
+                        "total_shares": str(total_shares),
+                        "ownership_pct": str(ownership_pct),
+                        "raw_vault_balance": str(raw_vault_balance),
+                        "raw_user_balance": str(raw_user_balance),
+                    },
+                )
+            )
+
+        return balances
+
+    def _read_legacy_user_balances(
+        self,
+        *,
+        observed_at,
+        checksum_user: str,
+        token_addresses: list[str],
+        asset_map: dict[str, dict[str, object]],
+        chain_id: int,
+        user_shares: int | None,
+        total_shares: int | None,
+        ownership_pct: Decimal | None,
+    ) -> list[BalanceObservation]:
         checksum_tokens = [self.web3.to_checksum_address(a) for a in token_addresses]
         raw_balances = self.vault_contract.functions.getUserBalances(checksum_user, checksum_tokens).call()
 
@@ -363,11 +451,11 @@ class VaultShareReader:
                     balance=_scaled_token_amount(raw_user_balance, decimals),
                     decimals=decimals,
                     observed_timestamp=observed_at,
-                    balance_source="vault_shares_getUserBalances",
+                    balance_source="vault_legacy_user_balances",
                     status="ok",
                     status_code="DATA_FRESH",
                     status_reason=(
-                        "User position read from vault getUserBalances "
+                        "User position read from legacy vault getUserBalances "
                         f"with share metadata {share_pct_text}."
                     ),
                     metadata={
@@ -380,6 +468,16 @@ class VaultShareReader:
             )
 
         return balances
+
+    def _read_raw_vault_balance(self, token_address: str) -> int:
+        if token_address.lower() == ZERO_ADDRESS.lower():
+            return int(self.web3.eth.get_balance(self.vault_address))
+
+        contract = self.web3.eth.contract(
+            address=self.web3.to_checksum_address(token_address),
+            abi=ERC20_BALANCE_ABI,
+        )
+        return int(contract.functions.balanceOf(self.vault_address).call())
 
 
 class PortfolioSnapshotEngine:
