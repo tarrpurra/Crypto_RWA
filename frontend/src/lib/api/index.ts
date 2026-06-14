@@ -5,5 +5,6 @@ export { decisionsApi } from "./decisions";
 export { marketApi } from "./market";
 export { portfolioApi } from "./portfolio";
 export { riskApi } from "./risk";
+export { strategyApi } from "./strategy";
 export { systemApi } from "./system";
 export type * from "./types";

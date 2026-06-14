@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from datetime import datetime, timedelta, timezone
 
-from services.agent.app.schemas.market_data import NormalizedPriceSnapshot, RawPriceSnapshot
+from sqlalchemy import func, select
+
+from services.agent.app.schemas.market_data import NormalizedPriceSnapshot, PriceHistoryPoint, RawPriceSnapshot
 from services.agent.app.schemas.quotes import NormalizedQuoteSnapshot, RawQuoteSnapshot
 from services.agent.modules.market_data.snapshots import PriceIngestionBundle, QuoteIngestionBundle
 from services.agent.repositories.db.normalization import normalize_asset_symbol
@@ -81,6 +83,67 @@ class MarketDataRepository:
         quotes = self.latest_normalized_quotes_for_pair(token_in, token_out)
         quotes.sort(key=lambda snapshot: (snapshot.candidate_rank is None, snapshot.candidate_rank or 10**9))
         return quotes[0] if quotes else None
+
+    def price_history(
+        self,
+        asset_symbol: str,
+        range_hours: int = 24,
+        bucket_minutes: int = 60,
+    ) -> list[PriceHistoryPoint]:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=range_hours)
+        with create_session() as session:
+            records = session.scalars(
+                select(PriceSnapshotRecord)
+                .where(
+                    PriceSnapshotRecord.asset_symbol.ilike(asset_symbol),
+                    PriceSnapshotRecord.record_kind == "normalized",
+                    PriceSnapshotRecord.observed_time >= cutoff,
+                )
+                .order_by(PriceSnapshotRecord.observed_time.asc())
+            ).all()
+
+        if not records:
+            return []
+
+        buckets: dict[int, list[float]] = {}
+        bucket_seconds = bucket_minutes * 60
+
+        for record in records:
+            if record.price is None:
+                continue
+            try:
+                price = float(record.price)
+            except (ValueError, TypeError):
+                continue
+            obs = record.observed_time
+            if obs is None:
+                obs = record.ingest_time
+            if obs.tzinfo is None:
+                obs = obs.replace(tzinfo=timezone.utc)
+            bucket_key = int(obs.timestamp() // bucket_seconds)
+            buckets.setdefault(bucket_key, []).append(price)
+
+        if not buckets:
+            return []
+
+        points: list[PriceHistoryPoint] = []
+        sorted_keys = sorted(buckets.keys())
+        for bucket_key in sorted_keys:
+            prices = buckets[bucket_key]
+            bucket_dt = datetime.fromtimestamp(bucket_key * bucket_seconds, tz=timezone.utc)
+            points.append(
+                PriceHistoryPoint(
+                    time=bucket_dt,
+                    open=prices[0],
+                    high=max(prices),
+                    low=min(prices),
+                    close=prices[-1],
+                    avg=sum(prices) / len(prices),
+                    samples=len(prices),
+                )
+            )
+
+        return points
 
     @staticmethod
     def _price_record_from_raw(snapshot: RawPriceSnapshot) -> PriceSnapshotRecord:

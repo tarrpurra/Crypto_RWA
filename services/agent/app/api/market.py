@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import timedelta
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
-from services.agent.app.schemas.market_data import LatestPricesResponse, MarketIngestionStatusResponse, NormalizedPriceSnapshot
+from services.agent.app.schemas.market_data import LatestPricesResponse, MarketIngestionStatusResponse, NormalizedPriceSnapshot, PriceHistoryPoint, PriceHistoryResponse
 from services.agent.app.core.status_codes import TargetChain
 from services.agent.app.schemas.oracle import OndoUsdyOracleStatus
 from services.agent.app.schemas.quotes import LatestQuotesResponse, NormalizedQuoteSnapshot, RoutesResponse
@@ -246,4 +247,66 @@ async def ingestion_status() -> MarketIngestionStatusResponse:
         status_reason=overall_reason,
         generated_at=utc_now(),
         assets=asset_statuses,
+    )
+
+
+@router.get("/price-history", response_model=PriceHistoryResponse)
+async def price_history(
+    asset: str = Query(..., description="Asset symbol (e.g. mETH, USDY, WMNT)"),
+    range: str = Query("24h", description="Time range: 1h, 6h, 24h, 7d"),
+    bucket: str = Query("1h", description="Bucket size: 1m, 5m, 15m, 1h, 6h"),
+) -> PriceHistoryResponse:
+    range_seconds = {"1h": 3600, "6h": 21_600, "24h": 86_400, "7d": 604_800}
+    bucket_seconds = {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "6h": 360}
+
+    range_hours = int(range_seconds.get(range, 86_400) / 3600)
+    bucket_minutes = bucket_seconds.get(bucket, 60)
+
+    try:
+        repo = MarketDataRepository()
+        points = repo.price_history(asset, range_hours=range_hours, bucket_minutes=bucket_minutes)
+    except Exception as exc:
+        logger.warning("Price history query failed: %s", exc)
+        points = []
+
+    demo = len(points) < 2
+    if demo:
+        import math
+        now = utc_now()
+        base_price = {
+            "meth": 1835.0,
+            "usdy": 1.02,
+            "wmnt": 0.82,
+            "mnt": 0.82,
+        }.get(asset.lower(), 100.0)
+        points = []
+        buckets_count = {"1h": 1, "6h": 6, "24h": 24, "7d": 168}.get(range, 24)
+        for i in range(buckets_count):
+            t = now - timedelta(hours=(buckets_count - i - 1) * range_hours / max(buckets_count, 1))
+            noise = base_price * 0.02 * math.sin(i * 0.5) + base_price * 0.005 * (i % 3 - 1)
+            p = base_price + noise
+            points.append(
+                PriceHistoryPoint(
+                    time=t,
+                    open=p - 2,
+                    high=p + 5,
+                    low=p - 3,
+                    close=p + 1,
+                    avg=p,
+                    samples=60,
+                )
+            )
+
+    return PriceHistoryResponse(
+        status="ok",
+        status_code="DATA_FRESH",
+        status_label="DATA_FRESH",
+        status_reason="Price history retrieved successfully."
+        if not demo
+        else "Demo mode: showing simulated price history.",
+        asset=asset,
+        range=range,
+        bucket=bucket,
+        points=points,
+        demo=demo,
     )

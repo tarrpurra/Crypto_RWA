@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from web3 import Web3
 
 from services.agent.app.core.settings import Settings
-from services.agent.app.core.status_codes import DataStatusCode, ExecutionStatusCode, RuntimeMode, TargetChain
+from services.agent.app.core.status_codes import DataStatusCode, ExecutionStatusCode, ProposalStatusCode, RuntimeMode, TargetChain
 from services.agent.app.schemas.portfolio import AssetBalance, PortfolioSnapshot, PortfolioSnapshotResponse
 from services.agent.app.schemas.allocation import RebalanceAction
 from services.agent.app.schemas.proposals import (
@@ -32,8 +32,9 @@ from services.agent.modules.market_data import PRICE_SNAPSHOT_STORE
 from services.agent.modules.oracle import get_ondo_usdy_oracle_adapter
 from services.agent.modules.oracle.freshness import age_seconds, utc_now
 from services.agent.modules.quotes import get_quote_service
+from services.agent.modules.strategy_policy.runtime import resolve_requested_profile_name, resolve_target_weights
 from services.agent.repositories.db.market_repository import MarketDataRepository
-from services.agent.strategies.allocation.profiles import get_allocation_profile, get_allocation_profile_for_chain, normalize_profile_name
+from services.agent.strategies.allocation.profiles import get_allocation_profile
 from services.agent.strategies.allocation.rebalance import compute_rebalance
 
 
@@ -84,9 +85,13 @@ def _guard_thresholds(settings: Settings) -> tuple[Decimal, Decimal, Decimal, De
 
 
 def _normalize_weights(request: InvestmentPlanRequest, settings: Settings) -> tuple[dict[str, float], dict[str, float], list[str]]:
-    original_profile_name, original_weights = get_allocation_profile(request.risk_profile)
-    profile_name, ai_weights = get_allocation_profile_for_chain(request.risk_profile, settings.target_chain.value)
+    requested_profile_name = str(request.risk_profile or "").strip()
+    profile_name = resolve_requested_profile_name(requested_profile_name, settings.target_chain.value)
+    profile_name, ai_weights, _ = resolve_target_weights(profile_name, settings.target_chain.value)
     warnings: list[str] = []
+    original_profile_name = profile_name
+    if not profile_name.startswith("Custom Strategy"):
+        original_profile_name, _ = get_allocation_profile(requested_profile_name)
     if request.allocation_mode.lower().startswith("manual"):
         if not request.manual_target_weights:
             raise HTTPException(status_code=400, detail="Manual allocation mode requires manual_target_weights.")
@@ -100,7 +105,7 @@ def _normalize_weights(request: InvestmentPlanRequest, settings: Settings) -> tu
         }
     else:
         selected_weights = dict(ai_weights)
-        if profile_name != original_profile_name:
+        if not profile_name.startswith("Custom Strategy") and profile_name != original_profile_name:
             warnings.append(f"Risk profile alias normalized to {profile_name}.")
     return ai_weights, selected_weights, warnings
 
@@ -725,7 +730,7 @@ def _encode_trade_proposal(
         plan_hash=plan_hash,
         wallet_or_vault=recipient,
         payload=payload,
-        status_code=ExecutionStatusCode.EXECUTION_READY.value,
+        status_code=ProposalStatusCode.PROPOSAL_PENDING_APPROVAL.value,
         risk_snapshot_id=None,
         created_at=t_now,
         updated_at=t_now,
@@ -750,7 +755,7 @@ def build_investment_plan(
     risk: RiskAssessmentResponse,
     actual_portfolio: PortfolioSnapshotResponse | None = None,
 ) -> tuple[InvestmentPlanResponse, list[tuple[TradeProposal, str]]]:
-    normalized_profile = normalize_profile_name(request.risk_profile)
+    normalized_profile = resolve_requested_profile_name(request.risk_profile, settings.target_chain.value)
     deposit_amount = Decimal(str(request.deposit_amount))
     if deposit_amount <= 0:
         raise HTTPException(status_code=400, detail="Deposit amount must be greater than zero.")
@@ -931,7 +936,7 @@ def build_investment_plan(
                 description="Wrap native MNT into WMNT in the connected wallet before approvals and swaps.",
                 asset_symbol="WMNT",
                 amount=str(round(request.deposit_amount, 8)),
-                requires_user_action=not ai_managed_execution,
+                requires_user_action=True,
             )
         )
         step_index += 1
@@ -943,7 +948,7 @@ def build_investment_plan(
                 description=f"Approve {swap.token_in_symbol} for router spend before executing {swap.token_in_symbol}->{swap.token_out_symbol}.",
                 asset_symbol=swap.token_in_symbol,
                 amount=str(round(swap.amount_in, 8)),
-                requires_user_action=not ai_managed_execution,
+                requires_user_action=True,
             )
         )
         step_index += 1
@@ -984,18 +989,14 @@ def build_investment_plan(
     elif execution_ready:
         response_status = "ok"
         response_status_code = ExecutionStatusCode.EXECUTION_READY.value
-        if rebalance_swaps:
-            response_status_reason = (
-                "Rebalance plan is ready for automatic execution by full access AI."
-                if settings.ai_decision_maker_enabled
-                else "Rebalance plan is ready for human approval."
-            )
+        if settings.ai_decision_maker_enabled:
+            response_status_reason = "AI created a trade proposal from the passed recommendation. Human approval is required before execution."
+        elif linked_proposals:
+            response_status_reason = "Trade proposal created. Human approval is required before execution."
+        elif rebalance_swaps:
+            response_status_reason = "Rebalance recommendation is ready, but no approval-ready proposal could be created."
         else:
-            response_status_reason = (
-                "Investment plan is ready for automatic execution by full access AI."
-                if settings.ai_decision_maker_enabled
-                else "Investment plan is ready for human approval."
-            )
+            response_status_reason = "Investment recommendation is ready, but no approval-ready proposal could be created."
     else:
         response_status = "ok"
         response_status_code = ExecutionStatusCode.EXECUTION_SKIPPED.value
@@ -1035,6 +1036,8 @@ def build_investment_plan(
             "runtime_mode": settings.runtime_mode.value,
             "target_chain": settings.target_chain.value,
             "execution_required": execution_required,
+            "human_approval_required": bool(linked_proposals),
+            "proposal_creation_mode": "ai_auto" if settings.ai_decision_maker_enabled else "manual",
         },
     )
     for proposal in linked_proposals:

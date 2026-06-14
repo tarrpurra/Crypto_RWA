@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import logging
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
 from services.agent.app.api.investment_scope import InvestmentScopeInput, build_scoped_decision_response
 from services.agent.app.api.portfolio import current_portfolio
+from services.agent.app.api.vault import get_vault_balance_snapshot
 from services.agent.app.core.status_codes import DataStatusCode, ExecutionStatusCode
 from services.agent.app.core.settings import get_settings
 from services.agent.app.schemas.proposals import (
@@ -54,6 +56,13 @@ def _address_to_symbol_map(settings) -> dict[str, str]:
             continue
         mapping[str(address).lower()] = str(symbol)
     return mapping
+
+
+def _safe_decimal(value: str | None) -> Decimal:
+    try:
+        return Decimal(str(value or "0"))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal("0")
 
 
 def _save_proposal_record(proposal: TradeProposal, calldata: str) -> None:
@@ -126,12 +135,15 @@ async def get_latest_decisions(
         return response
     from services.agent.modules.decisions import build_decision_context
     context = await build_decision_context(wallet_address=wallet_address)
-    decision, actions = compute_rebalance(
-        context.portfolio,
-        context.risk_snapshot,
-        context.profile_name,
-        target_weights_override=context.target_weights,
-    )
+    try:
+        decision, actions = compute_rebalance(
+            context.portfolio,
+            context.risk_snapshot,
+            context.profile_name,
+            target_weights_override=context.target_weights,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     reasoning_portfolio = context.actual_portfolio or context.portfolio
     response = await generate_recommendation_reasoning(reasoning_portfolio, context.risk_snapshot, decision, actions)
     logger.info(
@@ -158,6 +170,32 @@ async def create_investment_plan(request: InvestmentPlanRequest) -> InvestmentPl
         request.allocation_mode,
         request.manual_target_weights,
     )
+    if not request.wallet_address:
+        raise HTTPException(status_code=400, detail="wallet_address is required to create a trade proposal.")
+
+    vault_snapshot = await get_vault_balance_snapshot(request.wallet_address)
+    if not vault_snapshot.balances or _safe_decimal(vault_snapshot.total_value_usd) <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Deposit funds into the vault before AI can create trade proposals.",
+        )
+
+    execution_symbol = "WMNT" if request.deposit_asset_symbol.upper() == "MNT" else request.deposit_asset_symbol.upper()
+    matching_balance = next(
+        (balance for balance in vault_snapshot.balances if balance.asset_symbol.upper() == execution_symbol),
+        None,
+    )
+    available_balance = _safe_decimal(matching_balance.balance if matching_balance is not None else "0")
+    requested_amount = Decimal(str(request.deposit_amount))
+    if available_balance < requested_amount:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Vault balance for {execution_symbol} is {available_balance.normalize():f}. "
+                f"Deposit funds into the vault before creating a proposal for {requested_amount.normalize():f} {request.deposit_asset_symbol}."
+            ),
+        )
+
     from services.agent.modules.decisions import build_decision_context
 
     context = await build_decision_context(

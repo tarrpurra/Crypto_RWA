@@ -140,6 +140,33 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual(decision.recommended_action, "HOLD")
         self.assertEqual(len(actions), 0)
 
+    def test_custom_strategy_target_weights_do_not_require_static_profile_lookup(self) -> None:
+        balances = [
+            AssetBalance(asset_symbol="USDY", balance=350000.0, value_usd=350000.0, weight=0.35),
+            AssetBalance(asset_symbol="mETH", balance=185.71, value_usd=650000.0, weight=0.65),
+        ]
+        portfolio = PortfolioSnapshot(
+            snapshot_id="port_test_custom_strategy",
+            wallet_or_vault="0xvault",
+            total_value_usd=1000000.0,
+            balances=balances,
+            weights={"USDY": 0.35, "mETH": 0.65},
+            status_code="DATA_FRESH",
+            status_reason="",
+            created_at=self.now
+        )
+
+        decision, actions = compute_rebalance(
+            portfolio,
+            self.risk_normal,
+            "Custom Strategy v1.0.0",
+            target_weights_override={"USDY": 0.6, "mETH": 0.4},
+        )
+
+        self.assertEqual(decision.profile_name, "Custom Strategy v1.0.0")
+        self.assertEqual(decision.recommended_action, "REBALANCE")
+        self.assertGreater(len(actions), 0)
+
     def test_missing_position_pricing_does_not_look_normal(self) -> None:
         balances = [
             AssetBalance(asset_symbol="USDY", balance=1.0, value_usd=0.0, weight=0.0),

@@ -19,7 +19,7 @@ export function useProposalActivity() {
   const [entries, setEntries] = usePersistentState<ProposalActivityEntry[]>(STORAGE_KEY, []);
 
   const appendEntry = (entry: ProposalActivityEntry) => {
-    setEntries((current) => [entry, ...current].slice(0, 50));
+    setEntries((current) => [entry, ...current].slice(0, 10));
   };
 
   const getEntriesForProposal = useMemo(

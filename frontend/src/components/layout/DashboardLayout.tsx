@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 
 import { cn } from "@/lib/utils";
+import { ProposalNotification } from "@/components/dashboard/ProposalNotification";
 import { RenderBoundary } from "./RenderBoundary";
 import { TopBar } from "./TopBar";
 
@@ -24,6 +25,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
           useDocumentScroll ? "min-h-screen overflow-visible" : "h-screen overflow-hidden",
         )}
       >
+        <ProposalNotification />
         <RenderBoundary
           title="Top bar failed to render"
           description="The shell chrome hit a runtime error. Reload after checking the browser console."

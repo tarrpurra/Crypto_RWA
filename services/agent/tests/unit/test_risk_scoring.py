@@ -53,7 +53,7 @@ class RiskScoringTests(unittest.TestCase):
         mock_quotes.return_value = [
             NormalizedQuoteSnapshot(
                 snapshot_id="q1", protocol="agni", route_id="usdy_route", route_label="exactInputSingle",
-                token_in_symbol="USDY", token_out_symbol="USDC", amount_in="1000", amount_out="1050",
+                token_in_symbol="USDY", token_out_symbol="mETH", amount_in="1000", amount_out="1050",
                 quoted_price="1.05", estimated_slippage_bps="10", route_depth_usd="100000",
                 sample_timestamp=self.now, freshness_status="ok", status_code="QUOTE_FRESH",
                 status_reason=""
@@ -105,7 +105,7 @@ class RiskScoringTests(unittest.TestCase):
         mock_quotes.return_value = [
             NormalizedQuoteSnapshot(
                 snapshot_id="q1", protocol="agni", route_id="usdy_route", route_label="exactInputSingle",
-                token_in_symbol="USDY", token_out_symbol="USDC", amount_in="1000", amount_out="1010",
+                token_in_symbol="USDY", token_out_symbol="mETH", amount_in="1000", amount_out="1010",
                 quoted_price="1.01", estimated_slippage_bps="10", route_depth_usd="100000",
                 sample_timestamp=self.now, freshness_status="ok", status_code="QUOTE_FRESH",
                 status_reason=""

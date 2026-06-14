@@ -35,6 +35,29 @@ type EvidenceItem = {
   status: EvidenceStatus;
 };
 
+function reasoningStepStatusToTimelineStatus(status: string): TimelineStatus {
+  if (status === "complete") {
+    return "complete";
+  }
+  if (status === "paused") {
+    return "paused";
+  }
+  if (status === "blocked" || status === "failed") {
+    return "blocked";
+  }
+  return "warning";
+}
+
+function guardrailSeverityToEvidenceStatus(severity: string): EvidenceStatus {
+  if (severity === "hard_block") {
+    return "bad";
+  }
+  if (severity === "warning") {
+    return "warning";
+  }
+  return "good";
+}
+
 function normalizeSentence(value: string | undefined, fallback: string) {
   if (!value) {
     return fallback;
@@ -121,6 +144,7 @@ function buildCardData(props: AIReasoningPanelProps) {
     allocation,
     risk,
     decisions,
+    aiReasoningData,
     hasConnectedWallet,
     aiDecisionMakerEnabled,
     swapRecommendations,
@@ -152,21 +176,26 @@ function buildCardData(props: AIReasoningPanelProps) {
     allocation?.decision.reasoning ??
       risk?.status_reason ??
       risk?.reasoning_summary ??
-      decisions?.reasoning_summary,
+      decisions?.reasoning_summary ??
+      aiReasoningData?.decision.reasoningSummary,
     "Portfolio remains within the current operating envelope.",
   );
   const reasoningSummary = normalizeSentence(
+    aiReasoningData?.decision.reasoningSummary ??
     risk?.reasoning_summary ??
       decisions?.reasoning_summary ??
       allocation?.decision.reasoning,
     "The AI reviewed portfolio composition, market inputs, oracle freshness, route liquidity, and policy guards before reaching a decision.",
   );
+  const reasoningStages = aiReasoningData?.stages ?? [];
+  const reasoningGuardrails = aiReasoningData?.guardrails ?? [];
+  const reasoningEvents = aiReasoningData?.events ?? [];
   const nextStep = hardVeto
     ? "Execution is blocked until the guard condition clears and inputs return to a safe state."
     : needsApproval
       ? "A human review is required before the proposal can move into execution."
       : swapRecommendations.length > 0
-        ? `The system is ready to execute ${swapRecommendations.length} linked swap leg${
+          ? `The system is ready to execute ${swapRecommendations.length} linked swap leg${
             swapRecommendations.length > 1 ? "s" : ""
           }.`
         : "No execution step is required. The system remains in monitoring mode.";
@@ -203,157 +232,182 @@ function buildCardData(props: AIReasoningPanelProps) {
       .replace(/\b\w/g, (c) => c.toUpperCase());
   }
 
+  const reasoningTimeline = reasoningStages.length
+    ? reasoningStages.map((stage) => ({
+        title: stage.title,
+        status: reasoningStepStatusToTimelineStatus(stage.status),
+        detail: normalizeSentence(stage.detail, "Backend reasoning data is available."),
+      }))
+    : null;
+
+  const reasoningEvidence = reasoningGuardrails.length
+    ? reasoningGuardrails.slice(0, 4).map((guardrail) => ({
+        label: guardrail.name,
+        value: guardrail.message,
+        status: guardrailSeverityToEvidenceStatus(guardrail.severity),
+      }))
+    : null;
+
   const knownBuckets = new Set(["portfolio_valuation", "concentration_drift", "quote_availability", "oracle_freshness", "policy_guard"]);
 
   const timeline: TimelineStep[] = [];
 
   const valBucket = bucketByName("portfolio_valuation");
-  timeline.push({
-    title: "Portfolio Scan",
-    status: hasConnectedWallet ? "complete" : "warning",
-    detail: valBucket?.reason
-      ?? (leadPosition
-        ? `${leadPosition[0]} exposure at ${(leadPosition[1] * 100).toFixed(2)}%.`
-        : "Current portfolio balances and sleeve weights were loaded."),
-  });
-
-  const mktBucket = bucketByName("quote_availability");
-  timeline.push({
-    title: "Market Fetch",
-    status: mktBucket ? bucketToStepStatus(mktBucket) : sources.length > 0 ? "complete" : "warning",
-    detail: mktBucket?.reason
-      ?? (sources.length > 0
-        ? "USDY, mETH, reserve, and route market data loaded."
-        : "Market data inputs are still loading or unavailable."),
-  });
-
-  const concBucket = bucketByName("concentration_drift");
-  if (concBucket && concBucket.status_code !== "RISK_NORMAL") {
+  if (reasoningTimeline) {
+    timeline.push(...reasoningTimeline);
+  } else {
     timeline.push({
-      title: "Concentration Check",
-      status: bucketToStepStatus(concBucket),
-      detail: concBucket.reason,
+      title: "Portfolio Scan",
+      status: hasConnectedWallet ? "complete" : "warning",
+      detail: valBucket?.reason
+        ?? (leadPosition
+          ? `${leadPosition[0]} exposure at ${(leadPosition[1] * 100).toFixed(2)}%.`
+          : "Current portfolio balances and sleeve weights were loaded."),
     });
-  }
 
-  const oracleBucket = bucketByName("oracle_freshness");
-  timeline.push({
-    title: "Oracle Check",
-    status: oracleBucket
-      ? bucketToStepStatus(oracleBucket)
-      : hardVeto
-        ? "blocked"
-        : risk?.freshness_status === "fresh"
-          ? "complete"
-          : "warning",
-    detail: oracleBucket?.reason
-      ?? (risk?.freshness_status === "fresh"
-        ? "Oracle freshness is within the safe execution threshold."
+    const mktBucket = bucketByName("quote_availability");
+    timeline.push({
+      title: "Market Fetch",
+      status: mktBucket ? bucketToStepStatus(mktBucket) : sources.length > 0 ? "complete" : "warning",
+      detail: mktBucket?.reason
+        ?? (sources.length > 0
+          ? "USDY, mETH, reserve, and route market data loaded."
+          : "Market data inputs are still loading or unavailable."),
+    });
+
+    const concBucket = bucketByName("concentration_drift");
+    if (concBucket && concBucket.status_code !== "RISK_NORMAL") {
+      timeline.push({
+        title: "Concentration Check",
+        status: bucketToStepStatus(concBucket),
+        detail: concBucket.reason,
+      });
+    }
+
+    const oracleBucket = bucketByName("oracle_freshness");
+    timeline.push({
+      title: "Oracle Check",
+      status: oracleBucket
+        ? bucketToStepStatus(oracleBucket)
         : hardVeto
-          ? "Oracle or freshness policy failed and blocked execution."
-          : "Freshness checks require review before execution."),
-  });
+          ? "blocked"
+          : risk?.freshness_status === "fresh"
+            ? "complete"
+            : "warning",
+      detail: oracleBucket?.reason
+        ?? (risk?.freshness_status === "fresh"
+          ? "Oracle freshness is within the safe execution threshold."
+          : hardVeto
+            ? "Oracle or freshness policy failed and blocked execution."
+            : "Freshness checks require review before execution."),
+    });
 
-  const otherBuckets = buckets.filter((b) => !knownBuckets.has(b.bucket));
-  for (const b of otherBuckets) {
+    const otherBuckets = buckets.filter((b) => !knownBuckets.has(b.bucket));
+    for (const b of otherBuckets) {
+      timeline.push({
+        title: formatBucketName(b.bucket),
+        status: bucketToStepStatus(b),
+        detail: b.reason,
+      });
+    }
+
+    const policyBucket = bucketByName("policy_guard");
     timeline.push({
-      title: formatBucketName(b.bucket),
-      status: bucketToStepStatus(b),
-      detail: b.reason,
+      title: "Policy Guard",
+      status: hardVeto || warnings > 0 ? "blocked" : "complete",
+      detail: policyBucket?.reason
+        ?? (hardVeto
+          ? "One or more portfolio or policy guards blocked new allocation."
+          : warnings > 0
+            ? "Guard conditions require approval before allocation can proceed."
+            : "No active policy guard is blocking the proposal."),
+    });
+
+    timeline.push({
+      title: "Final Decision",
+      status: action === "PAUSE" ? "paused" : needsApproval ? "warning" : "complete",
+      detail:
+        action === "PAUSE"
+          ? "Pause strategy and request human approval."
+          : needsApproval
+            ? "Recommendation is ready but still requires human approval."
+            : "Decision is ready to move into execution.",
     });
   }
 
-  const policyBucket = bucketByName("policy_guard");
-  timeline.push({
-    title: "Policy Guard",
-    status: hardVeto || warnings > 0 ? "blocked" : "complete",
-    detail: policyBucket?.reason
-      ?? (hardVeto
-        ? "One or more portfolio or policy guards blocked new allocation."
-        : warnings > 0
-          ? "Guard conditions require approval before allocation can proceed."
-          : "No active policy guard is blocking the proposal."),
-  });
-
-  timeline.push({
-    title: "Final Decision",
-    status: action === "PAUSE" ? "paused" : needsApproval ? "warning" : "complete",
-    detail:
-      action === "PAUSE"
-        ? "Pause strategy and request human approval."
-        : needsApproval
-          ? "Recommendation is ready but still requires human approval."
-          : "Decision is ready to move into execution.",
-  });
-
-  const evidence: EvidenceItem[] = [
-    ...(leadPosition
-      ? [
-          {
-            label: `${leadPosition[0]} concentration`,
-            value: `${(leadPosition[1] * 100).toFixed(2)}%`,
-            limit: "target threshold",
-            status: leadPosition[1] > 0.5 ? "bad" : "good",
-          } satisfies EvidenceItem,
-        ]
-      : []),
-    ...(risk?.freshness_status
-      ? [
-          {
-            label: "Oracle freshness",
-            value:
-              risk.freshness_status === "fresh"
-                ? "Safe"
-                : "Below safe threshold",
-            status: risk.freshness_status === "fresh" ? "good" : "warning",
-          } satisfies EvidenceItem,
-        ]
-      : []),
-    ...(swapRecommendations.length > 0
-      ? [
-          {
-            label: "Execution routes",
-            value: `${swapRecommendations.length} available`,
-            status: "good",
-          } satisfies EvidenceItem,
-        ]
-      : [
-          {
-            label: "Execution routes",
-            value: action === "PAUSE" ? "Not execution-safe" : "Pending",
-            status: action === "PAUSE" ? "bad" : "warning",
-          } satisfies EvidenceItem,
-        ]),
-    {
-      label: "Execution status",
-      value: statusLabel(executionGate),
-      status: executionGate === "allowed" ? "good" : "bad",
-    },
-  ].slice(0, 4);
+  const evidence: EvidenceItem[] = (
+    reasoningEvidence ?? [
+      ...(leadPosition
+        ? [
+            {
+              label: `${leadPosition[0]} concentration`,
+              value: `${(leadPosition[1] * 100).toFixed(2)}%`,
+              limit: "target threshold",
+              status: leadPosition[1] > 0.5 ? "bad" : "good",
+            } satisfies EvidenceItem,
+          ]
+        : []),
+      ...(risk?.freshness_status
+        ? [
+            {
+              label: "Oracle freshness",
+              value:
+                risk.freshness_status === "fresh"
+                  ? "Safe"
+                  : "Below safe threshold",
+              status: risk.freshness_status === "fresh" ? "good" : "warning",
+            } satisfies EvidenceItem,
+          ]
+        : []),
+      ...(swapRecommendations.length > 0
+        ? [
+            {
+              label: "Execution routes",
+              value: `${swapRecommendations.length} available`,
+              status: "good",
+            } satisfies EvidenceItem,
+          ]
+        : [
+            {
+              label: "Execution routes",
+              value: action === "PAUSE" ? "Not execution-safe" : "Pending",
+              status: action === "PAUSE" ? "bad" : "warning",
+            } satisfies EvidenceItem,
+          ]),
+      {
+        label: "Execution status",
+        value: statusLabel(executionGate),
+        status: executionGate === "allowed" ? "good" : "bad",
+      },
+    ]
+  ).slice(0, 4);
 
   return {
     updated: updatedAgo(
+      aiReasoningData?.summary.lastUpdated ??
       allocation?.generated_at ??
         allocation?.decision.created_at ??
         risk?.generated_at ??
         decisions?.metadata?.timestamp,
     ),
-    decision: compactActionText(action),
+    decision: aiReasoningData?.summary.action ? compactActionText(aiReasoningData.summary.action) : compactActionText(action),
     riskScore: risk?.risk_score_normalized ?? risk?.risk_score ?? 0,
-    confidence,
+    confidence: aiReasoningData?.summary.confidence ?? confidence,
     signals: sources.length,
     routes: availableRouteCount ?? swapRecommendations.length,
-    warnings,
+    warnings: aiReasoningData ? Math.max(warnings, aiReasoningData.guardrails.length) : warnings,
     executionGate,
     mainReason:
       action === "PAUSE"
         ? "Risk constraints require pausing new allocation."
         : normalizeSentence(decisionReason, "Decision generated from current portfolio state."),
     summaryLine:
-      action === "PAUSE"
-        ? "Risk constraints require pausing new allocation."
-        : summaryTextFromReason(decisionReason),
-    fullReasoning: `${reasoningSummary} ${nextStep}`.replace(/\s+/g, " ").trim(),
+      aiReasoningData?.decision.reasoningSummary
+        ? summaryTextFromReason(aiReasoningData.decision.reasoningSummary)
+        : action === "PAUSE"
+          ? "Risk constraints require pausing new allocation."
+          : summaryTextFromReason(decisionReason),
+    fullReasoning: `${reasoningSummary} ${nextStep} ${reasoningEvents.map((event) => event.message).slice(0, 2).join(" ")}`.replace(/\s+/g, " ").trim(),
     timeline,
     evidence,
   };

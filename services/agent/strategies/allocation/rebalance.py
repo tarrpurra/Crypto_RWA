@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from services.agent.app.core.status_codes import RiskStatusCode
 from services.agent.app.schemas.portfolio import PortfolioSnapshot
 from services.agent.app.schemas.risk import RiskSnapshot
@@ -21,20 +20,25 @@ def compute_rebalance(
     target_weights_override: dict[str, float] | None = None,
 ) -> tuple[AllocationDecision, list[RebalanceAction]]:
     now = utc_now()
-    profile_name, target_profile = get_allocation_profile(profile_name)
+    resolved_profile_name = profile_name
     if target_weights_override:
         target_profile = {
             asset_symbol: float(weight)
             for asset_symbol, weight in target_weights_override.items()
             if float(weight) > 0
         }
+        if not target_profile:
+            raise ValueError("target_weights_override must contain at least one positive weight.")
+        resolved_profile_name = profile_name.strip() or "Custom Strategy"
+    else:
+        resolved_profile_name, target_profile = get_allocation_profile(profile_name)
 
     if portfolio.status_code != "DATA_FRESH" or portfolio.total_value_usd <= 0 or not portfolio.balances:
         target_weights = {asset: weight for asset, weight in target_profile.items()}
         decision = AllocationDecision(
             decision_id=f"dec_{int(now.timestamp())}",
             wallet_or_vault=portfolio.wallet_or_vault,
-            profile_name=profile_name,
+            profile_name=resolved_profile_name,
             current_weights=portfolio.weights,
             target_weights=target_weights,
             recommended_action="PAUSE",
@@ -66,7 +70,7 @@ def compute_rebalance(
     
     # Risk-based rebalance constraints
     # - If RISK_VETO or RISK_PAUSE_REQUIRED: recommended_action = "PAUSE", no trades
-    # - If RISK_REDUCE_ONLY: can only reduce risk (sell mETH, buy USDC)
+    # - If RISK_REDUCE_ONLY: can only reduce risk (sell mETH, buy USDY)
     # - If RISK_REBALANCE_ONLY: can only trade to reduce drift
     
     if risk.risk_band in ("RISK_VETO", "RISK_PAUSE_REQUIRED"):
@@ -78,7 +82,7 @@ def compute_rebalance(
         decision = AllocationDecision(
             decision_id=decision_id,
             wallet_or_vault=portfolio.wallet_or_vault,
-            profile_name=profile_name,
+            profile_name=resolved_profile_name,
             current_weights=current_weights,
             target_weights=target_weights,
             recommended_action=recommended_action,
@@ -110,7 +114,7 @@ def compute_rebalance(
                     decision = AllocationDecision(
                         decision_id=decision_id,
                         wallet_or_vault=portfolio.wallet_or_vault,
-                        profile_name=profile_name,
+                        profile_name=resolved_profile_name,
                         current_weights=current_weights,
                         target_weights=target_weights,
                         recommended_action="HOLD",
@@ -134,7 +138,7 @@ def compute_rebalance(
             
     if not significant_drifts:
         recommended_action = "HOLD"
-        reasoning = f"All exposures are within {drift_tolerance*100:.1f}% tolerance of the {profile_name} profile targets."
+        reasoning = f"All exposures are within {drift_tolerance*100:.1f}% tolerance of the {resolved_profile_name} profile targets."
     else:
         # We need to rebalance
         recommended_action = "REBALANCE"
@@ -202,7 +206,7 @@ def compute_rebalance(
             rebalance_notes.append(f"{pair_label}: {action_type} {clipped_amount:.4f} {asset} (~${clipped_val_usd:.2f})")
             
         if rebalance_actions:
-            reasoning = f"Proposed rebalance actions for {profile_name} profile: " + ", ".join(rebalance_notes)
+            reasoning = f"Proposed rebalance actions for {resolved_profile_name} profile: " + ", ".join(rebalance_notes)
         else:
             recommended_action = "HOLD"
             if blocked_by_pricing and blocked_by_risk:
@@ -224,7 +228,7 @@ def compute_rebalance(
     decision = AllocationDecision(
         decision_id=decision_id,
         wallet_or_vault=portfolio.wallet_or_vault,
-        profile_name=profile_name,
+        profile_name=resolved_profile_name,
         current_weights=current_weights,
         target_weights=target_weights,
         recommended_action=recommended_action,

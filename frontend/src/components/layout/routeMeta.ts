@@ -37,14 +37,7 @@ const routeMeta: Array<{ match: RegExp; meta: RouteMeta }> = [
       eyebrow: "Strategy Lab",
     },
   },
-  {
-    match: /^\/settings/,
-    meta: {
-      title: "Settings",
-      description: "Manage environment visibility, diagnostics, and integration settings.",
-      eyebrow: "Operations",
-    },
-  },
+
 ];
 
 const fallbackMeta: RouteMeta = {

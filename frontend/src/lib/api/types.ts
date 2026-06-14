@@ -236,6 +236,183 @@ export interface InvestmentScopeRequest {
   allocation_mode?: string;
 }
 
+export interface StrategyRiskWeights {
+  llm_sentiment: number;
+  liquidity: number;
+  oracle: number;
+  depeg: number;
+  execution: number;
+}
+
+export interface StrategyHardLimits {
+  max_slippage_bps: number;
+  max_gas_gwei: number;
+  max_asset_exposure_pct: number;
+  max_issuer_exposure_pct: number;
+  min_stable_reserve_pct: number;
+  max_llm_influence_pct: number;
+  max_risk_score_for_fresh_allocation: number;
+  force_human_approval_risk_score: number;
+  pause_risk_score: number;
+  global_circuit_breaker: boolean;
+}
+
+export interface StrategyPolicyConfig {
+  strategy_version: string;
+  objective: string;
+  allowed_assets: string[];
+  risk_weights: StrategyRiskWeights;
+  hard_limits: StrategyHardLimits;
+  market_check_interval_seconds: number;
+  quote_refresh_interval_seconds: number;
+  risk_recompute_interval_seconds: number;
+  proposal_expiry_seconds: number;
+  simulation_only_mode: boolean;
+  human_approval_required: boolean;
+  notes: string[];
+}
+
+export interface StrategyDraftRequest {
+  user_address?: string | null;
+  strategy_text: string;
+  policy_json?: Record<string, unknown> | null;
+  template_id?: number | null;
+  actor?: string | null;
+}
+
+export interface StrategyValidationError {
+  code: string;
+  message: string;
+  field?: string | null;
+  severity: string;
+}
+
+export interface StrategyTemplateSummary {
+  id: number;
+  name: string;
+  description: string;
+  category: string;
+  prompt_text: string;
+  policy_json: StrategyPolicyConfig;
+  is_system_template: boolean;
+  created_at: string;
+}
+
+export interface StrategyDraftResponse extends StatusEnvelope {
+  draft_id: number;
+  user_address?: string | null;
+  raw_prompt: string;
+  extracted_policy_json?: StrategyPolicyConfig | null;
+  validation_status: string;
+  validation_errors: StrategyValidationError[];
+  safety_score: number;
+  created_at: string;
+  requires_simulation: boolean;
+  template?: StrategyTemplateSummary | null;
+}
+
+export interface StrategyValidationResponse extends StatusEnvelope {
+  draft_id?: number | null;
+  user_address?: string | null;
+  raw_prompt: string;
+  safety_score: number;
+  validation_errors: StrategyValidationError[];
+  extracted_policy_json?: StrategyPolicyConfig | null;
+  requires_simulation: boolean;
+  safe_suggestion?: string | null;
+}
+
+export interface StrategySimulationMetrics {
+  expected_risk_score: number;
+  expected_slippage_bps: number;
+  expected_human_approval_required: boolean;
+  expected_pause_required: boolean;
+  recommendation: string;
+  critical_findings: string[];
+  protective_actions: string[];
+  data_sources_used: string[];
+}
+
+export interface StrategySimulationResponse extends StatusEnvelope {
+  draft_id?: number | null;
+  user_address?: string | null;
+  raw_prompt: string;
+  safety_score: number;
+  extracted_policy_json: StrategyPolicyConfig;
+  simulation: StrategySimulationMetrics;
+  market_context: Record<string, unknown>;
+  risk_context: Record<string, unknown>;
+  validation_errors: StrategyValidationError[];
+  safe_suggestion?: string | null;
+}
+
+export interface StrategyVersionRecordResponse {
+  id: number;
+  version: string;
+  user_address?: string | null;
+  active_policy_json: StrategyPolicyConfig;
+  raw_prompt_snapshot: string;
+  simulation_result_json: Record<string, unknown>;
+  activated_by?: string | null;
+  activated_at?: string | null;
+  status: string;
+}
+
+export interface StrategyAuditEventResponse {
+  id: number;
+  strategy_version_id?: number | null;
+  event_type: string;
+  actor: string;
+  details_json: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface StrategySchedulerSettingsResponse {
+  id: number;
+  strategy_version_id?: number | null;
+  market_check_interval_seconds: number;
+  quote_refresh_interval_seconds: number;
+  risk_recompute_interval_seconds: number;
+  execution_window_seconds: number;
+  updated_at: string;
+}
+
+export interface StrategyActiveResponse extends StatusEnvelope {
+  active_version?: StrategyVersionRecordResponse | null;
+  scheduler?: StrategySchedulerSettingsResponse | null;
+  templates: StrategyTemplateSummary[];
+  versions: StrategyVersionRecordResponse[];
+  audit_events: StrategyAuditEventResponse[];
+  last_validation?: StrategyValidationResponse | null;
+  latest_simulation?: StrategySimulationResponse | null;
+}
+
+export interface StrategyVersionListResponse extends StatusEnvelope {
+  versions: StrategyVersionRecordResponse[];
+}
+
+export interface StrategyTemplateListResponse extends StatusEnvelope {
+  templates: StrategyTemplateSummary[];
+}
+
+export interface StrategyAuditListResponse extends StatusEnvelope {
+  events: StrategyAuditEventResponse[];
+}
+
+export interface StrategyRevertRequest {
+  version: string;
+  actor?: string | null;
+}
+
+export interface StrategySchedulerUpdateRequest {
+  version?: string | null;
+  market_check_interval_seconds: number;
+  quote_refresh_interval_seconds: number;
+  risk_recompute_interval_seconds: number;
+  execution_window_seconds: number;
+  actor?: string | null;
+}
+
 export interface OndoUsdyOracleStatus {
   asset: string;
   source: string;
@@ -560,6 +737,24 @@ export interface DashboardFreshnessPayload {
 export interface DashboardCachePayload {
   hit: boolean;
   ttl_seconds: number;
+}
+
+export interface PriceHistoryPoint {
+  time: string;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  avg: number | null;
+  samples: number;
+}
+
+export interface PriceHistoryResponse extends StatusEnvelope {
+  asset: string;
+  range: string;
+  bucket: string;
+  points: PriceHistoryPoint[];
+  demo: boolean;
 }
 
 export interface DashboardSummaryResponse {

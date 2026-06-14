@@ -8,6 +8,7 @@ import type {
   MarketIngestionStatusResponse,
   NormalizedQuoteSnapshot,
   OndoUsdyOracleStatus,
+  PriceHistoryResponse,
   ProposalExecuteResponse,
   ProposalMutationResponse,
   ProposalsResponse,
@@ -16,6 +17,8 @@ import type {
 
 export const marketApi = {
   ingestionStatus: () => request<MarketIngestionStatusResponse>("/market/ingestion/status"),
+  priceHistory: (asset: string, range = "24h", bucket = "1h") =>
+    request<PriceHistoryResponse>(`/market/price-history?asset=${encodeURIComponent(asset)}&range=${encodeURIComponent(range)}&bucket=${encodeURIComponent(bucket)}`),
   latestPrices: () => request<LatestPricesResponse>("/market/prices/latest"),
   usdyOracle: () => request<OndoUsdyOracleStatus>("/market/oracles/usdy"),
   routes: () => request<RoutesResponse>("/market/routes"),

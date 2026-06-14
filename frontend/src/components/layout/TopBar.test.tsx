@@ -29,8 +29,6 @@ describe("TopBar", () => {
     expect(screen.getByText("Dashboard")).toBeInTheDocument();
     expect(screen.getByText("Risk")).toBeInTheDocument();
     expect(screen.getByText("Decision Log")).toBeInTheDocument();
-    expect(screen.getAllByText("Settings").length).toBeGreaterThan(0);
-    expect(screen.getByText("LOCAL")).toBeInTheDocument();
     expect(screen.getByTestId("topbar-nav")).toBeInTheDocument();
   });
 });

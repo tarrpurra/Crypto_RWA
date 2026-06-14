@@ -200,6 +200,10 @@ async def wallet_balance(wallet_address: str | None = None) -> VaultBalanceRespo
 
 @router.get("/portfolio", response_model=VaultBalanceResponse)
 async def vault_balance(user_address: str | None = None) -> VaultBalanceResponse:
+    return await get_vault_balance_snapshot(user_address)
+
+
+async def get_vault_balance_snapshot(user_address: str | None = None) -> VaultBalanceResponse:
     settings = get_settings()
     vault_address = settings.executor_vault_address
     if not vault_address:
