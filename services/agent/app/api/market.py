@@ -253,13 +253,13 @@ async def ingestion_status() -> MarketIngestionStatusResponse:
 @router.get("/price-history", response_model=PriceHistoryResponse)
 async def price_history(
     asset: str = Query(..., description="Asset symbol (e.g. mETH, USDY, WMNT)"),
-    range: str = Query("24h", description="Time range: 1h, 6h, 24h, 7d"),
+    time_range: str = Query("24h", alias="range", description="Time range: 1h, 6h, 24h, 7d"),
     bucket: str = Query("1h", description="Bucket size: 1m, 5m, 15m, 1h, 6h"),
 ) -> PriceHistoryResponse:
     range_seconds = {"1h": 3600, "6h": 21_600, "24h": 86_400, "7d": 604_800}
     bucket_seconds = {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "6h": 360}
 
-    range_hours = int(range_seconds.get(range, 86_400) / 3600)
+    range_hours = int(range_seconds.get(time_range, 86_400) / 3600)
     bucket_minutes = bucket_seconds.get(bucket, 60)
 
     try:
@@ -280,7 +280,7 @@ async def price_history(
             "mnt": 0.82,
         }.get(asset.lower(), 100.0)
         points = []
-        buckets_count = {"1h": 1, "6h": 6, "24h": 24, "7d": 168}.get(range, 24)
+        buckets_count = {"1h": 1, "6h": 6, "24h": 24, "7d": 168}.get(time_range, 24)
         for i in range(buckets_count):
             t = now - timedelta(hours=(buckets_count - i - 1) * range_hours / max(buckets_count, 1))
             noise = base_price * 0.02 * math.sin(i * 0.5) + base_price * 0.005 * (i % 3 - 1)
@@ -305,7 +305,7 @@ async def price_history(
         if not demo
         else "Demo mode: showing simulated price history.",
         asset=asset,
-        range=range,
+        range=time_range,
         bucket=bucket,
         points=points,
         demo=demo,

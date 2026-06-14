@@ -17,7 +17,7 @@ class AllocationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.now = utc_now()
         # Mock database session to prevent live DB connections in tests
-        self.db_patcher = patch("services.agent.strategies.allocation.rebalance.create_session")
+        self.db_patcher = patch("services.agent.repositories.db.session.create_session")
         self.mock_create_session = self.db_patcher.start()
         self.mock_session = MagicMock()
         self.mock_session.__enter__.return_value = self.mock_session
@@ -51,18 +51,18 @@ class AllocationTests(unittest.TestCase):
         self.db_patcher.stop()
 
     def test_no_rebalance_when_within_drift_tolerance(self) -> None:
-        # Balanced target: USDY: 0.55, mETH: 0.45
+        # Balanced target: USDY: 0.60, mETH: 0.40
         # Current portfolio has exactly balanced weights
         balances = [
-            AssetBalance(asset_symbol="USDY", balance=550000.0, value_usd=550000.0, weight=0.55),
-            AssetBalance(asset_symbol="mETH", balance=128.57, value_usd=450000.0, weight=0.45),
+            AssetBalance(asset_symbol="USDY", balance=600000.0, value_usd=600000.0, weight=0.60),
+            AssetBalance(asset_symbol="mETH", balance=114.28, value_usd=400000.0, weight=0.40),
         ]
         portfolio = PortfolioSnapshot(
             snapshot_id="port_test_balanced",
             wallet_or_vault="0xvault",
             total_value_usd=1000000.0,
             balances=balances,
-            weights={"USDY": 0.55, "mETH": 0.45},
+            weights={"USDY": 0.60, "mETH": 0.40},
             status_code="DATA_FRESH",
             status_reason="",
             created_at=self.now

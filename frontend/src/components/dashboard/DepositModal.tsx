@@ -16,6 +16,7 @@ import { normalizeAddress } from "@/lib/addresses";
 import { vaultApi } from "@/lib/api/vault";
 import { logger } from "@/lib/logger";
 import { useWrapMnt } from "@/hooks/useSwap";
+import { useChainId } from "wagmi";
 
 const DEPOSIT_ASSETS = ["WMNT", "MNT", "USDY", "mETH"] as const;
 const ERC20_APPROVE_ABI = [
@@ -70,6 +71,10 @@ interface DepositModalProps {
   walletData: VaultBalanceResponse | undefined;
   vaultAddress?: string;
   wmntAddress?: string;
+  // Bug E fix: caller passes native MNT balance so the modal can display it
+  // and enable the Max button for MNT deposits (native balance is not in
+  // walletData.balances which only contains ERC-20 positions).
+  nativeMntBalance?: number | null;
   nativeMntEnabled: boolean;
   suggestedAsset?: string;
   suggestedAmount?: string;
@@ -82,14 +87,16 @@ export function DepositModal(props: DepositModalProps) {
   return <DepositModalContent {...props} />;
 }
 
-function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, nativeMntEnabled, suggestedAsset, suggestedAmount }: Omit<DepositModalProps, "open">) {
+
+function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, nativeMntBalance, nativeMntEnabled, suggestedAsset, suggestedAmount }: Omit<DepositModalProps, "open">) {
   const queryClient = useQueryClient();
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
+  const chainId = useChainId();
   const wrapMnt = useWrapMnt();
   const depositAssets = useMemo(() => getDepositAssets(nativeMntEnabled, wmntAddress), [nativeMntEnabled, wmntAddress]);
   const [asset, setAsset] = useState<string>(() => {
-    const initialAsset = suggestedAsset ?? (depositAssets.includes("WMNT") ? "WMNT" : depositAssets[0] ?? "USDY");
+    const initialAsset = suggestedAsset ?? (depositAssets.includes("MNT") ? "MNT" : depositAssets.includes("WMNT") ? "WMNT" : depositAssets[0] ?? "USDY");
     return depositAssets.includes(initialAsset as (typeof DEPOSIT_ASSETS)[number])
       ? initialAsset
       : depositAssets[0] ?? "USDY";
@@ -105,11 +112,29 @@ function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, n
   const walletBalance = walletData?.balances?.find((b) => b.asset_symbol === asset);
   const walletAddress = walletData?.user_address ?? "";
   const normalizedWalletAddress = normalizeAddress(walletAddress);
-  const tokenAddress = walletBalance?.asset_address ?? null;
+  // For WMNT: when wallet balance entry has no asset_address (e.g. 0 balance
+  // returned without address, or query still loading), fall back to the
+  // wmntAddress prop which comes directly from settings and is always reliable.
+  const rawTokenAddress =
+    walletBalance?.asset_address ??
+    (asset === "WMNT" ? wmntAddress : null) ??
+    null;
+  const tokenAddress = rawTokenAddress;
   const normalizedTokenAddress = normalizeAddress(tokenAddress);
-  const walletBalanceNum = Number.parseFloat(walletBalance?.balance ?? "0");
+  // Bug E fix: for native MNT, walletData.balances contains ERC-20 positions
+  // only. Use the caller-supplied nativeMntBalance instead so the user sees
+  // their real MNT balance and the Max button is available.
+  const effectiveWalletBalanceNum = asset === "MNT" && nativeMntBalance != null
+    ? nativeMntBalance
+    : Number.parseFloat(walletBalance?.balance ?? "0");
+  const walletBalanceNum = effectiveWalletBalanceNum;
+  const walletBalanceDisplay = asset === "MNT" && nativeMntBalance != null
+    ? String(nativeMntBalance)
+    : (walletBalance?.balance ?? "");
   const numericAmount = Number.parseFloat(amount || "0");
-  const exceedsWallet = walletBalanceNum > 0 && numericAmount > walletBalanceNum;
+  // Bug fix: simplified to check if amount exceeds wallet balance for all assets
+  // without incorrect guard conditions.
+  const exceedsWallet = numericAmount > walletBalanceNum;
   const hasVaultAddress = Boolean(normalizedVaultAddress);
   const hasDepositTokenAddress = asset === "MNT" ? Boolean(normalizedWmntAddress) : Boolean(normalizedTokenAddress);
   const isValid =
@@ -177,6 +202,7 @@ function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, n
         address: normalizedTokenAddress,
         abi: ERC20_APPROVE_ABI,
         functionName: "approve",
+        chainId,
         args: [normalizedSpender, amountRaw],
       });
       await publicClient?.waitForTransactionReceipt({ hash });
@@ -228,7 +254,12 @@ function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, n
       });
 
       let hash: `0x${string}`;
-      let effectiveTokenAddress: `0x${string}` | null = normalizedTokenAddress ?? null;
+      // For WMNT, fall back to the wmntAddress prop when the wallet balance
+      // entry has no asset_address (covers 0-balance or loading state).
+      let effectiveTokenAddress: `0x${string}` | null =
+        (normalizedTokenAddress ??
+          (asset === "WMNT" ? normalizeAddress(wmntAddress) : undefined)) ??
+        null;
       let effectiveSymbol = asset;
 
       if (asset === "MNT") {
@@ -262,39 +293,43 @@ function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, n
         throw new Error(`${effectiveSymbol} token address is not available for deposit.`);
       }
 
-      const prepare = await vaultApi.depositPrepare(effectiveSymbol, amount, normalizedWalletAddress);
-      logger.info("vault.deposit.prepare", {
-        wallet_address: normalizedWalletAddress,
-        asset: effectiveSymbol,
-        amount,
-        allowance_required: prepare.allowance_required,
-        spender: prepare.spender,
-      });
-
-      const normalizedSpender = normalizeAddress(prepare.spender);
-      if (prepare.allowance_required) {
-        if (!normalizedSpender) {
-          throw new Error("Vault spender address is not available for approval.");
-        }
-        const approveHash = await writeContractAsync({
-          address: effectiveTokenAddress,
-          abi: ERC20_APPROVE_ABI,
-          functionName: "approve",
-          args: [normalizedSpender, amountRaw],
-        });
-        await publicClient?.waitForTransactionReceipt({ hash: approveHash });
-        logger.info("vault.deposit.approve.confirmed", {
+      if (asset === "MNT") {
+        const prepare = await vaultApi.depositPrepare(effectiveSymbol, amount, normalizedWalletAddress);
+        logger.info("vault.deposit.prepare", {
           wallet_address: normalizedWalletAddress,
           asset: effectiveSymbol,
           amount,
-          tx_hash: approveHash,
+          allowance_required: prepare.allowance_required,
+          spender: prepare.spender,
         });
+
+        const normalizedSpender = normalizeAddress(prepare.spender);
+        if (prepare.allowance_required) {
+          if (!normalizedSpender) {
+            throw new Error("Vault spender address is not available for approval.");
+          }
+          const approveHash = await writeContractAsync({
+            address: effectiveTokenAddress,
+            abi: ERC20_APPROVE_ABI,
+            functionName: "approve",
+            chainId,
+            args: [normalizedSpender, amountRaw],
+          });
+          await publicClient?.waitForTransactionReceipt({ hash: approveHash });
+          logger.info("vault.deposit.approve.confirmed", {
+            wallet_address: normalizedWalletAddress,
+            asset: effectiveSymbol,
+            amount,
+            tx_hash: approveHash,
+          });
+        }
       }
 
       hash = await writeContractAsync({
         address: normalizedVaultAddress,
         abi: EXECUTOR_VAULT_ABI,
         functionName: "depositToken",
+        chainId,
         args: [effectiveTokenAddress, amountRaw],
       });
 
@@ -432,9 +467,10 @@ function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, n
             <div>
               <div className="flex items-center justify-between">
                 <p className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">Amount</p>
-                {walletBalance && (
+                {/* Bug E fix: show native MNT balance when asset is MNT */}
+                {walletBalanceDisplay && (
                   <p className="text-[0.6rem] text-muted-foreground">
-                    Wallet: {walletBalance.balance} {asset}
+                    Wallet: {walletBalanceDisplay} {asset}
                   </p>
                 )}
               </div>
@@ -460,9 +496,11 @@ function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, n
                   </Button>
                 )}
               </div>
-              {exceedsWallet && (
+            {exceedsWallet && (
                 <p className="mt-1 text-[0.6rem] text-destructive">
-                  Amount exceeds wallet balance ({walletBalance?.balance} {asset}).
+                  {asset === "WMNT" && walletBalanceNum === 0
+                    ? "Insufficient WMNT balance (0). Select \"MNT\" above to wrap and deposit native MNT."
+                    : `Amount exceeds wallet balance (${walletBalanceDisplay} ${asset}).`}
                 </p>
               )}
             </div>

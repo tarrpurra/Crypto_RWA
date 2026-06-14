@@ -245,9 +245,10 @@ class QuoteService:
                 rate = (price_in / price_out).quantize(Decimal("0.00000001"))
         amount_out = (amount_in * rate).quantize(Decimal("0.0001"))
         slippage_bps = 30
-        snapshot_id = str(uuid4())
+        raw_snapshot_id = str(uuid4())
+        normalized_snapshot_id = str(uuid4())
         raw = RawQuoteSnapshot(
-            snapshot_id=snapshot_id,
+            snapshot_id=raw_snapshot_id,
             protocol=route.protocol,
             route_type=route.route_type,
             chain_id=self.settings.effective_chain_id,
@@ -272,7 +273,7 @@ class QuoteService:
             },
         )
         norm = NormalizedQuoteSnapshot(
-            snapshot_id=snapshot_id,
+            snapshot_id=normalized_snapshot_id,
             protocol=route.protocol,
             route_id=route.route_id or f"{route.protocol.lower()}:{route.token_in}:{route.token_out}:{route.fee_tier_or_bin_step}",
             route_label=route.route_type,

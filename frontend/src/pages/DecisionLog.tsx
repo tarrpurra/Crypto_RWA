@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useAccount, useBalance } from "wagmi";
 import { mantleSepoliaTestnet } from "wagmi/chains";
@@ -21,7 +21,7 @@ import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 import { useProposalActivity } from "@/hooks/useProposalActivity";
 import { useCurrentRisk } from "@/hooks/useRisk";
 import { useStrategyActive } from "@/hooks/useStrategy";
-import { useApproveProposal, useCreateProposal, useExecuteProposal, useProposalDetail, useProposals, useRejectProposal, useWrapMnt } from "@/hooks/useSwap";
+import { useApproveProposal, useCreateProposal, useProposalDetail, useProposals, useRejectProposal } from "@/hooks/useSwap";
 import { useSettings } from "@/hooks/useSystem";
 import { useVaultBalance } from "@/hooks/useVault";
 import type { InvestmentPlanResponse } from "@/lib/api/types";
@@ -135,8 +135,6 @@ export default function DecisionLog() {
   const createPlan = useCreateProposal();
   const approveProposal = useApproveProposal();
   const rejectProposal = useRejectProposal();
-  const executeProposal = useExecuteProposal();
-  const wrapMnt = useWrapMnt();
   const { appendEntry, getEntriesForProposal } = useProposalActivity();
 
   const portfolio = portfolioQuery.data;
@@ -152,7 +150,6 @@ export default function DecisionLog() {
   const reviewModeRequested = searchParams.get("review") === "1";
   const autoCreatePlanRef = useRef<string | null>(null);
   const recommendationOnlyNoticeRef = useRef<string | null>(null);
-  const wrappedPlanIdRef = useRef<string | null>(null);
   const [draftHydrated, setDraftHydrated] = useState(false);
 
   const initialAssetSymbol = searchParams.get("asset");
@@ -176,7 +173,6 @@ export default function DecisionLog() {
   const [activeSessionTab, setActiveSessionTab] = useState("summary");
   const [showRiskDialog, setShowRiskDialog] = useState(false);
   const [plan, setPlan] = useState<InvestmentPlanResponse | null>(null);
-  const [executionInProgress, setExecutionInProgress] = useState(false);
   const proposalDetailQuery = useProposalDetail(activeProposalId);
   const selectedAssetIngestion = useMemo(
     () => market?.assets?.find((item) => item.asset_symbol === assetSymbol) ?? null,
@@ -256,7 +252,6 @@ export default function DecisionLog() {
   const executionInputSymbol = (resolvedPlan?.deposit_asset_symbol ?? plan?.deposit_asset_symbol ?? assetSymbol) === "MNT"
     ? "WMNT"
     : (resolvedPlan?.deposit_asset_symbol ?? plan?.deposit_asset_symbol ?? assetSymbol);
-  const activePlanForExecution = resolvedPlan ?? plan;
 
   const proposalActivity = getEntriesForProposal(activeProposalId);
   const allActivity = useMemo(
@@ -264,8 +259,16 @@ export default function DecisionLog() {
       .sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime()),
     [getEntriesForProposal, proposals],
   );
+  // Bug 7 fix: gate the map construction on settings actually being loaded.
+  // Before `settingsQuery.data` arrives every field is `undefined`, so the Map
+  // is empty and `resolveTokenLabel` falls through to the hex-truncation branch,
+  // causing a startup flicker where token addresses render as raw hex strings.
+  const settingsLoaded = settingsQuery.isSuccess;
   const tokenLabelsByAddress = useMemo(() => {
     const labels = new Map<string, string>();
+    if (!settingsLoaded) {
+      return labels;  // stable empty Map — callers will see a loading state
+    }
     if (settings?.sepolia_usdy_address) {
       labels.set(settings.sepolia_usdy_address.toLowerCase(), "USDY");
     }
@@ -276,7 +279,7 @@ export default function DecisionLog() {
       labels.set(settings.sepolia_wmnt_address.toLowerCase(), "WMNT");
     }
     return labels;
-  }, [settings?.sepolia_meth_address, settings?.sepolia_usdy_address, settings?.sepolia_wmnt_address]);
+  }, [settingsLoaded, settings?.sepolia_meth_address, settings?.sepolia_usdy_address, settings?.sepolia_wmnt_address]);
   const sortedProposals = useMemo(
     () => [...proposals].sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime()),
     [proposals],
@@ -289,28 +292,6 @@ export default function DecisionLog() {
     () => sortedProposals.find((proposal) => proposal.proposal_id === activeProposalId) ?? null,
     [activeProposalId, sortedProposals],
   );
-  const executeNativeWrapIfNeeded = async () => {
-    const wrapStep = activePlanForExecution?.transaction_steps.find((step) => step.step_type === "wrap");
-    if (!wrapStep || wrappedPlanIdRef.current === activePlanForExecution?.plan_id) {
-      return;
-    }
-    if (!settings?.sepolia_wmnt_address) {
-      throw new Error("WMNT contract address is not configured in backend settings.");
-    }
-    console.info("[frontend][trade] wrapping native MNT before swap", {
-      plan_id: activePlanForExecution?.plan_id ?? null,
-      amount: wrapStep.amount ?? String(activePlanForExecution.deposit_amount),
-      wmnt_address: settings.sepolia_wmnt_address,
-    });
-    await wrapMnt.mutateAsync({
-      wmntAddress: settings.sepolia_wmnt_address as `0x${string}`,
-      amount: wrapStep.amount ?? String(activePlanForExecution.deposit_amount),
-    });
-    if (activePlanForExecution?.plan_id) {
-      wrappedPlanIdRef.current = activePlanForExecution.plan_id;
-    }
-  };
-
   useEffect(() => {
     if (!plan?.linked_proposals.length) {
       return;
@@ -386,7 +367,12 @@ export default function DecisionLog() {
     });
   }, [allocationMode, assetSymbol, clearScope, isConnected, isSupportedChain, numericAmount, riskProfile, setScope, draftHydrated]);
 
-  const handleCreatePlan = async () => {
+  // Bug 5 fix: wrap handleCreatePlan in useCallback so its identity is stable
+  // across renders. The previous plain arrow function was a new reference every
+  // render, and because it was listed in the auto-create useEffect's dependency
+  // array the entire effect body (console.info, ref checks, etc.) executed on
+  // every render, even though the ref guard prevented duplicate creates.
+  const handleCreatePlan = useCallback(async () => {
     console.info("[frontend][trade] create plan requested", {
       asset_symbol: assetSymbol,
       amount: amount,
@@ -452,7 +438,19 @@ export default function DecisionLog() {
         },
       },
     );
-  };
+  }, [
+    aiDecisionMakerEnabled,
+    allocationMode,
+    amount,
+    appendEntry,
+    assetSymbol,
+    createPlan,
+    localWarnings,
+    manualWeights,
+    numericAmount,
+    riskProfile,
+    walletAddress,
+  ]);
 
   useEffect(() => {
     console.info("[frontend][trade] auto-create evaluation", {
@@ -462,11 +460,10 @@ export default function DecisionLog() {
       hasScope: Boolean(scope),
       hasPlan: Boolean(plan?.plan_id),
       createPending: createPlan.isPending,
-      wrapPending: wrapMnt.isPending,
       walletBalanceAmount,
       localWarnings,
     });
-    if (!aiDecisionMakerEnabled || !scope || plan?.plan_id || createPlan.isPending || wrapMnt.isPending) {
+    if (!aiDecisionMakerEnabled || !scope || plan?.plan_id || createPlan.isPending) {
       if (!aiDecisionMakerEnabled || plan?.plan_id) {
         autoCreatePlanRef.current = null;
       }
@@ -495,7 +492,6 @@ export default function DecisionLog() {
     routeHasInvestmentParams,
     scope,
     walletAddress,
-    wrapMnt.isPending,
   ]);
 
   useEffect(() => {
@@ -535,24 +531,9 @@ export default function DecisionLog() {
         toast.success("Plan approved");
         return;
       }
-
-      setExecutionInProgress(true);
-      for (const proposalId of proposalIds) {
-        const data = await executeProposal.mutateAsync(proposalId);
-        appendEntry({
-          proposalId,
-          type: "submitted",
-          message: "Execution submitted after human approval",
-          timestamp: new Date().toISOString(),
-          hash: data.hash,
-          chainId: data.chain_id,
-        });
-      }
-      toast.success("Plan approved. AI submitted the approved execution.");
+      toast.success("Plan approved. Funds remain in the vault and must execute through the ExecutorVault path.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to approve plan");
-    } finally {
-      setExecutionInProgress(false);
     }
   };
 
@@ -595,36 +576,6 @@ export default function DecisionLog() {
     return blockers;
   }, [market?.status_code, plan?.approval_blockers, resolvedPlan?.approval_blockers, risk?.hard_veto_status, risk?.risk_band, routes?.routes?.length]);
 
-  const handleExecute = () => {
-    if (!activeProposalId) {
-      return;
-    }
-    console.info("[frontend][trade] execute proposal requested", {
-      proposal_id: activeProposalId,
-      blockers: hasBlockers,
-      status_code: selectedPlanProposal?.status_code ?? null,
-    });
-    if (hasBlockers.length > 0) {
-      toast.error(`Cannot execute: ${hasBlockers.join("; ")}.`);
-      return;
-    }
-    void (async () => {
-      try {
-        const data = await executeProposal.mutateAsync(activeProposalId);
-        appendEntry({
-          proposalId: activeProposalId,
-          type: "submitted",
-          message: "Execution submitted onchain",
-          timestamp: new Date().toISOString(),
-          hash: data.hash,
-          chainId: data.chain_id,
-        });
-        toast.success("Execution submitted");
-      } catch {
-        toast.error("Failed to execute plan");
-      }
-    })();
-  };
   const handleRefreshChecks = () => {
     setActiveSessionTab("checks");
     toast.info("Refreshing guard checks.");
@@ -634,12 +585,9 @@ export default function DecisionLog() {
   };
 
   const working =
-    wrapMnt.isPending ||
     createPlan.isPending ||
     approveProposal.isPending ||
-    rejectProposal.isPending ||
-    executeProposal.isPending ||
-    executionInProgress;
+    rejectProposal.isPending;
 
   const selectedSessionPlan = resolvedPlan ?? plan;
   const selectedLinkedProposals = selectedSessionPlan?.linked_proposals ?? [];
@@ -997,21 +945,16 @@ export default function DecisionLog() {
 
                 <div className="flex flex-wrap gap-2">
                   <Button onClick={() => void handleApprove()} disabled={!activeProposalId || working || !selectedSessionPlan?.approval_enabled}>
-                    {approveProposal.isPending || executionInProgress ? "Approving..." : aiDecisionMakerEnabled ? "Approve and execute plan" : "Approve plan"}
+                    {approveProposal.isPending ? "Approving..." : aiDecisionMakerEnabled ? "Approve plan" : "Approve plan"}
                   </Button>
                   <Button variant="outline" onClick={handleReject} disabled={!activeProposalId || working}>
                     Reject plan
                   </Button>
-                  {!aiDecisionMakerEnabled && (
-                    <Button onClick={handleExecute} disabled={!activeProposalId || working || selectedPlanProposal?.status_code !== "PROPOSAL_APPROVED" || hasBlockers.length > 0}>
-                      {executeProposal.isPending ? "Executing..." : "Execute proposal"}
-                    </Button>
-                  )}
                 </div>
 
                 {aiDecisionMakerEnabled && selectedSessionPlan?.approval_enabled && (
                   <div className="text-sm text-success">
-                    Full access AI can create and submit the trade, but it still waits for human approval before execution.
+                    Full access AI can create the trade plan, but approved execution must still use vault funds through the ExecutorVault path.
                   </div>
                 )}
 

@@ -669,9 +669,10 @@ def _encode_trade_proposal(
         raise HTTPException(status_code=400, detail=f"{swap.quote.protocol} swap router address is not configured.")
 
     selector = "0xa64e3dd7" if swap.quote.protocol == "AIYIELD" else "0x414bf389"
-    recipient = wallet_address or settings.executor_vault_address
+    recipient = settings.executor_vault_address
     if not recipient:
-        raise HTTPException(status_code=400, detail="No wallet address or executor vault address is configured for trade recipient.")
+        raise HTTPException(status_code=400, detail="Executor vault address is not configured for trade execution.")
+    proposal_scope = wallet_address or "UNCONFIGURED"
 
     now = int(time.time())
     deadline = now + 900
@@ -728,7 +729,7 @@ def _encode_trade_proposal(
     proposal = TradeProposal(
         proposal_id=proposal_id,
         plan_hash=plan_hash,
-        wallet_or_vault=recipient,
+        wallet_or_vault=proposal_scope,
         payload=payload,
         status_code=ProposalStatusCode.PROPOSAL_PENDING_APPROVAL.value,
         risk_snapshot_id=None,
@@ -927,7 +928,17 @@ def build_investment_plan(
     transaction_steps: list[TransactionStep] = []
     step_index = 1
     ai_managed_execution = settings.ai_decision_maker_enabled
-    wrap_native_mnt = request.deposit_asset_symbol.upper() == "MNT" and any(swap.token_in_symbol.upper() == "WMNT" for swap in swaps)
+    # Bug D fix: emit the wrap step whenever native MNT is being deposited,
+    # regardless of whether swap legs were built. Previously the condition
+    # required swaps to exist with token_in_symbol=="WMNT", which meant an
+    # empty-swaps scenario (no quotes yet) produced no wrap step and the
+    # frontend's executeNativeWrapIfNeeded() silently skipped the wrap.
+    wrap_native_mnt = (
+        request.deposit_asset_symbol.upper() == "MNT"
+        and settings.native_mnt_enabled
+        and bool(settings.sepolia_wmnt_address)
+        and not rebalance_swaps
+    )
     if wrap_native_mnt:
         transaction_steps.append(
             TransactionStep(
@@ -936,7 +947,7 @@ def build_investment_plan(
                 description="Wrap native MNT into WMNT in the connected wallet before approvals and swaps.",
                 asset_symbol="WMNT",
                 amount=str(round(request.deposit_amount, 8)),
-                requires_user_action=True,
+                requires_user_action=not ai_managed_execution,
             )
         )
         step_index += 1
@@ -948,7 +959,7 @@ def build_investment_plan(
                 description=f"Approve {swap.token_in_symbol} for router spend before executing {swap.token_in_symbol}->{swap.token_out_symbol}.",
                 asset_symbol=swap.token_in_symbol,
                 amount=str(round(swap.amount_in, 8)),
-                requires_user_action=True,
+                requires_user_action=not ai_managed_execution,
             )
         )
         step_index += 1
@@ -1012,7 +1023,7 @@ def build_investment_plan(
         status_label=response_status_code,
         status_reason=response_status_reason,
         generated_at=utc_now(),
-        plan_id=Web3.to_hex(keccak(f"investment_plan_{uuid.uuid4()}".encode("utf-8"))),
+        plan_id=f"0x{keccak(f'investment_plan_{uuid.uuid4()}'.encode('utf-8')).hex()}",
         deposit_asset_symbol=request.deposit_asset_symbol,
         deposit_amount=request.deposit_amount,
         risk_profile=normalized_profile,

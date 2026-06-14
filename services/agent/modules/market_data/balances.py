@@ -21,7 +21,8 @@ from services.agent.repositories.db.portfolio_repository import PortfolioSnapsho
 logger = logging.getLogger("services.agent.market_data.balances")
 
 FRESH_PRICE_CODES = {"DATA_FRESH", "ORACLE_FRESH", "QUOTE_FRESH"}
-SIMULATION_PRICE_METHODS = {"sepolia_stable_fallback", "sepolia_mock_fixed_price"}
+SIMULATION_PRICE_METHODS = {"sepolia_stable_fallback", "sepolia_mock_fixed_price", "native_mnt_parity", "manual_mirror"}
+ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 ERC20_BALANCE_ABI = [
     {
         "constant": True,
@@ -150,6 +151,37 @@ def _price_is_usable(price: NormalizedPriceSnapshot | None, price_value: Decimal
     return price.freshness_status == "simulation_only" and price.derivation_method in SIMULATION_PRICE_METHODS
 
 
+def _native_mnt_asset(chain_id: int) -> dict[str, Any]:
+    return {
+        "asset_key": "NATIVE_MNT",
+        "symbol": "MNT",
+        "chain_id": chain_id,
+        "address": ZERO_ADDRESS,
+        "verified": True,
+        "decimals": 18,
+    }
+
+
+def configured_vault_assets(
+    asset_registry: dict[str, dict[str, Any]],
+    chain_id: int,
+) -> list[dict[str, Any]]:
+    assets: list[dict[str, Any]] = []
+    seen_addresses: set[str] = set()
+    for asset in asset_registry.values():
+        if int(asset["chain_id"]) != chain_id:
+            continue
+        if not asset.get("verified") or not asset.get("address"):
+            continue
+        address = str(asset["address"])
+        lowered = address.lower()
+        if lowered in seen_addresses:
+            continue
+        seen_addresses.add(lowered)
+        assets.append(asset)
+    return assets
+
+
 class Erc20BalanceReader:
     def __init__(self, rpc_url: str, timeout: int = 10) -> None:
         from web3 import HTTPProvider, Web3
@@ -272,54 +304,55 @@ class VaultShareReader:
         asset_registry: dict[str, dict[str, object]],
         chain_id: int,
     ) -> list[BalanceObservation]:
-        """Read user's vault position using shares + token balances from chain.
+        """Read user's vault position directly from the vault contract.
 
-        Returns BalanceObservation list with per-asset amounts calculated as
-        user_share = vault_balance * (shares[user] / totalShares).
+        `getUserBalances(user, tokens)` is already user-scoped. Share data is
+        retained only as metadata for explainability and recovery diagnostics.
         """
         observed_at = utc_now()
         checksum_user = self.web3.to_checksum_address(user_address)
 
-        shares_result = self.vault_contract.functions.balanceOf(checksum_user).call()
-        user_shares = int(shares_result)
-
-        if user_shares == 0:
-            return []
-
-        total_shares = int(self.vault_contract.functions.totalShares().call())
-        if total_shares == 0:
-            return []
-
-        ownership_pct = Decimal(user_shares) / Decimal(total_shares)
-        if ownership_pct == 0:
-            return []
-
+        token_assets = configured_vault_assets(asset_registry, chain_id)
         token_addresses: list[str] = []
         asset_map: dict[str, dict[str, object]] = {}
-        for asset in asset_registry.values():
-            if int(asset["chain_id"]) != chain_id:
-                continue
-            if not asset.get("verified") or not asset.get("address"):
-                continue
+        for asset in token_assets:
             addr = str(asset["address"])
             token_addresses.append(addr)
             asset_map[addr.lower()] = asset
 
+        # Always check native MNT in the vault, but we will skip it if its vault balance is 0.
+        native_asset = _native_mnt_asset(chain_id)
+        token_addresses.append(ZERO_ADDRESS)
+        asset_map[ZERO_ADDRESS.lower()] = native_asset
+
         if not token_addresses:
             return []
+
+        user_shares: int | None = None
+        total_shares: int | None = None
+        ownership_pct: Decimal | None = None
+        try:
+            user_shares = int(self.vault_contract.functions.balanceOf(checksum_user).call())
+            total_shares = int(self.vault_contract.functions.totalShares().call())
+            if total_shares > 0:
+                ownership_pct = Decimal(user_shares) / Decimal(total_shares)
+        except Exception:
+            user_shares = None
+            total_shares = None
+            ownership_pct = None
 
         checksum_tokens = [self.web3.to_checksum_address(a) for a in token_addresses]
         raw_balances = self.vault_contract.functions.getUserBalances(checksum_user, checksum_tokens).call()
 
         balances: list[BalanceObservation] = []
         for i, addr in enumerate(token_addresses):
-            raw_vault_balance = int(raw_balances[i])
-            if raw_vault_balance == 0:
+            raw_user_balance = int(raw_balances[i]) if i < len(raw_balances) else 0
+            if raw_user_balance == 0 and addr == ZERO_ADDRESS:
                 continue
 
-            user_amount = int(Decimal(raw_vault_balance) * ownership_pct)
             asset = asset_map.get(addr.lower(), {})
             decimals = int(asset.get("decimals", 18))
+            share_pct_text = f"{float(ownership_pct * 100):.2f}%" if ownership_pct is not None else "unknown share"
 
             balances.append(
                 BalanceObservation(
@@ -327,21 +360,21 @@ class VaultShareReader:
                     asset_symbol=str(asset.get("symbol", "")),
                     asset_address=addr,
                     chain_id=chain_id,
-                    balance=_scaled_token_amount(user_amount, decimals),
+                    balance=_scaled_token_amount(raw_user_balance, decimals),
                     decimals=decimals,
                     observed_timestamp=observed_at,
                     balance_source="vault_shares_getUserBalances",
                     status="ok",
                     status_code="DATA_FRESH",
                     status_reason=(
-                        f"User position derived from vault shares: "
-                        f"{user_shares}/{total_shares} ({float(ownership_pct * 100):.2f}%)"
+                        "User position read from vault getUserBalances "
+                        f"with share metadata {share_pct_text}."
                     ),
                     metadata={
-                        "user_shares": str(user_shares),
-                        "total_shares": str(total_shares),
-                        "ownership_pct": str(ownership_pct),
-                        "raw_vault_balance": str(raw_vault_balance),
+                        "user_shares": str(user_shares) if user_shares is not None else None,
+                        "total_shares": str(total_shares) if total_shares is not None else None,
+                        "ownership_pct": str(ownership_pct) if ownership_pct is not None else None,
+                        "raw_user_balance": str(raw_user_balance),
                     },
                 )
             )
@@ -516,6 +549,11 @@ class PortfolioSnapshotEngine:
     ) -> tuple[PortfolioPosition, Decimal | None]:
         amount = _decimal_or_none(balance.balance)
         price = price_by_key.get(balance.asset_key.lower()) or price_by_symbol.get(balance.asset_symbol.lower())
+        if not price:
+            if balance.asset_symbol.upper() == "MNT":
+                price = price_by_symbol.get("wmnt")
+            elif balance.asset_symbol.upper() == "WMNT":
+                price = price_by_symbol.get("mnt")
         price_value = _decimal_or_none(price.price_usd) if price else None
         price_is_usable = _price_is_usable(price, price_value)
 

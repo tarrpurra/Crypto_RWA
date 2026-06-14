@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Response
 
 from services.agent.app.core.status_codes import DataStatusCode
 from services.agent.app.core.settings import get_settings
-from services.agent.app.schemas.portfolio import PortfolioSnapshotHistoryResponse, PortfolioSnapshotResponse
+from services.agent.app.schemas.portfolio import BalanceObservation, PortfolioSnapshotHistoryResponse, PortfolioSnapshotResponse
 from services.agent.modules.market_data import get_price_service
 from services.agent.modules.market_data.balances import (
     Erc20BalanceReader,
@@ -33,6 +33,51 @@ def _resolve_portfolio_address(wallet_address: str | None, *, allow_env_fallback
     if allow_env_fallback:
         return settings.portfolio_wallet_address or settings.executor_vault_address
     return None
+
+
+def _read_native_mnt_balance_observation(rpc_url: str, portfolio_address: str, chain_id: int) -> BalanceObservation | None:
+    try:
+        from web3 import HTTPProvider, Web3
+
+        web3 = Web3(HTTPProvider(rpc_url))
+        checksum_address = web3.to_checksum_address(portfolio_address)
+        raw_balance = int(web3.eth.get_balance(checksum_address))
+        if raw_balance <= 0:
+            return None
+    except Exception as exc:
+        logger.warning("Native MNT balance read failed for %s: %s", portfolio_address, exc)
+        return None
+
+    return BalanceObservation(
+        asset_key="NATIVE_MNT",
+        asset_symbol="MNT",
+        asset_address="0x0000000000000000000000000000000000000000",
+        chain_id=chain_id,
+        balance=_format_decimal(Decimal(raw_balance) / (Decimal(10) ** Decimal(18))) or "0",
+        decimals=18,
+        observed_timestamp=utc_now(),
+        balance_source="native_balance",
+        status="ok",
+        status_code="DATA_FRESH",
+        status_reason="Native MNT balance read succeeded.",
+        metadata={"raw_balance": str(raw_balance)},
+    )
+
+
+def _read_wallet_balances(settings, portfolio_address: str) -> list[BalanceObservation]:
+    balances = Erc20BalanceReader(settings.effective_http_rpc_url).read_configured_balances(
+        portfolio_address=portfolio_address,
+        asset_registry=settings.active_portfolio_asset_registry,
+        chain_id=settings.effective_chain_id,
+    )
+    native_balance = _read_native_mnt_balance_observation(
+        settings.effective_http_rpc_url,
+        portfolio_address,
+        settings.effective_chain_id,
+    )
+    if native_balance is not None:
+        balances.append(native_balance)
+    return balances
 
 
 def _save_snapshot_best_effort(snapshot: PortfolioSnapshotResponse) -> None:
@@ -225,16 +270,9 @@ async def current_portfolio(
             len(vault_balances),
             portfolio_address,
         )
-        balances_task = asyncio.to_thread(lambda: vault_balances)
     else:
-        logger.info("No vault position found; falling back to ERC-20 balance read for %s.", portfolio_address)
-        balances_task = asyncio.to_thread(
-            lambda: Erc20BalanceReader(settings.effective_http_rpc_url).read_configured_balances(
-                portfolio_address=portfolio_address,
-                asset_registry=settings.active_portfolio_asset_registry,
-                chain_id=settings.effective_chain_id,
-            ),
-        )
+        logger.info("No vault position found for %s.", portfolio_address)
+    balances_task = asyncio.to_thread(lambda: vault_balances)
 
     price_task = get_price_service().fetch_latest_prices()
 
@@ -259,15 +297,8 @@ async def current_portfolio(
 
     if not balances:
         try:
-            balances = await asyncio.to_thread(
-                lambda: (
-                    _read_vault_portfolio(settings, portfolio_address)
-                    or Erc20BalanceReader(settings.effective_http_rpc_url).read_configured_balances(
-                        portfolio_address=portfolio_address,
-                        asset_registry=settings.active_portfolio_asset_registry,
-                        chain_id=settings.effective_chain_id,
-                    )
-                ),
+                balances = await asyncio.to_thread(
+                lambda: _read_vault_portfolio(settings, portfolio_address),
             )
         except Exception as exc:
             snapshot = PortfolioSnapshotEngine().build_snapshot(
@@ -443,29 +474,7 @@ async def sync_portfolio_from_vault(wallet_address: str) -> PortfolioSnapshotRes
         logger.warning("Vault share reader failed during sync for %s: %s", wallet_address, exc)
 
     if not balances:
-        try:
-            logger.info("Vault shares returned zero; falling back to ERC-20 read during sync for %s.", wallet_address)
-            balances = Erc20BalanceReader(settings.effective_http_rpc_url).read_configured_balances(
-                portfolio_address=wallet_address,
-                asset_registry=settings.active_portfolio_asset_registry,
-                chain_id=settings.effective_chain_id,
-            )
-        except Exception as exc:
-            return PortfolioSnapshotResponse(
-                snapshot_id=str(uuid4()),
-                generated_at=utc_now(),
-                portfolio_address=wallet_address,
-                chain_id=settings.effective_chain_id,
-                base_currency=settings.portfolio_base_currency,
-                total_value_usd=None,
-                positions=[],
-                data_sources_used=[],
-                status="degraded",
-                status_code="DATA_MISSING",
-                status_label="DATA_MISSING",
-                status_reason=f"Portfolio sync failed: both vault and ERC-20 sources unavailable: {exc}",
-                metadata={"recovery_mode": True},
-            )
+        balances = []
 
     prices: list = []
     try:

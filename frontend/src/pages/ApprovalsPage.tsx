@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useCurrentRisk } from "@/hooks/useRisk";
 import { useProposalActivity } from "@/hooks/useProposalActivity";
-import { useApproveProposal, useExecuteProposal, useProposalDetail, useProposals, useRejectProposal } from "@/hooks/useSwap";
+import { useApproveProposal, useProposalDetail, useProposals, useRejectProposal } from "@/hooks/useSwap";
 import { useSettings, useSystemReadiness } from "@/hooks/useSystem";
 
 function formatRawAmount(value: string | null | undefined, decimals = 18) {
@@ -76,7 +76,6 @@ function ProposalActionCard({
   working,
   onApprove,
   onReject,
-  onExecute,
   onInspect,
   aiDecisionMakerEnabled,
   tokenLabelsByAddress,
@@ -100,14 +99,12 @@ function ProposalActionCard({
   working: boolean;
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
-  onExecute: (id: string) => void;
   onInspect: (proposalId: string) => void;
   aiDecisionMakerEnabled: boolean;
   tokenLabelsByAddress: Map<string, string>;
   tokenDecimalsByAddress: Map<string, number>;
 }) {
   const isPending = proposal.status_code === "PROPOSAL_PENDING_APPROVAL";
-  const isApproved = proposal.status_code === "PROPOSAL_APPROVED";
   const approvalEnabled = proposal.approval_enabled ?? true;
   const approvalBlockers = proposal.approval_blockers ?? [];
   const approvalBlocked = !approvalEnabled || approvalBlockers.length > 0;
@@ -184,11 +181,6 @@ function ProposalActionCard({
               </Button>
             </>
           )}
-          {!aiDecisionMakerEnabled && isApproved && (
-            <Button size="sm" onClick={() => onExecute(proposal.proposal_id)} disabled={working || approvalBlocked}>
-              Execute
-            </Button>
-          )}
         </div>
       </div>
     </div>
@@ -202,7 +194,6 @@ export default function ApprovalsPage() {
   const readinessQuery = useSystemReadiness();
   const approveMutation = useApproveProposal();
   const rejectMutation = useRejectProposal();
-  const executeMutation = useExecuteProposal();
   const { appendEntry, getEntriesForProposal } = useProposalActivity();
   const proposals = useMemo(() => proposalsQuery.data?.proposals ?? [], [proposalsQuery.data?.proposals]);
   const queueProposals = useMemo(
@@ -261,11 +252,11 @@ export default function ApprovalsPage() {
   const pendingCount = queueProposals.filter((p) => p.status_code === "PROPOSAL_PENDING_APPROVAL").length;
   const approvedCount = queueProposals.filter((p) => p.status_code === "PROPOSAL_APPROVED").length;
   const executedCount = proposals.filter((p) => p.status_code === "PROPOSAL_EXECUTED").length;
-  const working = approveMutation.isPending || rejectMutation.isPending || executeMutation.isPending;
+  const working = approveMutation.isPending || rejectMutation.isPending;
   const proposalActivity = getEntriesForProposal(selectedProposalId);
   const pageDescription = aiDecisionMakerEnabled
     ? "Review proposal timelines and inspect execution details while full access AI handles approvals and swaps automatically."
-    : "Review proposal timelines, inspect execution details, approve intent, and submit qualified swaps onchain.";
+    : "Review proposal timelines, inspect execution details, and approve intent before vault-managed execution runs.";
 
   const handleApprove = (id: string) => {
     approveMutation.mutate(id, {
@@ -297,23 +288,6 @@ export default function ApprovalsPage() {
     });
   };
 
-  const handleExecute = (id: string) => {
-    executeMutation.mutate(id, {
-      onSuccess: (data) => {
-        appendEntry({
-          proposalId: id,
-          type: "submitted",
-          message: "Proposal execution submitted onchain",
-          timestamp: new Date().toISOString(),
-          hash: data.hash,
-          chainId: data.chain_id,
-        });
-        toast.success("Proposal execution submitted");
-      },
-      onError: () => toast.error("Failed to execute proposal"),
-    });
-  };
-
   return (
     <PageScaffold
       eyebrow="Trade Approval"
@@ -336,13 +310,13 @@ export default function ApprovalsPage() {
         <MetricPanel
           label="Approved"
           value={`${approvedCount}`}
-          detail={aiDecisionMakerEnabled ? "Proposals are auto-approved and auto-executed by the current AI mode." : "Proposals that can be executed through the connected wallet."}
+          detail={aiDecisionMakerEnabled ? "Proposals are auto-approved and auto-executed by the current AI mode." : "Proposals staged for vault-managed execution after approval."}
           tone={approvedCount > 0 ? "ready" : "neutral"}
         />
         <MetricPanel
           label="Executed"
           value={`${executedCount}`}
-          detail="Proposals already sent through the current execution path."
+          detail="Proposals already processed through the vault execution path."
           tone="ready"
         />
       </div>
@@ -372,7 +346,6 @@ export default function ApprovalsPage() {
             working={working}
             onApprove={handleApprove}
             onReject={handleReject}
-            onExecute={handleExecute}
             onInspect={setSelectedProposalId}
             aiDecisionMakerEnabled={aiDecisionMakerEnabled}
             tokenLabelsByAddress={tokenLabelsByAddress}
@@ -491,7 +464,7 @@ export default function ApprovalsPage() {
                 <p className="text-muted-foreground">
                   {aiDecisionMakerEnabled
                     ? "Full access AI is handling approval and execution automatically. Use this dialog to inspect the proposal details and risk state."
-                    : "Approve only after checking the pair, amount bounds, guard checks, and whether the proposal is still pending."}
+                    : "Approve only after checking the pair, amount bounds, and guard checks. Approved proposals should execute from the vault path, not the connected wallet."}
                 </p>
               </div>
               {selectedApprovalBlocked && (
@@ -522,12 +495,6 @@ export default function ApprovalsPage() {
                       disabled={working || selectedProposal.status_code !== "PROPOSAL_PENDING_APPROVAL"}
                     >
                       Reject
-                    </Button>
-                    <Button
-                      onClick={() => handleExecute(selectedProposal.proposal_id)}
-                      disabled={working || selectedProposal.status_code !== "PROPOSAL_APPROVED" || selectedApprovalBlocked}
-                    >
-                      Execute
                     </Button>
                   </>
                 )}

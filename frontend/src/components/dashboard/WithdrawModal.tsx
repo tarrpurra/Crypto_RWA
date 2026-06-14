@@ -15,6 +15,7 @@ import type { VaultBalanceResponse } from "@/lib/api/types";
 import { normalizeAddress } from "@/lib/addresses";
 import { vaultApi } from "@/lib/api/vault";
 import { logger } from "@/lib/logger";
+import { useChainId } from "wagmi";
 
 const EXECUTOR_VAULT_ABI = [
   {
@@ -39,6 +40,16 @@ const EXECUTOR_VAULT_ABI = [
     outputs: [],
   },
 ] as const;
+const WMNT_ABI = [
+  {
+    type: "function",
+    name: "withdraw",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "amount", type: "uint256" }],
+    outputs: [],
+  },
+] as const;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 function assetDecimals(_symbol: string) {
   return 18;
@@ -74,6 +85,7 @@ function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, n
   const queryClient = useQueryClient();
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
+  const chainId = useChainId();
   const [asset, setAsset] = useState<string>("MNT");
   const [amount, setAmount] = useState("");
   const [step, setStep] = useState<WithdrawStep>("idle");
@@ -84,23 +96,29 @@ function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, n
   const normalizedVaultAddress = normalizeAddress(vaultAddress);
   const normalizedWmntAddress = normalizeAddress(wmntAddress);
   const normalizedWalletAddress = normalizeAddress(vaultData?.user_address);
-  const canWithdrawNative = Boolean(normalizedWmntAddress && nativeMntEnabled);
+  const canWithdrawMnt = Boolean(normalizedWmntAddress && nativeMntEnabled);
   const availableAssets = useMemo(
     () => {
       const symbols = (vaultData?.balances ?? [])
         .map((balance) => balance.asset_symbol)
         .filter(Boolean);
-      if (canWithdrawNative) {
+      if (canWithdrawMnt) {
         symbols.push("MNT");
       }
       return Array.from(new Set(symbols));
     },
-    [vaultData?.balances, canWithdrawNative],
+    [vaultData?.balances, canWithdrawMnt],
   );
   const selectableAssets =
-    availableAssets.length > 0 ? availableAssets : ["MNT", "USDY", "mETH"];
+    availableAssets.length > 0 ? availableAssets : canWithdrawMnt ? ["MNT", "USDY", "mETH"] : ["USDY", "mETH"];
 
-  const vaultBalance = vaultData?.balances?.find((b) => b.asset_symbol === (asset === "MNT" ? "WMNT" : asset));
+  const vaultBalance =
+    asset === "MNT"
+      ? vaultData?.balances?.find((b) => b.asset_symbol === "WMNT")
+        ?? vaultData?.balances?.find((b) => b.asset_symbol === "MNT")
+      : vaultData?.balances?.find((b) => b.asset_symbol === asset);
+  const vaultBalanceSymbol = vaultBalance?.asset_symbol ?? (asset === "MNT" ? "WMNT" : asset);
+  const wrappedMntWithdrawal = asset === "MNT" && vaultBalanceSymbol === "WMNT";
   const walletAddress = vaultData?.user_address ?? "";
   const tokenAddress = asset === "MNT" ? (normalizedWmntAddress ?? null) : normalizeAddress(vaultBalance?.asset_address ?? null);
   const vaultBalanceNum = Number.parseFloat(vaultBalance?.balance ?? "0");
@@ -120,6 +138,7 @@ function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, n
     amount.trim() &&
     Number.isFinite(numericAmount) &&
     numericAmount > 0 &&
+    vaultBalanceNum > 0 &&
     !exceedsVault &&
     Boolean(normalizedWalletAddress) &&
     Boolean(normalizedVaultAddress) &&
@@ -140,6 +159,7 @@ function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, n
     setStep("withdrawing");
     setErrorMsg("");
     setRecordNote("");
+    let unwrappedToNative = false;
     try {
       if (!normalizedWalletAddress) {
         throw new Error("Connected wallet address is missing.");
@@ -167,12 +187,38 @@ function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, n
 
       let hash: `0x${string}`;
       if (asset === "MNT") {
+        if (!normalizedWmntAddress) {
+          throw new Error("WMNT address is not available for wrapped MNT withdrawal.");
+        }
         hash = await writeContractAsync({
           address: normalizedVaultAddress,
           abi: EXECUTOR_VAULT_ABI,
-          functionName: "withdrawNative",
-          args: [normalizedWalletAddress, amountRaw],
+          functionName: "withdrawToken",
+          chainId,
+          args: [normalizedWmntAddress, normalizedWalletAddress, amountRaw],
         });
+        await publicClient?.waitForTransactionReceipt({ hash });
+
+        try {
+          const unwrapHash = await writeContractAsync({
+            address: normalizedWmntAddress,
+            abi: WMNT_ABI,
+            functionName: "withdraw",
+            chainId,
+            args: [amountRaw],
+          });
+          await publicClient?.waitForTransactionReceipt({ hash: unwrapHash });
+          setRecordNote("Wrapped WMNT was withdrawn and unwrapped to native MNT.");
+          unwrappedToNative = true;
+        } catch (unwrapError) {
+          logger.warn("vault.withdraw.unwrap.failed", {
+            wallet_address: normalizedWalletAddress,
+            vault_address: normalizedVaultAddress,
+            amount,
+            error: unwrapError,
+          });
+          setRecordNote("WMNT was withdrawn from the vault, but native unwrap failed. It remains in your wallet.");
+        }
       } else {
         if (!tokenAddress) {
           throw new Error(`${asset} token address is not available for withdrawal.`);
@@ -181,6 +227,7 @@ function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, n
           address: normalizedVaultAddress,
           abi: EXECUTOR_VAULT_ABI,
           functionName: "withdrawToken",
+          chainId,
           args: [tokenAddress, normalizedWalletAddress, amountRaw],
         });
       }
@@ -199,16 +246,16 @@ function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, n
       try {
         await vaultApi.recordFlow({
           user_address: normalizedWalletAddress,
-          asset_symbol: asset === "MNT" ? "WMNT" : asset,
+          asset_symbol: asset === "MNT" ? (wrappedMntWithdrawal ? "WMNT" : "MNT") : asset,
           asset_amount: amount,
-          asset_address: tokenAddress,
+          asset_address: asset === "MNT" ? (wrappedMntWithdrawal ? normalizedWmntAddress : ZERO_ADDRESS) : tokenAddress,
           tx_hash: hash,
           flow_type: "withdrawal",
           metadata: {
             source: "frontend.withdraw_modal",
             vault_address: normalizedVaultAddress,
             destination_wallet: normalizedWalletAddress,
-            unwrapped_to_native: asset === "MNT",
+            unwrapped_to_native: unwrappedToNative,
           },
         });
         logger.info("vault.withdraw.recorded", {
@@ -317,7 +364,7 @@ function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, n
                 <p className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">Amount</p>
                 {vaultBalance && (
                   <p className="text-[0.6rem] text-muted-foreground">
-                    Vault: {vaultBalance.balance} {asset}
+                    Vault: {vaultBalance.balance} {vaultBalanceSymbol}
                   </p>
                 )}
               </div>
@@ -345,7 +392,7 @@ function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, n
               </div>
               {exceedsVault && (
                 <p className="mt-1 text-[0.6rem] text-destructive">
-                  Amount exceeds vault balance ({vaultBalance?.balance} {asset}).
+                  Amount exceeds vault balance ({vaultBalance?.balance} {vaultBalanceSymbol}).
                 </p>
               )}
             </div>

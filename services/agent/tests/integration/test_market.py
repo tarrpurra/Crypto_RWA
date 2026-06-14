@@ -103,6 +103,22 @@ class MarketEndpointTests(unittest.TestCase):
         self.assertIn("routes", body)
         self.assertIn("status_code", body)
 
+    @patch("services.agent.app.api.market.MarketDataRepository")
+    def test_price_history_endpoint_returns_demo_points_when_repo_is_empty(self, market_repo_cls) -> None:
+        market_repo = MagicMock()
+        market_repo.price_history.return_value = []
+        market_repo_cls.return_value = market_repo
+
+        response = self.client.get("/market/price-history", params={"asset": "mETH", "range": "24h", "bucket": "1h"})
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["asset"], "mETH")
+        self.assertEqual(body["range"], "24h")
+        self.assertEqual(body["bucket"], "1h")
+        self.assertTrue(body["demo"])
+        self.assertEqual(len(body["points"]), 24)
+
 
 if __name__ == "__main__":
     unittest.main()

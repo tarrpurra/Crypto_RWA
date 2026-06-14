@@ -125,8 +125,5 @@ async def update_active_profile(request: UpdateProfileRequest, response: Respons
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid profile name: {request.profile_name}. Approved: {list(profiles.ALLOCATION_PROFILES.keys())}")
 
-    if settings.target_chain == TargetChain.MANTLE_SEPOLIA:
-        canonical_name = "Sepolia Test"
-
     profiles.ACTIVE_PROFILE_NAME = canonical_name
     return {"status": "ok", "message": f"Active allocation profile set to {canonical_name}"}

@@ -8,6 +8,7 @@ import { createTestQueryClient } from "@/test/queryClient";
 vi.mock("wagmi", () => ({
   usePublicClient: () => ({ waitForTransactionReceipt: vi.fn() }),
   useWriteContract: () => ({ writeContractAsync: vi.fn() }),
+  useChainId: () => 5003,
 }));
 
 vi.mock("@/hooks/useSwap", () => ({

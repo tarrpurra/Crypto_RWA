@@ -31,9 +31,21 @@ import { useVaultBalance, useWalletBalance } from "@/hooks/useVault";
 import { useStrategyActive } from "@/hooks/useStrategy";
 import { normalizeAddress } from "@/lib/addresses";
 import { useCreateProposal, useProposals } from "@/hooks/useSwap";
+import type { PortfolioPosition, PortfolioSnapshotResponse } from "@/lib/api/types";
 
 const assetOptions = ["USDY", "mETH", "MNT"] as const;
 const riskProfiles = ["Defensive", "Balanced", "Yield-Seeking"];
+
+function toNumeric(value: string | number | null | undefined): number {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
 
 const Index = () => {
   const navigate = useNavigate();
@@ -74,6 +86,11 @@ const Index = () => {
   const walletBalanceQuery = useWalletBalance();
 
   const settings = settingsQuery.data;
+  // Bug H fix: only pass wmntAddress after settings have loaded so the deposit
+  // asset list (MNT/WMNT) is stable and doesn't flicker in/out.
+  const resolvedWmntAddress = settingsQuery.isSuccess
+    ? normalizeAddress(settings?.sepolia_wmnt_address) ?? undefined
+    : undefined;
   const activeStrategyLabel = strategyActiveQuery.data?.active_version?.version
     ? `Custom Strategy ${strategyActiveQuery.data.active_version.version}`
     : null;
@@ -88,30 +105,91 @@ const Index = () => {
   const latestQuotes = latestQuotesQuery.data;
   const vaultData = vaultBalanceQuery.data;
   const walletData = walletBalanceQuery.data;
-  const resolvedWalletData =
-    walletData ??
-    (portfolio
-      ? {
-          status: portfolio.status,
-          status_code: portfolio.status_code,
-          status_label: portfolio.status_label,
-          status_reason: portfolio.status_reason,
-          vault_address: "",
-          vault_label: "Wallet",
-          user_address: effectiveWalletAddress ?? "",
-          total_value_usd: portfolio.total_value_usd,
-          balances: (portfolio.positions ?? []).map((p) => ({
-            asset_symbol: p.asset_symbol,
-            asset_address: p.asset_address,
-            balance: p.balance ?? "0",
-            value_usd: p.value_usd,
-            share: 0,
-          })),
-          pending_deposits: 0,
-          pending_withdrawals: 0,
-        }
-      : undefined);
-  const resolvedVaultData = vaultData ?? resolvedWalletData;
+  const displayPortfolio = useMemo<PortfolioSnapshotResponse | undefined>(() => {
+    if (!portfolio && !vaultData) {
+      return undefined;
+    }
+
+    const snapshotValue = toNumeric(portfolio?.total_value_usd);
+    const snapshotHasValuedPositions = (portfolio?.positions ?? []).some(
+      (position) => toNumeric(position.value_usd) > 0,
+    );
+    if (portfolio && (snapshotValue > 0 || snapshotHasValuedPositions)) {
+      return portfolio;
+    }
+
+    const vaultValue = toNumeric(vaultData?.total_value_usd);
+    const vaultBalances = vaultData?.balances ?? [];
+    const vaultHasUsableBalances = vaultBalances.some(
+      (balance) =>
+        toNumeric(balance.value_usd) > 0 || toNumeric(balance.balance) > 0,
+    );
+    if (!vaultData || (!vaultHasUsableBalances && vaultValue <= 0)) {
+      return portfolio ?? undefined;
+    }
+
+    const normalizedPositions: PortfolioPosition[] = vaultBalances.map((balance) => {
+      const valueUsd = toNumeric(balance.value_usd);
+      const derivedWeight =
+        vaultValue > 0
+          ? valueUsd / vaultValue
+          : typeof balance.share === "number" && Number.isFinite(balance.share)
+            ? balance.share
+            : 0;
+      return {
+        asset_key: balance.asset_symbol.toLowerCase(),
+        asset_symbol: balance.asset_symbol,
+        asset_address: balance.asset_address,
+        chain_id: settings?.chain_id ?? chainStatus?.chain_id ?? 5003,
+        balance: balance.balance,
+        balance_source: "vault_balance",
+        price_usd: null,
+        value_usd: balance.value_usd,
+        weight: derivedWeight > 0 ? String(derivedWeight) : "0",
+        target_weight: null,
+        weight_drift: null,
+        drift_status: "not_configured",
+        valuation_status: "valued",
+        status_code: vaultData.status_code,
+        status_reason: vaultData.status_reason,
+        data_sources_used: ["vault/portfolio"],
+      };
+    });
+
+    return {
+      snapshot_id: portfolio?.snapshot_id ?? `vault-display-${vaultData.user_address}`,
+      generated_at:
+        vaultData.generated_at ??
+        portfolio?.generated_at ??
+        new Date().toISOString(),
+      portfolio_address:
+        portfolio?.portfolio_address ?? vaultData.user_address ?? null,
+      chain_id: portfolio?.chain_id ?? settings?.chain_id ?? chainStatus?.chain_id ?? 5003,
+      base_currency: portfolio?.base_currency ?? "USD",
+      total_value_usd:
+        vaultData.total_value_usd ??
+        portfolio?.total_value_usd ??
+        "0",
+      invested_amount_usd:
+        vaultData.invested_amount_usd ?? portfolio?.invested_amount_usd,
+      total_deposits_usd:
+        vaultData.total_deposits_usd ?? portfolio?.total_deposits_usd,
+      total_withdrawals_usd:
+        vaultData.total_withdrawals_usd ?? portfolio?.total_withdrawals_usd,
+      pnl_usd: vaultData.pnl_usd ?? portfolio?.pnl_usd,
+      pnl_percent: vaultData.pnl_percent ?? portfolio?.pnl_percent,
+      positions: normalizedPositions,
+      data_sources_used: portfolio?.data_sources_used ?? ["vault/portfolio"],
+      status: vaultData.status,
+      status_code: vaultData.status_code,
+      status_label: vaultData.status_label,
+      status_reason: vaultData.status_reason,
+      metadata: {
+        ...(portfolio?.metadata ?? {}),
+        source: "vault_balance_fallback",
+      },
+    };
+  }, [chainStatus?.chain_id, portfolio, vaultData, settings?.chain_id]);
   const risk = dashboardSummary?.risk ?? null;
   const allocation = allocationQuery.data;
   const chartPoints = useMemo(() => {
@@ -135,7 +213,7 @@ const Index = () => {
   const decisions = decisionsQuery.data;
   const availableRouteCount = routesQuery.data?.routes?.length ?? 0;
   const aiReasoningData = useMemo<AIReasoningData | undefined>(() => {
-    if (!portfolio || !risk || !decisions) {
+    if (!displayPortfolio || !risk || !decisions) {
       return undefined;
     }
 
@@ -159,14 +237,14 @@ const Index = () => {
           ? "simulation_only"
           : "allowed";
 
-    const portfolioPositions = portfolio.positions ?? [];
+    const portfolioPositions = displayPortfolio.positions ?? [];
     const leadPosition = [...portfolioPositions]
       .filter((position) => position.asset_symbol && position.weight)
       .sort((left, right) => Number(right.value_usd ?? 0) - Number(left.value_usd ?? 0))[0];
     const reasoningSources = Array.from(new Set([
       ...(decisions?.data_sources_used ?? []),
       ...(risk?.data_sources_used ?? []),
-      ...(portfolio?.data_sources_used ?? []),
+      ...(displayPortfolio?.data_sources_used ?? []),
     ]));
     const reasoningNotes = [
       ...(risk?.notes ?? []),
@@ -193,17 +271,17 @@ const Index = () => {
         executionGate,
         confidence,
         mode: decisions?.ai_debug?.mode ?? risk.runtime_mode,
-        lastUpdated: allocation?.generated_at ?? risk.generated_at ?? decisions?.generated_at ?? portfolio.generated_at,
+        lastUpdated: allocation?.generated_at ?? risk.generated_at ?? decisions?.generated_at ?? displayPortfolio.generated_at,
       },
       stages: [
         {
           id: "portfolio",
           title: "Portfolio Scan",
           status: portfolioPositions.length > 0 ? "complete" : "warning",
-          description: portfolio.status_reason,
+          description: displayPortfolio.status_reason,
           detail: leadPosition
             ? `${leadPosition.asset_symbol} is the largest sleeve at ${(Number(leadPosition.weight) * 100).toFixed(2)}%.`
-            : portfolio.status_reason,
+            : displayPortfolio.status_reason,
           evidenceTags: reasoningSources.slice(0, 4),
         },
         {
@@ -278,7 +356,7 @@ const Index = () => {
       ],
       decision: {
         recommendedAction: action,
-        reasoningSummary: decisions.reasoning_summary ?? risk.reasoning_summary ?? allocation?.decision.reasoning ?? portfolio.status_reason ?? "Decision generated from current backend state.",
+        reasoningSummary: decisions.reasoning_summary ?? risk.reasoning_summary ?? allocation?.decision.reasoning ?? displayPortfolio.status_reason ?? "Decision generated from current backend state.",
         constraints: decisions.constraints_applied ?? [],
         nextStep: risk.hard_veto_status === "active"
           ? "Execution is blocked until the guard condition clears and inputs return to a safe state."
@@ -290,8 +368,8 @@ const Index = () => {
       },
       events: reasoningNotes.slice(0, 4).map((message, index) => ({
         timestamp: index === 0
-          ? (risk.generated_at ?? decisions.metadata?.timestamp ?? portfolio.generated_at)
-          : decisions.metadata?.timestamp ?? portfolio.generated_at,
+          ? (risk.generated_at ?? decisions.metadata?.timestamp ?? displayPortfolio.generated_at)
+          : decisions.metadata?.timestamp ?? displayPortfolio.generated_at,
         level: message.toLowerCase().includes("warning") || message.toLowerCase().includes("risk")
           ? "warning"
           : "info",
@@ -306,7 +384,7 @@ const Index = () => {
     latestPrices?.prices,
     latestQuotes?.quotes,
     marketIngestion?.assets,
-    portfolio,
+    displayPortfolio,
     risk,
     routesQuery.data?.routes?.length,
     settings?.ai_decision_maker_enabled,
@@ -336,9 +414,15 @@ const Index = () => {
         : primarySwapRecommendation.asset_symbol))
     : null;
   const lastRecommendationToastRef = useRef<string | null>(null);
-  const autoCreateProposalRef = useRef<string | null>(
-    sessionStorage.getItem("lastAutoCreateProposalKey"),
-  );
+  // Bug 6 fix: sessionStorage.getItem must NOT be called during render because
+  // React 18 Strict Mode renders components twice in development, causing the
+  // read to fire twice. Initialise the ref to null and populate it in a
+  // one-time useEffect that runs after mount (outside the render path).
+  const autoCreateProposalRef = useRef<string | null>(null);
+  useEffect(() => {
+    autoCreateProposalRef.current = sessionStorage.getItem("lastAutoCreateProposalKey");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally empty — only runs once after first mount
   const launchAssetSymbol =
     primarySwapRecommendation?.token_in_symbol ?? depositAsset;
   const launchAmount = depositAmount.trim();
@@ -347,7 +431,7 @@ const Index = () => {
     ? Number.parseFloat(String(primarySwapRecommendation.amount))
     : 0;
   const launchAssetBalance = useMemo(() => {
-    const candidates = resolvedVaultData?.balances ?? [];
+    const candidates = vaultData?.balances ?? [];
     const position =
       candidates.find((item) => item.asset_symbol === launchAssetSymbol) ??
       (launchAssetSymbol === "MNT"
@@ -357,7 +441,7 @@ const Index = () => {
         ? candidates.find((item) => item.asset_symbol === "MNT")
         : undefined);
     return position?.balance?.trim() ?? "";
-  }, [launchAssetSymbol, resolvedVaultData?.balances]);
+  }, [launchAssetSymbol, vaultData?.balances]);
   const hasActivePlan = useMemo(() => {
     const wallet = effectiveWalletAddress?.toLowerCase();
     if (!wallet || !pendingProposal) {
@@ -378,7 +462,9 @@ const Index = () => {
     suggestedLaunchAmount > 0;
   const portfolioDetail = !effectiveWalletAddress
     ? ""
-    : (portfolio?.status_reason ??
+    : (displayPortfolio?.metadata?.source === "vault_balance_fallback"
+      ? "Portfolio totals are currently being rendered from vault balances while the snapshot refresh catches up."
+      : displayPortfolio?.status_reason ??
       (effectiveWalletAddress
         ? "Reading /portfolio/current with explicit wallet scope."
         : ""));
@@ -464,8 +550,8 @@ const Index = () => {
     ) {
       return;
     }
-    const totalVaultValue = Number.parseFloat(resolvedVaultData?.total_value_usd ?? "0");
-    if (!resolvedVaultData?.balances?.length || !Number.isFinite(totalVaultValue) || totalVaultValue <= 0) {
+    const totalVaultValue = Number.parseFloat(vaultData?.total_value_usd ?? "0");
+    if (!vaultData?.balances?.length || !Number.isFinite(totalVaultValue) || totalVaultValue <= 0) {
       toast.warning("Deposit funds into the vault before AI can create a trade proposal.");
       return;
     }
@@ -522,8 +608,8 @@ const Index = () => {
     primarySwapRecommendation,
     recommendationAction,
     proposalsQuery.isLoading,
-    resolvedVaultData?.balances,
-    resolvedVaultData?.total_value_usd,
+    vaultData?.balances,
+    vaultData?.total_value_usd,
     swapRecommendations,
     riskProfile,
   ]);
@@ -571,8 +657,8 @@ const Index = () => {
         {hasConnectedSupportedWallet ? (
           <>
             <PortfolioSummary
-              portfolio={portfolio ?? undefined}
-              vaultData={resolvedVaultData}
+              portfolio={displayPortfolio}
+              vaultData={vaultData}
               isLoading={dashboardSummaryQuery.isLoading}
               detail={portfolioDetail}
               risk={risk ?? undefined}
@@ -595,7 +681,7 @@ const Index = () => {
                   onBucketChange={setChartBucket}
                 />
                 <PortfolioAllocationChart
-                  portfolio={portfolio ?? undefined}
+                  portfolio={displayPortfolio}
                   targetWeights={allocation?.decision?.target_weights}
                   isLoading={dashboardSummaryQuery.isLoading}
                 />
@@ -644,9 +730,14 @@ const Index = () => {
       <DepositModal
         open={depositModalOpen}
         onClose={() => setDepositModalOpen(false)}
-        walletData={hasConnectedSupportedWallet ? resolvedWalletData : undefined}
+        walletData={hasConnectedSupportedWallet ? walletData : undefined}
         vaultAddress={resolvedVaultAddress}
-        wmntAddress={normalizeAddress(settings?.sepolia_wmnt_address) ?? undefined}
+        wmntAddress={resolvedWmntAddress}
+        // Bug E fix: pass native MNT balance so DepositModal shows it when
+        // asset === "MNT" (native coin is not in walletData.balances).
+        nativeMntBalance={hasConnectedSupportedWallet && walletBalanceQuery.data
+          ? Number.parseFloat(walletBalanceQuery.data.balances?.find(b => b.asset_symbol === "MNT")?.balance ?? "0") || null
+          : null}
         nativeMntEnabled={settings?.native_mnt_enabled ?? false}
         suggestedAsset={primarySwapRecommendation?.token_in_symbol ?? undefined}
         suggestedAmount={
@@ -656,7 +747,7 @@ const Index = () => {
       <WithdrawModal
         open={withdrawModalOpen}
         onClose={() => setWithdrawModalOpen(false)}
-        vaultData={hasConnectedSupportedWallet ? resolvedVaultData : undefined}
+        vaultData={hasConnectedSupportedWallet ? vaultData : undefined}
         vaultAddress={resolvedVaultAddress}
         wmntAddress={normalizeAddress(settings?.sepolia_wmnt_address) ?? undefined}
         nativeMntEnabled={settings?.native_mnt_enabled ?? false}

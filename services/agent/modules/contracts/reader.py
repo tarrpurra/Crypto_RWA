@@ -70,14 +70,17 @@ def get_pause_guardian_state(rpc_url: str, foundry_out_dir: Path, address: str) 
 
 def get_trade_approval_manager_state(rpc_url: str, foundry_out_dir: Path, address: str) -> dict[str, Any]:
     web3 = _web3(rpc_url)
-    get_contract_instance(
-        rpc_url=rpc_url,
+    spec = PROJECT_CONTRACTS["trade_approval_manager"]
+    contract = build_contract(
+        web3=web3,
         foundry_out_dir=foundry_out_dir,
-        contract_key="trade_approval_manager",
+        source_dir=spec.source_dir,
+        contract_name=spec.contract_name,
         address=address,
     )
     return {
         "address": web3.to_checksum_address(address),
+        "required_approvals": int(contract.functions.requiredApprovals().call()),
     }
 
 

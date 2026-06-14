@@ -59,8 +59,10 @@ def compute_rebalance(
 
     target_weights = {asset: weight for asset, weight in target_profile.items()}
     
-    # Calculate drift
-    drifts = {asset: current_weights[asset] - target_weights[asset] for asset in target_weights}
+    # Calculate drift for all portfolio assets (not just target-profile assets)
+    # This ensures overweight non-target assets like WMNT are captured
+    all_assets = set(current_weights.keys()) | set(target_weights.keys())
+    drifts = {asset: current_weights.get(asset, 0.0) - target_weights.get(asset, 0.0) for asset in all_assets}
     
     decision_id = f"dec_{int(now.timestamp())}"
     recommended_action = "HOLD"
@@ -129,11 +131,14 @@ def compute_rebalance(
         logger.warning("Failed to check rebalance cooldown in database: %s", exc)
 
     # Evaluate drift rebalance needs
+    # Only create actions for target-profile assets; non-target assets (e.g., WMNT)
+    # are handled as swap sources by _select_overweight_source when a BUY action runs
+    profile_assets = set(target_weights.keys())
     significant_drifts: list[tuple[str, float]] = []
     drift_tolerance = settings.rebalance_drift_tolerance
     
     for asset, drift in drifts.items():
-        if abs(drift) > drift_tolerance:
+        if abs(drift) > drift_tolerance and asset in profile_assets:
             significant_drifts.append((asset, drift))
             
     if not significant_drifts:

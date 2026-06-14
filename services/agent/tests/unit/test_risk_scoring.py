@@ -11,22 +11,26 @@ from services.agent.risk.scoring.score_engine import RiskScoreEngine
 from services.agent.modules.oracle.freshness import utc_now
 
 
+from services.agent.app.core.status_codes import TargetChain
+
+
 class RiskScoringTests(unittest.TestCase):
     def setUp(self) -> None:
         self.now = utc_now()
         self.engine = RiskScoreEngine()
+        self.engine.settings.target_chain = TargetChain.MANTLE_MAINNET
         
         # Base normal balances
         self.balances = [
-            AssetBalance(asset_symbol="USDY", balance=550000.0, value_usd=550000.0, weight=0.55),
-            AssetBalance(asset_symbol="mETH", balance=128.57, value_usd=450000.0, weight=0.45),
+            AssetBalance(asset_symbol="USDY", balance=600000.0, value_usd=600000.0, weight=0.60),
+            AssetBalance(asset_symbol="mETH", balance=114.28, value_usd=400000.0, weight=0.40),
         ]
         self.portfolio = PortfolioSnapshot(
             snapshot_id="port_test_normal",
             wallet_or_vault="0xvault",
             total_value_usd=1000000.0,
             balances=self.balances,
-            weights={"USDY": 0.55, "mETH": 0.45},
+            weights={"USDY": 0.60, "mETH": 0.40},
             status_code="DATA_FRESH",
             status_reason="",
             created_at=self.now

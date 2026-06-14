@@ -66,8 +66,6 @@ def risk_assessment_to_snapshot(assessment: RiskAssessmentResponse) -> RiskSnaps
 
 def _active_profile_name(settings: Settings, requested_profile_name: str | None = None) -> str:
     configured_name = requested_profile_name or profiles.ACTIVE_PROFILE_NAME or settings.allocation_profile_name
-    if settings.target_chain == TargetChain.MANTLE_SEPOLIA and requested_profile_name is None:
-        configured_name = "Sepolia Test"
     return resolve_requested_profile_name(configured_name, settings.target_chain.value)
 
 

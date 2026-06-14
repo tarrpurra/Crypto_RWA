@@ -22,7 +22,7 @@ async def dashboard_summary(wallet_address: str | None = None) -> DashboardSumma
             cache=DashboardCachePayload(hit=True, ttl_seconds=_DASHBOARD_SUMMARY_TTL_SECONDS),
         )
 
-    summary = get_dashboard_summary(wallet_address)
+    summary = await get_dashboard_summary(wallet_address)
     set_cached(cache_key, summary)
     return DashboardSummaryResponse(
         **summary,

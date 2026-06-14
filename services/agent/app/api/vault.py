@@ -19,7 +19,7 @@ from services.agent.app.schemas.vault import (
     WithdrawPrepareResponse,
 )
 from services.agent.modules.dashboard.cache import clear_cached
-from services.agent.modules.market_data.balances import Erc20BalanceReader
+from services.agent.modules.market_data.balances import Erc20BalanceReader, ZERO_ADDRESS, configured_vault_assets
 from services.agent.modules.market_data import get_price_service
 from services.agent.modules.oracle.freshness import utc_now
 from services.agent.repositories.db.vault_repository import VaultFlowRepository
@@ -127,12 +127,14 @@ async def wallet_balance(wallet_address: str | None = None) -> VaultBalanceRespo
         )
 
     try:
+        web3 = _web3(settings.effective_http_rpc_url)
         reader = Erc20BalanceReader(settings.effective_http_rpc_url)
         balances = reader.read_configured_balances(
             portfolio_address=wallet_address,
             asset_registry=settings.active_portfolio_asset_registry,
             chain_id=settings.effective_chain_id,
         )
+        native_mnt_balance = int(web3.eth.get_balance(web3.to_checksum_address(wallet_address)))
     except Exception as exc:
         return VaultBalanceResponse(
             status="degraded",
@@ -172,6 +174,24 @@ async def wallet_balance(wallet_address: str | None = None) -> VaultBalanceRespo
                 asset_symbol=bal.asset_symbol,
                 asset_address=bal.asset_address,
                 balance=bal.balance,
+                value_usd=_format_decimal(value),
+                share=0.0,
+            )
+        )
+
+    if native_mnt_balance > 0:
+        try:
+            native_value = Decimal(native_mnt_balance) / (Decimal(10) ** Decimal(18))
+        except (InvalidOperation, ValueError):
+            native_value = Decimal("0")
+        price = price_by_symbol.get("mnt", Decimal("0"))
+        value = native_value * price
+        total_value += value
+        items.append(
+            VaultBalanceItem(
+                asset_symbol="MNT",
+                asset_address=ZERO_ADDRESS,
+                balance=_format_decimal(native_value) or "0",
                 value_usd=_format_decimal(value),
                 share=0.0,
             )
@@ -248,19 +268,14 @@ async def get_vault_balance_snapshot(user_address: str | None = None) -> VaultBa
         )
 
     asset_registry = settings.active_portfolio_asset_registry
-    token_addresses: list[str] = []
-    token_symbols: list[str] = []
-    for asset in asset_registry.values():
-        if int(asset["chain_id"]) != settings.effective_chain_id:
-            continue
-        if not asset.get("verified") or not asset.get("address"):
-            continue
-        token_addresses.append(str(asset["address"]))
-        token_symbols.append(str(asset["symbol"]))
+    token_assets = configured_vault_assets(asset_registry, settings.effective_chain_id)
+    token_addresses: list[str] = [str(asset["address"]) for asset in token_assets]
+    token_symbols: list[str] = [str(asset["symbol"]) for asset in token_assets]
 
     try:
         checksum_user = web3.to_checksum_address(user_address)
         checksum_tokens = [web3.to_checksum_address(a) for a in token_addresses]
+        checksum_tokens.append(web3.to_checksum_address(ZERO_ADDRESS))
         raw_balances = vault_contract.functions.getUserBalances(checksum_user, checksum_tokens).call()
     except Exception as exc:
         logger.warning("Vault balance read failed: %s", exc)
@@ -287,9 +302,13 @@ async def get_vault_balance_snapshot(user_address: str | None = None) -> VaultBa
 
     items: list[VaultBalanceItem] = []
     total_value = Decimal("0")
+    token_addresses.append(ZERO_ADDRESS)
+    token_symbols.append("MNT")
+
     for i, symbol in enumerate(token_symbols):
-        raw_bal = raw_balances[i]
-        if raw_bal == 0:
+        raw_bal = raw_balances[i] if i < len(raw_balances) else 0
+        addr = token_addresses[i] if i < len(token_addresses) else ""
+        if raw_bal == 0 and addr == ZERO_ADDRESS:
             continue
         try:
             asset_data = next(
@@ -314,7 +333,7 @@ async def get_vault_balance_snapshot(user_address: str | None = None) -> VaultBa
             VaultBalanceItem(
                 asset_symbol=symbol,
                 asset_address=token_addresses[i],
-                balance=str(raw_bal),
+                balance=balance_str,
                 value_usd=_format_decimal(value),
                 share=0.0,
             )
@@ -562,45 +581,58 @@ async def withdraw_prepare(req: WithdrawPrepareRequest) -> WithdrawPrepareRespon
             sufficient_balance=False,
         )
 
-    if req.token.lower() in ("mnt", "0x0000000000000000000000000000000000000000", "native"):
-        token_addr = "0x0000000000000000000000000000000000000000"
-    else:
-        registry = settings.active_portfolio_asset_registry
-        asset_data = next(
-            (a for a in registry.values() if str(a["symbol"]).lower() == req.token.lower()),
-            None,
-        )
-        if not asset_data or not asset_data.get("address"):
-            return WithdrawPrepareResponse(
-                status="degraded",
-                status_code="DATA_MISSING",
-                status_label="DATA_MISSING",
-                status_reason=f"Asset {req.token} not found in registry.",
-                token=req.token,
-                amount=req.amount,
-                vault_balance="0",
-                sufficient_balance=False,
-            )
-        token_addr = str(asset_data["address"])
-
     try:
         web3 = _web3(settings.effective_http_rpc_url)
         vault_contract = _get_vault_contract(web3, vault_address)
         checksum_user = web3.to_checksum_address(req.user_address)
-        checksum_token = web3.to_checksum_address(token_addr)
+        token_addr = ZERO_ADDRESS
+        decimals = 18
 
-        raw_balance = vault_contract.functions.getUserBalance(checksum_user, checksum_token).call()
-
-        asset_data = None
-        if token_addr == "0x0000000000000000000000000000000000000000":
-            decimals = 18
+        if req.token.lower() in ("mnt", ZERO_ADDRESS, "native"):
+            native_balance_raw = int(vault_contract.functions.getUserBalance(checksum_user, web3.to_checksum_address(ZERO_ADDRESS)).call())
+            if native_balance_raw > 0:
+                raw_balance = native_balance_raw
+                token_addr = ZERO_ADDRESS
+            else:
+                registry = settings.active_portfolio_asset_registry
+                wmnt_asset = next(
+                    (a for a in registry.values() if str(a["symbol"]).lower() == "wmnt" and a.get("address")),
+                    None,
+                )
+                if not wmnt_asset:
+                    return WithdrawPrepareResponse(
+                        status="degraded",
+                        status_code="DATA_MISSING",
+                        status_label="DATA_MISSING",
+                        status_reason="WMNT address is not configured.",
+                        token=req.token,
+                        amount=req.amount,
+                        vault_balance="0",
+                        sufficient_balance=False,
+                    )
+                token_addr = str(wmnt_asset["address"])
+                decimals = int(wmnt_asset.get("decimals", 18))
+                raw_balance = int(vault_contract.functions.getUserBalance(checksum_user, web3.to_checksum_address(token_addr)).call())
         else:
             registry = settings.active_portfolio_asset_registry
             asset_data = next(
-                (a for a in registry.values() if str(a["address"]).lower() == token_addr.lower()),
+                (a for a in registry.values() if str(a["symbol"]).lower() == req.token.lower()),
                 None,
             )
-            decimals = int(asset_data.get("decimals", 18)) if asset_data else 18
+            if not asset_data or not asset_data.get("address"):
+                return WithdrawPrepareResponse(
+                    status="degraded",
+                    status_code="DATA_MISSING",
+                    status_label="DATA_MISSING",
+                    status_reason=f"Asset {req.token} not found in registry.",
+                    token=req.token,
+                    amount=req.amount,
+                    vault_balance="0",
+                    sufficient_balance=False,
+                )
+            token_addr = str(asset_data["address"])
+            decimals = int(asset_data.get("decimals", 18))
+            raw_balance = int(vault_contract.functions.getUserBalance(checksum_user, web3.to_checksum_address(token_addr)).call())
 
         vault_balance_str = _scaled_token_amount(raw_balance, decimals)
         try:

@@ -49,9 +49,16 @@ class MarketDataRepository:
 
     def save_quote_bundle(self, bundle: QuoteIngestionBundle) -> None:
         with create_session() as session:
+            seen_snapshot_ids: set[str] = set()
             for snapshot in bundle.raw_snapshots:
+                if snapshot.snapshot_id in seen_snapshot_ids:
+                    continue
+                seen_snapshot_ids.add(snapshot.snapshot_id)
                 session.merge(self._quote_record_from_raw(snapshot))
             for snapshot in bundle.normalized_snapshots:
+                if snapshot.snapshot_id in seen_snapshot_ids:
+                    continue
+                seen_snapshot_ids.add(snapshot.snapshot_id)
                 session.merge(self._quote_record_from_normalized(snapshot))
             session.commit()
 
