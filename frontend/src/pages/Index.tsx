@@ -329,7 +329,7 @@ const Index = () => {
       className="flex min-h-full flex-1 flex-col"
     >
       <PageScaffold
-        eyebrow="AIYield"
+        eyebrow="YieldMind"
         title="Dashboard"
         description="AI-powered yield optimization with real-time risk management for RWA portfolios."
       >

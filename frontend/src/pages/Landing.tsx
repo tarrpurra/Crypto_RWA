@@ -85,7 +85,7 @@ const Landing = () => {
         initial={reduceMotion ? false : { opacity: 0.12, clipPath: `circle(6.5rem at ${activationOrigin})`, scale: 0.96 }}
         animate={{
           opacity: isVisible ? 0.34 : 0.12,
-          clipPath: isVisible ? `circle(160vmax at ${activationOrigin})` : `circle(6.5rem at ${activationOrigin})`,
+          clipPath: isVisible ? `circle(999vmax at ${activationOrigin})` : `circle(6.5rem at ${activationOrigin})`,
           scale: isVisible ? 1 : 0.96,
         }}
         transition={{
@@ -109,7 +109,7 @@ const Landing = () => {
           animate={{
             opacity: 1,
             filter: "blur(0px)",
-            clipPath: "circle(160vmax at 50% 42%)",
+            clipPath: "circle(999vmax at 50% 42%)",
             scale: 1,
           }}
           initial={

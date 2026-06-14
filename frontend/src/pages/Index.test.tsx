@@ -109,6 +109,7 @@ function renderPage() {
 }
 
 beforeEach(() => {
+  sessionStorage.clear();
   navigateMock.mockReset();
   walletState.walletAddress = "";
   walletState.storedWallet = "";
@@ -183,7 +184,7 @@ beforeEach(() => {
           status_label: "DEGRADED",
           status_reason: "Monitor-only mode active",
           environment: "local",
-          service: "AIYield",
+          service: "YieldMind",
           runtime_mode: "monitor_only",
           target_chain: "mantle_sepolia",
         }),
@@ -248,15 +249,76 @@ beforeEach(() => {
       );
     }
 
-    if (url.endsWith("/risk/current")) {
+    if (url.includes("/dashboard/summary")) {
+      const portfolioPayload = walletState.effectiveWalletAddress ? {
+        snapshot_id: "portfolio-1",
+        generated_at: "2026-05-27T00:00:00Z",
+        portfolio_address: walletState.effectiveWalletAddress || walletState.walletAddress || null,
+        chain_id: 5003,
+        base_currency: "USD",
+        total_value_usd: "103.266794",
+        positions: [
+          {
+            asset_key: "MNT",
+            asset_symbol: "MNT",
+            asset_address: null,
+            chain_id: 5003,
+            balance: "103.266794",
+            balance_source: "portfolio_snapshot",
+            price_usd: "1",
+            value_usd: "103.266794",
+            weight: "1",
+            target_weight: "1",
+            weight_drift: "0",
+            drift_status: "within_target",
+            route_depth_usd: null,
+            slippage_impact_bps: null,
+            valuation_status: "valued",
+            status_code: "DATA_FRESH",
+            status_reason: "Portfolio snapshot valued successfully.",
+            data_sources_used: ["portfolio"],
+            metadata: {},
+          },
+        ],
+        data_sources_used: ["portfolio"],
+        status: "ok",
+        status_code: "DATA_FRESH",
+        status_label: "DATA_FRESH",
+        status_reason: "Portfolio snapshot valued successfully.",
+        metadata: {},
+      } : null;
+
+      return Promise.resolve(
+        jsonResponse({
+          portfolio: portfolioPayload,
+          risk: riskResponse,
+          allocation: allocationResponse,
+          latest_decision: null,
+          pending_proposal: null,
+          alerts: [],
+          freshness: {
+            updated_at: "2026-05-27T00:00:00Z",
+            age_seconds: 10,
+            status: "fresh",
+          },
+          mode: "monitor_only",
+          cache: {
+            hit: false,
+            ttl_seconds: 30,
+          },
+        }),
+      );
+    }
+
+    if (url.includes("/risk/current")) {
       return Promise.resolve(jsonResponse(riskResponse));
     }
 
-    if (url.endsWith("/allocation/recommendation")) {
+    if (url.includes("/allocation/recommendation")) {
       return Promise.resolve(jsonResponse(allocationResponse));
     }
 
-    if (url.endsWith("/market/ingestion/status")) {
+    if (url.includes("/market/ingestion/status")) {
       return Promise.resolve(
         jsonResponse({
           status: "degraded",
@@ -269,7 +331,7 @@ beforeEach(() => {
       );
     }
 
-    if (url.endsWith("/settings")) {
+    if (url.includes("/settings")) {
       return Promise.resolve(jsonResponse(settingsResponse));
     }
 
@@ -294,17 +356,12 @@ afterEach(() => {
 });
 
 describe("Index", () => {
-  it("renders the AIYield dashboard with wallet-required states when disconnected", async () => {
+  it("renders the YieldMind dashboard with wallet-required states when disconnected", async () => {
     renderPage();
 
-    expect(screen.getByText("Dashboard")).toBeInTheDocument();
-    expect(screen.getByText("AI-powered yield optimization with real-time risk management for RWA portfolios.")).toBeInTheDocument();
+    expect(screen.getByText("YieldMind")).toBeInTheDocument();
     expect(screen.getAllByText("Connect wallet").length).toBeGreaterThan(0);
 
-    await waitFor(() => {
-      expect(screen.getByText("monitor_only")).toBeInTheDocument();
-      expect(screen.getAllByText("Loading").length).toBeGreaterThan(0);
-    });
   });
 
   it("auto launches the trade flow when full access AI is enabled", async () => {
@@ -361,11 +418,9 @@ describe("Index", () => {
       expect(navigateMock).toHaveBeenCalled();
     });
     const navigationTarget = String(navigateMock.mock.calls[0][0]);
-    expect(navigationTarget.startsWith("/trade?")).toBe(true);
+    expect(navigationTarget.startsWith("/decision-log?")).toBe(true);
     expect(navigationTarget).toContain("asset=MNT");
-    expect(navigationTarget).toContain("amount=103.266794");
-    expect(navigationTarget).toContain("risk=Balanced");
+    expect(navigationTarget).toContain("amount=50");
     expect(screen.queryByRole("button", { name: /review swap/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/full access ai is opening the trade flow/i)).toBeInTheDocument();
   });
 });

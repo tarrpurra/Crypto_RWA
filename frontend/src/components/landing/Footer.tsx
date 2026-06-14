@@ -1,6 +1,6 @@
 export function Footer() {
   const links = [
-    ["GitHub", "https://github.com/your-org/yieldmind"],
+    ["GitHub", "https://github.com/tarrpurra/Crypto_RWA"],
     ["Contract", "https://explorer.sepolia.mantle.xyz"],
     ["DoraHacks", "https://dorahacks.io/hackathon/mantleturingtesthackathon2026"],
   ];

@@ -23,14 +23,11 @@ export function TopBar() {
     <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur-xl">
       <div className="grid min-h-12 grid-cols-[auto_1fr_auto] items-stretch">
         <Link
-          to="/dashboard"
+          to="/"
           className="flex items-center gap-2 border-r border-border px-4 text-foreground transition-colors hover:text-primary"
         >
           <span className="terminal-wordmark text-[18px] font-semibold leading-none">
-            AIYield
-          </span>
-          <span className="hidden text-[11px] font-semibold text-primary sm:inline">
-            Portfolio
+            YieldMind
           </span>
         </Link>
 

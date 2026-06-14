@@ -48,9 +48,9 @@ export function HeroSection() {
                 sequential
                 speed={160}
                 useOriginalCharsOnly
-                className="text-lp-gold"
-                parentClassName="text-lp-gold"
-                encryptedClassName="text-lp-gold/30"
+                className="text-stone-950"
+                parentClassName="text-stone-950"
+                encryptedClassName="text-stone-950/40"
               />
             </motion.h1>
 
@@ -58,7 +58,7 @@ export function HeroSection() {
               initial={reduce ? false : { opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
-              className="mt-5 max-w-[480px] text-[16px] leading-relaxed text-lp-fg-secondary md:text-[16px]"
+              className="mt-5 max-w-[480px] text-[16px] leading-relaxed text-stone-950 md:text-[16px]"
             >
               Autonomous USDY + mETH optimisation on Mantle L2.
               Every decision logged on-chain via ERC-8004.
