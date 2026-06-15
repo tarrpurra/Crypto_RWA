@@ -165,7 +165,7 @@ export function RiskConfidenceCard({
             <Target className="h-3.5 w-3.5" />
             Recommended action
           </div>
-          <span className="font-mono text-foreground">{recommendedAction ?? "Monitor"}</span>
+          <span className="font-sans font-medium text-foreground">{recommendedAction ?? "Monitor"}</span>
           <div className="hidden h-3.5 w-px bg-border sm:block" />
           <div className="flex items-center gap-2 text-muted-foreground">
             <Bot className="h-3.5 w-3.5" />
@@ -174,10 +174,10 @@ export function RiskConfidenceCard({
           <span className="font-mono text-foreground">{toPercent(decisionConfidence)}</span>
           <div className="hidden h-3.5 w-px bg-border sm:block" />
           <span className="text-muted-foreground">Decision profile</span>
-          <span className="font-mono text-foreground">{profile ?? "Balanced"}</span>
+          <span className="font-sans font-medium text-foreground">{profile ?? "Balanced"}</span>
           <div className="hidden h-3.5 w-px bg-border sm:block" />
           <span className="text-muted-foreground">Approval mode</span>
-          <span className="font-mono text-foreground">
+          <span className="font-sans font-medium text-foreground">
             {hardVetoStatus === "active" ? "Blocked" : risk?.required_human_approval_status ?? decisions?.required_human_approval_status ?? "Required"}
           </span>
         </div>

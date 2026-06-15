@@ -1,8 +1,8 @@
 from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+
 
 from services.agent.app.schemas.allocation import AllocationDecision, AllocationDecisionResponse
 from services.agent.app.schemas.dashboard import DashboardFreshnessPayload
@@ -118,8 +118,18 @@ def _freshness_payload(*, timestamps: list[datetime | None]) -> DashboardFreshne
     )
 
 
-def get_dashboard_summary(wallet_address: str | None):
-    portfolio = PortfolioSnapshotRepository().latest_snapshot(portfolio_address=wallet_address)
+async def _latest_portfolio_for_dashboard(wallet_address: str | None):
+    if not wallet_address:
+        return PortfolioSnapshotRepository().latest_snapshot(portfolio_address=wallet_address)
+    try:
+        from services.agent.app.api.portfolio import current_portfolio
+        return await current_portfolio(wallet_address=wallet_address)
+    except Exception:
+        return PortfolioSnapshotRepository().latest_snapshot(portfolio_address=wallet_address)
+
+
+async def get_dashboard_summary(wallet_address: str | None):
+    portfolio = await _latest_portfolio_for_dashboard(wallet_address)
     risk = RiskAssessmentRepository().latest_assessment()
     allocation = _latest_allocation_recommendation(wallet_address)
     pending_proposal = _latest_pending_proposal(wallet_address)

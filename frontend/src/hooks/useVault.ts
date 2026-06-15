@@ -9,6 +9,7 @@ export function useVaultBalance() {
     queryKey: ["vault", "balance", effectiveWalletAddress],
     queryFn: () => vaultApi.balance(effectiveWalletAddress),
     enabled: Boolean(effectiveWalletAddress),
+    staleTime: 12_000,
     refetchInterval: 15_000,
   });
 }
@@ -19,6 +20,7 @@ export function useWalletBalance() {
     queryKey: ["vault", "wallet", effectiveWalletAddress],
     queryFn: () => vaultApi.walletBalance(effectiveWalletAddress),
     enabled: Boolean(effectiveWalletAddress),
+    staleTime: 12_000,
     refetchInterval: 15_000,
   });
 }

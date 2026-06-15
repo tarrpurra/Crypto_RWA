@@ -46,3 +46,12 @@ export function useLatestQuotes() {
     refetchInterval: 30_000,
   });
 }
+
+export function usePriceHistory(asset: string, range = "24h", bucket = "1h") {
+  return useQuery({
+    queryKey: ["market", "price-history", asset, range, bucket],
+    queryFn: () => marketApi.priceHistory(asset, range, bucket),
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
+  });
+}

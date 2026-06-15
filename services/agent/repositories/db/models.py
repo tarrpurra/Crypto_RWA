@@ -216,3 +216,70 @@ class VaultFlowRecord(Base):
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     metadata_json: Mapped[dict] = mapped_column(JSON_TYPE, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class StrategyTemplateRecord(Base):
+    __tablename__ = "strategy_templates"
+    __table_args__ = (UniqueConstraint("name", name="uq_strategy_templates_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt_text: Mapped[str] = mapped_column(Text, nullable=False)
+    policy_json: Mapped[dict] = mapped_column(JSON_TYPE, nullable=False, default=dict)
+    is_system_template: Mapped[bool] = mapped_column(nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class StrategyDraftRecord(Base):
+    __tablename__ = "strategy_drafts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_address: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    template_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    raw_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    extracted_policy_json: Mapped[dict | None] = mapped_column(JSON_TYPE, nullable=True)
+    validation_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    validation_errors_json: Mapped[list] = mapped_column(JSON_TYPE, nullable=False, default=list)
+    safety_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class StrategyVersionRecord(Base):
+    __tablename__ = "strategy_versions"
+    __table_args__ = (UniqueConstraint("version", name="uq_strategy_versions_version"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_address: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    active_policy_json: Mapped[dict] = mapped_column(JSON_TYPE, nullable=False, default=dict)
+    raw_prompt_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    simulation_result_json: Mapped[dict] = mapped_column(JSON_TYPE, nullable=False, default=dict)
+    activated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+
+
+class StrategyAuditEventRecord(Base):
+    __tablename__ = "strategy_audit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    strategy_version_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    details_json: Mapped[dict] = mapped_column(JSON_TYPE, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class StrategySchedulerRecord(Base):
+    __tablename__ = "scheduler_settings"
+    __table_args__ = (UniqueConstraint("strategy_version_id", name="uq_scheduler_settings_strategy_version_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    strategy_version_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    market_check_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    quote_refresh_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    risk_recompute_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    execution_window_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

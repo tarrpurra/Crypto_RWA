@@ -64,7 +64,7 @@ export function RiskBucketChart({ risk, isLoading }: RiskBucketChartProps) {
               <YAxis
                 type="category"
                 dataKey="name"
-                tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10, fontFamily: "Space Grotesk" }}
                 tickLine={false}
                 axisLine={false}
                 width={80}

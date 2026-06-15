@@ -11,23 +11,33 @@ from services.agent.risk.scoring.score_engine import RiskScoreEngine
 from services.agent.modules.oracle.freshness import utc_now
 
 
+from services.agent.app.core.status_codes import TargetChain
+
+
 class RiskScoringTests(unittest.TestCase):
     def setUp(self) -> None:
         self.now = utc_now()
         self.engine = RiskScoreEngine()
+        self.engine.settings.target_chain = TargetChain.MANTLE_MAINNET
+        
+        from services.agent.app.core.status_codes import RuntimeMode
+        self.engine.settings.runtime_mode = RuntimeMode.LIVE
+        self.engine.settings.pyth_eth_usd_hard_block_seconds = 300
+        self.engine.settings.pyth_eth_usd_warn_seconds = 120
+        self.engine.settings.ondo_usdy_oracle_hard_block_seconds = 600
+        self.engine.settings.ondo_usdy_oracle_warn_seconds = 300
         
         # Base normal balances
         self.balances = [
-            AssetBalance(asset_symbol="USDC", balance=250000.0, value_usd=250000.0, weight=0.25),
-            AssetBalance(asset_symbol="USDY", balance=428571.4, value_usd=450000.0, weight=0.45),
-            AssetBalance(asset_symbol="mETH", balance=85.71, value_usd=300000.0, weight=0.30),
+            AssetBalance(asset_symbol="USDY", balance=600000.0, value_usd=600000.0, weight=0.60),
+            AssetBalance(asset_symbol="mETH", balance=114.28, value_usd=400000.0, weight=0.40),
         ]
         self.portfolio = PortfolioSnapshot(
             snapshot_id="port_test_normal",
             wallet_or_vault="0xvault",
             total_value_usd=1000000.0,
             balances=self.balances,
-            weights={"USDC": 0.25, "USDY": 0.45, "mETH": 0.30},
+            weights={"USDY": 0.60, "mETH": 0.40},
             status_code="DATA_FRESH",
             status_reason="",
             created_at=self.now
@@ -54,7 +64,7 @@ class RiskScoringTests(unittest.TestCase):
         mock_quotes.return_value = [
             NormalizedQuoteSnapshot(
                 snapshot_id="q1", protocol="agni", route_id="usdy_route", route_label="exactInputSingle",
-                token_in_symbol="USDY", token_out_symbol="USDC", amount_in="1000", amount_out="1050",
+                token_in_symbol="USDY", token_out_symbol="mETH", amount_in="1000", amount_out="1050",
                 quoted_price="1.05", estimated_slippage_bps="10", route_depth_usd="100000",
                 sample_timestamp=self.now, freshness_status="ok", status_code="QUOTE_FRESH",
                 status_reason=""
@@ -106,7 +116,7 @@ class RiskScoringTests(unittest.TestCase):
         mock_quotes.return_value = [
             NormalizedQuoteSnapshot(
                 snapshot_id="q1", protocol="agni", route_id="usdy_route", route_label="exactInputSingle",
-                token_in_symbol="USDY", token_out_symbol="USDC", amount_in="1000", amount_out="1010",
+                token_in_symbol="USDY", token_out_symbol="USDT", amount_in="1000", amount_out="1010",
                 quoted_price="1.01", estimated_slippage_bps="10", route_depth_usd="100000",
                 sample_timestamp=self.now, freshness_status="ok", status_code="QUOTE_FRESH",
                 status_reason=""

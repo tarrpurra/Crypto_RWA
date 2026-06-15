@@ -8,6 +8,7 @@ import type {
   MarketIngestionStatusResponse,
   NormalizedQuoteSnapshot,
   OndoUsdyOracleStatus,
+  PriceHistoryResponse,
   ProposalExecuteResponse,
   ProposalMutationResponse,
   ProposalsResponse,
@@ -16,6 +17,8 @@ import type {
 
 export const marketApi = {
   ingestionStatus: () => request<MarketIngestionStatusResponse>("/market/ingestion/status"),
+  priceHistory: (asset: string, range = "24h", bucket = "1h") =>
+    request<PriceHistoryResponse>(`/market/price-history?asset=${encodeURIComponent(asset)}&range=${encodeURIComponent(range)}&bucket=${encodeURIComponent(bucket)}`),
   latestPrices: () => request<LatestPricesResponse>("/market/prices/latest"),
   usdyOracle: () => request<OndoUsdyOracleStatus>("/market/oracles/usdy"),
   routes: () => request<RoutesResponse>("/market/routes"),
@@ -34,8 +37,17 @@ export const marketApi = {
     request<ProposalMutationResponse>(`/proposals/${id}/approve`, "POST"),
   rejectProposal: (id: string) =>
     request<ProposalMutationResponse>(`/proposals/${id}/reject`, "POST"),
-  getProposals: (status?: string) =>
-    request<ProposalsResponse>(`/proposals${status ? `?status=${status}` : ""}`),
+  getProposals: (status?: string, walletAddress?: string | null) => {
+    const params = new URLSearchParams();
+    if (status) {
+      params.set("status", status);
+    }
+    if (walletAddress?.trim()) {
+      params.set("wallet_address", walletAddress.trim());
+    }
+    const query = params.toString();
+    return request<ProposalsResponse>(`/proposals${query ? `?${query}` : ""}`);
+  },
   executeProposal: (id: string) =>
     request<ProposalExecuteResponse>(`/proposals/${id}/execute`, "POST"),
 };

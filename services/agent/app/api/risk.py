@@ -43,7 +43,7 @@ async def current_risk(
     deposit_amount: float | None = None,
     risk_profile: str | None = None,
     allocation_mode: str | None = None,
-    allow_env_fallback: bool = False,
+    allow_env_fallback: bool = True,
     force_refresh: bool = False,
 ) -> RiskAssessmentResponse:
     if deposit_asset_symbol and deposit_amount and risk_profile:

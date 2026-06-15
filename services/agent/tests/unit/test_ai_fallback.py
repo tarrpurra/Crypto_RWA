@@ -20,16 +20,15 @@ class AiFallbackTests(unittest.TestCase):
         self.settings.ai_reasoning_enabled = False
         self.now = utc_now()
         self.balances = [
-            AssetBalance(asset_symbol="USDC", balance=250000.0, value_usd=250000.0, weight=0.25),
-            AssetBalance(asset_symbol="USDY", balance=428571.4, value_usd=450000.0, weight=0.45),
-            AssetBalance(asset_symbol="mETH", balance=85.71, value_usd=300000.0, weight=0.30),
+            AssetBalance(asset_symbol="USDY", balance=550000.0, value_usd=550000.0, weight=0.55),
+            AssetBalance(asset_symbol="mETH", balance=128.57, value_usd=450000.0, weight=0.45),
         ]
         self.portfolio = PortfolioSnapshot(
             snapshot_id="port_test_normal",
             wallet_or_vault="0xvault",
             total_value_usd=1000000.0,
             balances=self.balances,
-            weights={"USDC": 0.25, "USDY": 0.45, "mETH": 0.30},
+            weights={"USDY": 0.55, "mETH": 0.45},
             status_code="DATA_FRESH",
             status_reason="",
             created_at=self.now
@@ -49,8 +48,8 @@ class AiFallbackTests(unittest.TestCase):
             decision_id="dec_test",
             wallet_or_vault="0xvault",
             profile_name="Balanced",
-            current_weights={"USDC": 0.25, "USDY": 0.45, "mETH": 0.30},
-            target_weights={"USDC": 0.25, "USDY": 0.45, "mETH": 0.30},
+            current_weights={"USDY": 0.55, "mETH": 0.45},
+            target_weights={"USDY": 0.55, "mETH": 0.45},
             recommended_action="HOLD",
             confidence=0.90,
             reasoning="Reason text",
@@ -89,8 +88,7 @@ class AiFallbackTests(unittest.TestCase):
         import asyncio
 
         rebalance_actions = [
-            RebalanceAction(asset_symbol="USDC", action="BUY", amount=37.5, route_id="route-usdc"),
-            RebalanceAction(asset_symbol="USDY", action="BUY", amount=0.0, route_id="route-usdy"),
+            RebalanceAction(asset_symbol="USDY", action="BUY", amount=37.5, route_id="route-usdy"),
             RebalanceAction(asset_symbol="mETH", action="HOLD", amount=12.0, route_id=None),
         ]
 
@@ -103,7 +101,7 @@ class AiFallbackTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(response.asset, "USDC")
+        self.assertEqual(response.asset, "USDY")
 
     def test_prompt_builder_decision_maker_mode_includes_action_field(self) -> None:
         prompt = build_reasoning_prompt(self.portfolio, self.risk, self.decision, [], ai_decision_maker=True)

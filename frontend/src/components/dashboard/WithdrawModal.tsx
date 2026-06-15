@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { parseUnits } from "viem";
+import { usePublicClient, useWriteContract } from "wagmi";
 import {
   AlertCircle,
   CheckCircle2,
@@ -9,37 +12,289 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { VaultBalanceResponse } from "@/lib/api/types";
-const WITHDRAW_ASSETS = ["MNT","USDY", "mETH"] as const;
+import { normalizeAddress } from "@/lib/addresses";
+import { vaultApi } from "@/lib/api/vault";
+import { logger } from "@/lib/logger";
+import { useChainId } from "wagmi";
+
+const EXECUTOR_VAULT_ABI = [
+  {
+    type: "function",
+    name: "withdrawToken",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "to", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "withdrawNative",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "to", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
+] as const;
+const WMNT_ABI = [
+  {
+    type: "function",
+    name: "withdraw",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "amount", type: "uint256" }],
+    outputs: [],
+  },
+] as const;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+function assetDecimals(_symbol: string) {
+  return 18;
+}
+
+function shortenAddress(value: string | null | undefined) {
+  if (!value) {
+    return "--";
+  }
+  if (value.length <= 12) {
+    return value;
+  }
+  return `${value.slice(0, 6)}...${value.slice(-4)}`;
+}
 
 interface WithdrawModalProps {
   open: boolean;
   onClose: () => void;
   vaultData: VaultBalanceResponse | undefined;
+  vaultAddress?: string;
+  wmntAddress?: string;
+  nativeMntEnabled?: boolean;
 }
 
-type WithdrawStep = "idle" | "preparing" | "ready" | "withdrawing" | "done" | "error";
+type WithdrawStep = "idle" | "withdrawing" | "done" | "error";
 
-export function WithdrawModal({ open, onClose, vaultData }: WithdrawModalProps) {
+export function WithdrawModal(props: WithdrawModalProps) {
+  if (!props.open) return null;
+  return <WithdrawModalContent {...props} />;
+}
+
+function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, nativeMntEnabled }: Omit<WithdrawModalProps, "open">) {
+  const queryClient = useQueryClient();
+  const publicClient = usePublicClient();
+  const { writeContractAsync } = useWriteContract();
+  const chainId = useChainId();
   const [asset, setAsset] = useState<string>("MNT");
   const [amount, setAmount] = useState("");
   const [step, setStep] = useState<WithdrawStep>("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [txHash, setTxHash] = useState("");
+  const [recordNote, setRecordNote] = useState("");
+  const inFlightRef = useRef(false);
+  const normalizedVaultAddress = normalizeAddress(vaultAddress);
+  const normalizedWmntAddress = normalizeAddress(wmntAddress);
+  const normalizedWalletAddress = normalizeAddress(vaultData?.user_address);
+  const canWithdrawMnt = Boolean(normalizedWmntAddress && nativeMntEnabled);
+  const availableAssets = useMemo(
+    () => {
+      const symbols = (vaultData?.balances ?? [])
+        .map((balance) => balance.asset_symbol)
+        .filter(Boolean);
+      if (canWithdrawMnt) {
+        symbols.push("MNT");
+      }
+      return Array.from(new Set(symbols));
+    },
+    [vaultData?.balances, canWithdrawMnt],
+  );
+  const selectableAssets =
+    availableAssets.length > 0 ? availableAssets : canWithdrawMnt ? ["MNT", "USDY", "mETH"] : ["USDY", "mETH"];
 
-  if (!open) return null;
-
-  const vaultBalance = vaultData?.balances?.find((b) => b.asset_symbol === asset);
+  const vaultBalance =
+    asset === "MNT"
+      ? vaultData?.balances?.find((b) => b.asset_symbol === "WMNT")
+        ?? vaultData?.balances?.find((b) => b.asset_symbol === "MNT")
+      : vaultData?.balances?.find((b) => b.asset_symbol === asset);
+  const vaultBalanceSymbol = vaultBalance?.asset_symbol ?? (asset === "MNT" ? "WMNT" : asset);
+  const wrappedMntWithdrawal = asset === "MNT" && vaultBalanceSymbol === "WMNT";
+  const walletAddress = vaultData?.user_address ?? "";
+  const tokenAddress = asset === "MNT" ? (normalizedWmntAddress ?? null) : normalizeAddress(vaultBalance?.asset_address ?? null);
   const vaultBalanceNum = Number.parseFloat(vaultBalance?.balance ?? "0");
   const numericAmount = Number.parseFloat(amount || "0");
-  const isValid = amount.trim() && Number.isFinite(numericAmount) && numericAmount > 0 && numericAmount <= vaultBalanceNum;
+  const exceedsVault = vaultBalanceNum > 0 && numericAmount > vaultBalanceNum;
+  const amountRaw = useMemo(() => {
+    if (!amount.trim()) {
+      return null;
+    }
+    try {
+      return parseUnits(amount, assetDecimals(asset));
+    } catch {
+      return null;
+    }
+  }, [amount, asset]);
+  const isValid =
+    amount.trim() &&
+    Number.isFinite(numericAmount) &&
+    numericAmount > 0 &&
+    vaultBalanceNum > 0 &&
+    !exceedsVault &&
+    Boolean(normalizedWalletAddress) &&
+    Boolean(normalizedVaultAddress) &&
+    (asset === "MNT" || Boolean(tokenAddress)) &&
+    amountRaw !== null;
+
+  useEffect(() => {
+    if (!selectableAssets.includes(asset)) {
+      setAsset(selectableAssets[0]);
+    }
+  }, [asset, selectableAssets]);
 
   const handleWithdraw = async () => {
+    if (inFlightRef.current) {
+      return;
+    }
+    inFlightRef.current = true;
     setStep("withdrawing");
+    setErrorMsg("");
+    setRecordNote("");
+    let unwrappedToNative = false;
     try {
-      await new Promise((r) => setTimeout(r, 2000));
+      if (!normalizedWalletAddress) {
+        throw new Error("Connected wallet address is missing.");
+      }
+      if (!normalizedVaultAddress) {
+        throw new Error("Vault address is not available.");
+      }
+      if (amountRaw === null) {
+        throw new Error("Withdrawal amount is invalid for the selected asset.");
+      }
+
+      const prepare = await vaultApi.withdrawPrepare(asset, amount, normalizedWalletAddress);
+      logger.info("vault.withdraw.prepare", {
+        wallet_address: normalizedWalletAddress,
+        vault_address: normalizedVaultAddress,
+        asset,
+        amount,
+        sufficient_balance: prepare.sufficient_balance,
+        vault_balance: prepare.vault_balance,
+      });
+
+      if (!prepare.sufficient_balance) {
+        throw new Error(`Vault balance is too low to withdraw ${amount} ${asset}.`);
+      }
+
+      let hash: `0x${string}`;
+      if (asset === "MNT") {
+        if (!normalizedWmntAddress) {
+          throw new Error("WMNT address is not available for wrapped MNT withdrawal.");
+        }
+        hash = await writeContractAsync({
+          address: normalizedVaultAddress,
+          abi: EXECUTOR_VAULT_ABI,
+          functionName: "withdrawToken",
+          chainId,
+          args: [normalizedWmntAddress, normalizedWalletAddress, amountRaw],
+        });
+        await publicClient?.waitForTransactionReceipt({ hash });
+
+        try {
+          const unwrapHash = await writeContractAsync({
+            address: normalizedWmntAddress,
+            abi: WMNT_ABI,
+            functionName: "withdraw",
+            chainId,
+            args: [amountRaw],
+          });
+          await publicClient?.waitForTransactionReceipt({ hash: unwrapHash });
+          setRecordNote("Wrapped WMNT was withdrawn and unwrapped to native MNT.");
+          unwrappedToNative = true;
+        } catch (unwrapError) {
+          logger.warn("vault.withdraw.unwrap.failed", {
+            wallet_address: normalizedWalletAddress,
+            vault_address: normalizedVaultAddress,
+            amount,
+            error: unwrapError,
+          });
+          setRecordNote("WMNT was withdrawn from the vault, but native unwrap failed. It remains in your wallet.");
+        }
+      } else {
+        if (!tokenAddress) {
+          throw new Error(`${asset} token address is not available for withdrawal.`);
+        }
+        hash = await writeContractAsync({
+          address: normalizedVaultAddress,
+          abi: EXECUTOR_VAULT_ABI,
+          functionName: "withdrawToken",
+          chainId,
+          args: [tokenAddress, normalizedWalletAddress, amountRaw],
+        });
+      }
+
+      const receipt = await publicClient?.waitForTransactionReceipt({ hash });
+      if (receipt?.status === "reverted") {
+        throw new Error("Transaction execution reverted on-chain.");
+      }
+      logger.info("vault.withdraw.confirmed", {
+        wallet_address: normalizedWalletAddress,
+        vault_address: normalizedVaultAddress,
+        asset,
+        amount,
+        tx_hash: hash,
+        block_number: receipt?.blockNumber?.toString() ?? null,
+      });
+      setTxHash(hash);
+
+      try {
+        await vaultApi.recordFlow({
+          user_address: normalizedWalletAddress,
+          asset_symbol: asset === "MNT" ? (wrappedMntWithdrawal ? "WMNT" : "MNT") : asset,
+          asset_amount: amount,
+          asset_address: asset === "MNT" ? (wrappedMntWithdrawal ? normalizedWmntAddress : ZERO_ADDRESS) : tokenAddress,
+          tx_hash: hash,
+          flow_type: "withdrawal",
+          metadata: {
+            source: "frontend.withdraw_modal",
+            vault_address: normalizedVaultAddress,
+            destination_wallet: normalizedWalletAddress,
+            unwrapped_to_native: unwrappedToNative,
+          },
+        });
+        logger.info("vault.withdraw.recorded", {
+          wallet_address: normalizedWalletAddress,
+          asset,
+          amount,
+          tx_hash: hash,
+        });
+      } catch (recordError) {
+        logger.error("vault.withdraw.record.failed", {
+          wallet_address: normalizedWalletAddress,
+          asset,
+          amount,
+          tx_hash: hash,
+          error: recordError,
+        });
+        setRecordNote("Transaction confirmed, but backend vault history recording failed.");
+      }
+
+      queryClient.invalidateQueries({ queryKey: ["vault"] });
+      queryClient.invalidateQueries({ queryKey: ["portfolio"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["allocation"] });
       setStep("done");
-    } catch {
+    } catch (error) {
+      logger.error("vault.withdraw.failed", {
+        wallet_address: normalizedWalletAddress || null,
+        vault_address: normalizedVaultAddress || null,
+        asset,
+        amount,
+        error,
+      });
       setStep("error");
-      setErrorMsg("Withdrawal failed. Check wallet and try again.");
+      setErrorMsg(error instanceof Error ? error.message : "Withdrawal failed. Check wallet and try again.");
+    } finally {
+      inFlightRef.current = false;
     }
   };
 
@@ -47,6 +302,8 @@ export function WithdrawModal({ open, onClose, vaultData }: WithdrawModalProps) 
     setStep("idle");
     setAmount("");
     setErrorMsg("");
+    setTxHash("");
+    setRecordNote("");
     onClose();
   };
 
@@ -63,10 +320,19 @@ export function WithdrawModal({ open, onClose, vaultData }: WithdrawModalProps) 
         {step === "done" ? (
           <div className="mt-6 flex flex-col items-center gap-3 py-6">
             <CheckCircle2 className="h-10 w-10 text-success" />
-            <p className="text-sm font-medium text-foreground">Withdrawal submitted</p>
+            <p className="text-sm font-medium text-foreground">Withdrawal confirmed</p>
             <p className="text-center text-xs text-muted-foreground">
               {numericAmount} {asset} withdrawn from AIxRWA Portfolio Vault.
             </p>
+            <div className="w-full rounded border border-border/70 bg-surface-2 px-3 py-2 text-[11px] text-muted-foreground">
+              <p>Wallet: <span className="font-mono text-foreground">{shortenAddress(walletAddress)}</span></p>
+              <p className="mt-1">Tx hash: <span className="font-mono text-foreground">{shortenAddress(txHash)}</span></p>
+            </div>
+            {recordNote ? (
+              <p className="text-center text-[11px] text-warning">{recordNote}</p>
+            ) : (
+              <p className="text-center text-[11px] text-success">Backend vault flow history updated.</p>
+            )}
             <Button onClick={handleClose} variant="outline" className="mt-2">
               Close
             </Button>
@@ -89,7 +355,7 @@ export function WithdrawModal({ open, onClose, vaultData }: WithdrawModalProps) 
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {WITHDRAW_ASSETS.map((a) => (
+                  {selectableAssets.map((a) => (
                     <SelectItem key={a} value={a}>{a}</SelectItem>
                   ))}
                 </SelectContent>
@@ -101,7 +367,7 @@ export function WithdrawModal({ open, onClose, vaultData }: WithdrawModalProps) 
                 <p className="text-[0.65rem] uppercase tracking-wider text-muted-foreground">Amount</p>
                 {vaultBalance && (
                   <p className="text-[0.6rem] text-muted-foreground">
-                    Vault: {vaultBalance.balance} {asset}
+                    Vault: {vaultBalance.balance} {vaultBalanceSymbol}
                   </p>
                 )}
               </div>
@@ -127,7 +393,18 @@ export function WithdrawModal({ open, onClose, vaultData }: WithdrawModalProps) 
                   </Button>
                 )}
               </div>
+              {exceedsVault && (
+                <p className="mt-1 text-[0.6rem] text-destructive">
+                  Amount exceeds vault balance ({vaultBalance?.balance} {vaultBalanceSymbol}).
+                </p>
+              )}
             </div>
+
+            {!vaultAddress && (
+              <p className="text-[0.6rem] text-destructive">
+                Vault address is unavailable, so withdrawals cannot be submitted from this modal yet.
+              </p>
+            )}
 
             <Button
               onClick={handleWithdraw}
@@ -143,7 +420,7 @@ export function WithdrawModal({ open, onClose, vaultData }: WithdrawModalProps) 
             </Button>
 
             <p className="text-center text-[0.6rem] text-muted-foreground">
-              Withdraws funds from the Portfolio Vault back to your wallet.
+              Withdraws confirmed vault balances back to your connected wallet and records the flow.
             </p>
           </div>
         )}

@@ -21,11 +21,11 @@ from services.agent.modules.proposals.investment_planner import (
     _build_target_allocations,
     _latest_price_map,
 )
+from services.agent.modules.strategy_policy.runtime import resolve_requested_profile_name, resolve_target_weights
 from services.agent.repositories.db.market_repository import MarketDataRepository
 # circular-safe: lazy import inside async functions
 # from services.agent.modules.decisions import build_decision_context
 from services.agent.risk.engine import RiskEngine
-from services.agent.strategies.allocation.profiles import get_allocation_profile_for_chain, normalize_profile_name
 from services.agent.strategies.decision_templates.parser import generate_ai_allocation, generate_recommendation_reasoning
 
 
@@ -61,8 +61,6 @@ def _resolve_price(symbol: str, prices: dict[str, Decimal], settings: Settings |
     if upper == "WMNT" and "MNT" in prices:
         return prices["MNT"]
     if settings is not None:
-        if upper in {"USDC", "USDC.E"} and settings.target_chain == TargetChain.MANTLE_SEPOLIA and settings.simulation_fallback_enabled:
-            return Decimal("1")
         if upper == "USDY" and settings.target_chain == TargetChain.MANTLE_SEPOLIA:
             if settings.sepolia_usdy_reference_price_usd:
                 try:
@@ -100,9 +98,9 @@ def _resolved_price_map(
 
 
 def _target_weights(scope: InvestmentScopeInput, settings: Settings) -> tuple[str, dict[str, float]]:
-    profile_name, ai_weights = get_allocation_profile_for_chain(scope.risk_profile, settings.target_chain.value)
-    normalized_profile = normalize_profile_name(profile_name)
-    return normalized_profile, dict(ai_weights)
+    normalized_profile = resolve_requested_profile_name(scope.risk_profile, settings.target_chain.value)
+    profile_name, ai_weights, _ = resolve_target_weights(normalized_profile, settings.target_chain.value)
+    return profile_name, dict(ai_weights)
 
 
 def _quote_validation_status(swaps) -> str:

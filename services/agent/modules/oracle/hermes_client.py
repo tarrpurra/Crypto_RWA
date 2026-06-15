@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import random
 import socket
 import ssl
 from datetime import UTC, datetime
@@ -11,13 +13,40 @@ import httpx
 
 from services.agent.app.schemas.oracle import HermesConnectivityProbe, HermesFetchResponse
 
+logger = logging.getLogger("services.agent.oracle.hermes_client")
+
+# Timeouts: a short connect ceiling prevents one slow TCP handshake from
+# blocking all in-flight coroutines.  The read timeout is generous enough
+# for the Hermes REST response body.
+_CONNECT_TIMEOUT = 15.0   # seconds — fail fast if the server is unreachable
+_READ_TIMEOUT    = 45.0  # seconds — generous window for Hermes under load
+
+# Retry policy for transient network errors (ConnectTimeout, NetworkError …)
+_RETRY_ATTEMPTS    = 3
+_RETRY_BASE_DELAY  = 0.5   # seconds
+_RETRY_MAX_DELAY   = 8.0   # seconds
+_RETRY_JITTER      = 0.3   # ±30 % random jitter on each backoff
+
+# Cap concurrent chunk requests to avoid flooding a slow Hermes endpoint
+_CHUNK_SEMAPHORE   = asyncio.Semaphore(2)  # max 2 in-flight chunk requests
+
 
 class HermesClient:
-    def __init__(self, base_url: str, latest_price_path: str, timeout: float = 20.0, max_feed_ids_per_request: int = 2) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        latest_price_path: str,
+        timeout: float = _READ_TIMEOUT,
+        max_feed_ids_per_request: int = 2,
+        retry_attempts: int = _RETRY_ATTEMPTS,
+        connect_timeout: float = _CONNECT_TIMEOUT,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.latest_price_path = latest_price_path
         self.timeout = timeout
+        self.connect_timeout = connect_timeout
         self.max_feed_ids_per_request = max(1, max_feed_ids_per_request)
+        self.retry_attempts = max(1, retry_attempts)
 
     async def fetch_latest_price_updates(self, feed_ids: list[str]) -> HermesFetchResponse:
         if not feed_ids:
@@ -38,13 +67,76 @@ class HermesClient:
         )
 
     async def _fetch_latest_price_payload(self, feed_ids: list[str]) -> dict[str, Any]:
-        chunks = [feed_ids[i : i + self.max_feed_ids_per_request] for i in range(0, len(feed_ids), self.max_feed_ids_per_request)]
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            responses = await asyncio.gather(*(self._fetch_chunk(client, chunk) for chunk in chunks))
+        chunks = [
+            feed_ids[i : i + self.max_feed_ids_per_request]
+            for i in range(0, len(feed_ids), self.max_feed_ids_per_request)
+        ]
+        # Use a single shared AsyncClient across all chunks in one call so
+        # the underlying connection pool is reused rather than re-established.
+        http_timeout = httpx.Timeout(connect=self.connect_timeout, read=self.timeout, write=5.0, pool=5.0)
+        async with httpx.AsyncClient(timeout=http_timeout) as client:
+            responses = await asyncio.gather(
+                *(self._fetch_chunk_with_retry(client, chunk) for chunk in chunks)
+            )
         return self._merge_payloads(responses)
 
+    async def _fetch_chunk_with_retry(
+        self,
+        client: httpx.AsyncClient,
+        feed_ids: list[str],
+    ) -> dict[str, Any]:
+        """Fetch one chunk of feed IDs with exponential backoff on transient errors."""
+        async with _CHUNK_SEMAPHORE:
+            return await self._with_retry(client, feed_ids)
+
+    async def _with_retry(
+        self,
+        client: httpx.AsyncClient,
+        feed_ids: list[str],
+    ) -> dict[str, Any]:
+        last_exc: Exception | None = None
+        for attempt in range(self.retry_attempts):
+            try:
+                return await self._fetch_chunk(client, feed_ids)
+            except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+                last_exc = exc
+                if attempt + 1 >= self.retry_attempts:
+                     break
+                # Exponential backoff: 0.5 s, 1 s, 2 s … capped at _RETRY_MAX_DELAY
+                base = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
+                jitter = base * _RETRY_JITTER * (random.random() * 2 - 1)  # ±jitter %
+                delay = max(0.0, base + jitter)
+                logger.warning(
+                    "Hermes chunk fetch attempt %d/%d failed (%s: %r) — retrying in %.2f s",
+                    attempt + 1,
+                    self.retry_attempts,
+                    type(exc).__name__,
+                    exc,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+            except httpx.HTTPStatusError as exc:
+                # 4xx/5xx — don't retry, propagate immediately
+                logger.warning(
+                    "Hermes returned HTTP %d for feed chunk — not retrying.",
+                    exc.response.status_code,
+                )
+                raise
+            except Exception as exc:
+                # Unexpected error — log and propagate without retry
+                logger.warning("Hermes unexpected error (%s): %r", type(exc).__name__, exc)
+                raise
+
+        logger.warning(
+            "Hermes chunk fetch failed after %d attempts: %s: %r",
+            self.retry_attempts,
+            type(last_exc).__name__,
+            last_exc,
+        )
+        raise last_exc  # type: ignore[misc]
+
     async def _fetch_chunk(self, client: httpx.AsyncClient, feed_ids: list[str]) -> dict[str, Any]:
-        params = [("ids[]", feed_id) for feed_id in feed_ids]
+        params = [(("ids[]"), feed_id) for feed_id in feed_ids]
         params.append(("parsed", "true"))
         response = await client.get(f"{self.base_url}{self.latest_price_path}", params=params)
         response.raise_for_status()
@@ -90,7 +182,7 @@ class HermesClient:
             error = f"dns:{exc}"
 
         try:
-            with socket.create_connection((host, port), timeout=self.timeout):
+            with socket.create_connection((host, port), timeout=self.connect_timeout):
                 tcp_ok = True
         except Exception as exc:
             error = f"tcp:{exc}"
@@ -98,7 +190,7 @@ class HermesClient:
         if parsed.scheme == "https" and tcp_ok:
             try:
                 ctx = ssl.create_default_context()
-                with socket.create_connection((host, port), timeout=self.timeout) as sock:
+                with socket.create_connection((host, port), timeout=self.connect_timeout) as sock:
                     with ctx.wrap_socket(sock, server_hostname=host):
                         tls_ok = True
             except Exception as exc:
@@ -108,7 +200,8 @@ class HermesClient:
 
         if tcp_ok:
             try:
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                http_timeout = httpx.Timeout(connect=self.connect_timeout, read=self.timeout, write=5.0, pool=5.0)
+                async with httpx.AsyncClient(timeout=http_timeout) as client:
                     response = await client.get(f"{self.base_url}{self.latest_price_path}", params={"parsed": "true"})
                     http_status = response.status_code
                     http_ok = response.is_success
@@ -127,3 +220,4 @@ class HermesClient:
             error=error,
             checked_at=checked_at,
         )
+

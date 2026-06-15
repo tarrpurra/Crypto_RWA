@@ -114,7 +114,7 @@ export function PortfolioSummary({
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto_auto] xl:items-start">
         <div className="space-y-1">
           <p className="terminal-label text-primary">Portfolio</p>
-          <p className="text-3xl font-semibold text-foreground">
+          <p className="text-3xl font-semibold text-foreground font-display">
             ${toTwo(currentValue)}
           </p>
           {detail && <p className="text-xs text-muted-foreground">{detail}</p>}

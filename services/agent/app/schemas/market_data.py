@@ -85,3 +85,25 @@ class MarketIngestionStatusResponse(BaseModel):
     status_reason: str
     generated_at: datetime
     assets: list[AssetIngestionStatus] = Field(default_factory=list)
+
+
+class PriceHistoryPoint(BaseModel):
+    time: datetime
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    close: float | None = None
+    avg: float | None = None
+    samples: int = 0
+
+
+class PriceHistoryResponse(BaseModel):
+    status: str
+    status_code: str
+    status_label: str
+    status_reason: str
+    asset: str
+    range: str
+    bucket: str
+    points: list[PriceHistoryPoint] = Field(default_factory=list)
+    demo: bool = False

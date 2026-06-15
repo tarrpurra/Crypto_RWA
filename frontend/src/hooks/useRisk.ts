@@ -25,6 +25,7 @@ export function useCurrentRisk(options?: { allowEnvFallback?: boolean }) {
         allowEnvFallback,
       ),
     enabled: Boolean(effectiveWalletAddress) || allowEnvFallback,
+    staleTime: 25_000,
     refetchInterval: 30_000,
   });
 }

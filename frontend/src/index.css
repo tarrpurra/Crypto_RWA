@@ -8,7 +8,7 @@
 :root {
   --font-sans: "Inter", system-ui, sans-serif;
   --font-display: "Space Grotesk", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-mono: "Space Grotesk", ui-monospace, SFMono-Regular, monospace;
 
   --void: 60 17% 98%;
   --background: 37 29% 95%;
@@ -236,6 +236,9 @@ body {
 }
 
 @layer utilities {
+  .font-code {
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  }
   .text-up {
     color: hsl(var(--chart-up));
   }

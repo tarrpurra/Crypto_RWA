@@ -3,24 +3,24 @@ import ElectricBorder from "@/components/ui/ElectricBorder";
 const steps = [
   {
     n: "01",
-    tag: "Oracle Layer",
-    title: "The agent reads the market",
-    body: "Every 2 hours, live USDY and mETH data is pulled from Pyth Network and the Ondo oracle directly on Mantle. No estimates. No stale prices. On-chain feeds only.",
-    chips: ["Pyth", "Ondo"],
+    tag: "Live Data",
+    title: "Multi-source market feeds",
+    body: "Real-time USDY, mETH, ETH, and MNT prices streamed from Pyth Network Hermes and the Ondo on-chain oracle. Aave APY tracking and swap quotes from AGNI Finance V3 and Merchant Moe pools — all in one live dashboard.",
+    chips: ["Pyth", "Ondo", "Aave"],
   },
   {
     n: "02",
-    tag: "Decision Engine",
-    title: "Five layers decide every move",
-    body: "A pipeline evaluates the yield spread, sizes the position using Kelly Criterion, and runs four independent risk checks - credit, liquidity, concentration, oracle health - before any swap is approved.",
-    chips: ["Kelly", "Risk gate"],
+    tag: "AI Pipeline",
+    title: "Five-stage risk-gated engine",
+    body: "A deterministic pipeline runs every cycle: Oracle reads the market, LLM reasons on utilisation trends, Kelly Criterion sizes the position, Risk Gate scores five buckets, and Execution broadcasts the decision. Hard vetoes prevent bad swaps.",
+    chips: ["LLM", "Kelly", "Risk gate"],
   },
   {
     n: "03",
-    tag: "Glass Box",
-    title: "Every call is permanent",
-    body: "Every decision - including ones the risk gate blocks - is written to Mantle via ERC-8004. The agent cannot delete a bad call. You can read the entire history on-chain right now.",
-    chips: ["ERC-8004", "Audit trail"],
+    tag: "Simulation",
+    title: "Transparent decision preview",
+    body: "The Glass Box shows every stage of the AI pipeline — Oracle, LLM Reason, Kelly, Risk Gate, Execution — as a live simulation. A Human vs AI slider lets you compare your own allocation against the agent's recommendation side by side.",
+    chips: ["Pipeline", "Simulation", "Side-by-side"],
   },
 ];
 

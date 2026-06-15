@@ -9,8 +9,7 @@ from services.agent.app.core.settings import Settings, TargetChain, get_settings
 from services.agent.app.core.status_codes import DataStatusCode
 from services.agent.app.schemas.market_data import AssetMetadata
 from services.agent.app.schemas.quotes import NormalizedQuoteSnapshot, RawQuoteSnapshot, RouteDescriptor
-from services.agent.modules.market_data.snapshots import QuoteIngestionBundle
-from services.agent.modules.market_data import PRICE_SNAPSHOT_STORE
+from services.agent.modules.market_data.snapshots import PRICE_SNAPSHOT_STORE, QuoteIngestionBundle
 from services.agent.modules.oracle.freshness import age_seconds, utc_now
 from services.agent.modules.quotes.agni_discovery import AgniDiscoveryService
 from services.agent.modules.quotes.agni_quotes import AgniQuoteService
@@ -245,9 +244,10 @@ class QuoteService:
                 rate = (price_in / price_out).quantize(Decimal("0.00000001"))
         amount_out = (amount_in * rate).quantize(Decimal("0.0001"))
         slippage_bps = 30
-        snapshot_id = str(uuid4())
+        raw_snapshot_id = str(uuid4())
+        normalized_snapshot_id = str(uuid4())
         raw = RawQuoteSnapshot(
-            snapshot_id=snapshot_id,
+            snapshot_id=raw_snapshot_id,
             protocol=route.protocol,
             route_type=route.route_type,
             chain_id=self.settings.effective_chain_id,
@@ -272,7 +272,7 @@ class QuoteService:
             },
         )
         norm = NormalizedQuoteSnapshot(
-            snapshot_id=snapshot_id,
+            snapshot_id=normalized_snapshot_id,
             protocol=route.protocol,
             route_id=route.route_id or f"{route.protocol.lower()}:{route.token_in}:{route.token_out}:{route.fee_tier_or_bin_step}",
             route_label=route.route_type,
@@ -425,7 +425,7 @@ class QuoteService:
 
     @staticmethod
     def _default_amount_in(symbol: str) -> Decimal:
-        if symbol.upper() in {"USDY", "USDC"}:
+        if symbol.upper() == "USDY":
             return Decimal("1000")
         if symbol.upper() in {"WMNT", "MNT"}:
             return Decimal("10")

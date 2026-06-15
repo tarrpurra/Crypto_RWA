@@ -1,4 +1,3 @@
-import { Settings2 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
 import { LoginButton } from "@/components/auth/LoginButton";
@@ -8,16 +7,11 @@ const navItems = [
   { title: "Dashboard", url: "/dashboard" },
   { title: "Risk", url: "/risk" },
   { title: "Decision Log", url: "/decision-log" },
-  { title: "Strategy Lab", url: "/strategy-lab" },
-  { title: "Settings", url: "/settings" },
+  { title: "Strategy Studio", url: "/strategy-lab" },
 ];
 
 export function TopBar() {
   const location = useLocation();
-  const apiBaseUrl = String(import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000");
-  const environmentLabel = /localhost|127\.0\.0\.1/i.test(apiBaseUrl)
-    ? "LOCAL"
-    : "REMOTE";
 
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur-xl">
@@ -26,6 +20,7 @@ export function TopBar() {
           to="/"
           className="flex items-center gap-2 border-r border-border px-4 text-foreground transition-colors hover:text-primary"
         >
+          <img src="/master_logo.png" alt="" aria-hidden="true" draggable={false} className="h-6 w-6 object-contain shrink-0" />
           <span className="terminal-wordmark text-[18px] font-semibold leading-none">
             YieldMind
           </span>
@@ -54,19 +49,7 @@ export function TopBar() {
 
         <div className="flex items-center gap-2 border-l border-border px-3">
           <ThemeToggle />
-          <div className="hidden items-center gap-2 border border-border bg-surface-2 px-2 py-1 md:inline-flex">
-            <span className="h-1.5 w-1.5 bg-warning" />
-            <span className="font-mono text-[11px] text-muted-foreground">{environmentLabel}</span>
-          </div>
           <LoginButton />
-          <Link
-            to="/settings"
-            title="Settings"
-            className="flex h-8 w-8 items-center justify-center border border-border text-muted-foreground transition-colors hover:border-primary hover:text-primary"
-          >
-            <Settings2 className="h-4 w-4" />
-            <span className="sr-only">Settings</span>
-          </Link>
         </div>
       </div>
     </header>

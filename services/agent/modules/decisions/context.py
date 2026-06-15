@@ -15,11 +15,11 @@ from services.agent.app.schemas.risk import RiskAssessmentResponse, RiskSnapshot
 from services.agent.modules.market_data.balances import internal_snapshot_from_response
 from services.agent.modules.oracle.freshness import utc_now
 from services.agent.modules.proposals.investment_planner import _build_target_allocations, _latest_price_map
+from services.agent.modules.strategy_policy.runtime import resolve_requested_profile_name, resolve_target_weights
+from services.agent.modules.strategy_policy.schemas import StrategyPolicyConfig
 from services.agent.repositories.db.market_repository import MarketDataRepository
 from services.agent.risk.engine import RiskEngine
 from services.agent.strategies.allocation import profiles
-from services.agent.strategies.allocation.profiles import get_allocation_profile_for_chain, normalize_profile_name
-
 
 @dataclass(frozen=True)
 class DecisionContext:
@@ -34,6 +34,7 @@ class DecisionContext:
     quotes: list[NormalizedQuoteSnapshot]
     profile_name: str
     target_weights: dict[str, float] | None = None
+    strategy_policy: StrategyPolicyConfig | None = None
     scope_type: str = "wallet"
     scope_input: dict | None = None
 
@@ -65,9 +66,7 @@ def risk_assessment_to_snapshot(assessment: RiskAssessmentResponse) -> RiskSnaps
 
 def _active_profile_name(settings: Settings, requested_profile_name: str | None = None) -> str:
     configured_name = requested_profile_name or profiles.ACTIVE_PROFILE_NAME or settings.allocation_profile_name
-    if settings.target_chain == TargetChain.MANTLE_SEPOLIA and requested_profile_name is None:
-        configured_name = "Sepolia Test"
-    return normalize_profile_name(configured_name)
+    return resolve_requested_profile_name(configured_name, settings.target_chain.value)
 
 
 def _latest_market_context_best_effort() -> tuple[list[NormalizedPriceSnapshot] | None, list[NormalizedQuoteSnapshot] | None]:
@@ -142,8 +141,6 @@ def _resolve_price(symbol: str, prices: dict[str, Decimal], settings: Settings) 
         return prices["WMNT"]
     if upper == "WMNT" and "MNT" in prices:
         return prices["MNT"]
-    if upper in {"USDC", "USDC.E"} and settings.target_chain == TargetChain.MANTLE_SEPOLIA and settings.simulation_fallback_enabled:
-        return Decimal("1")
     if upper == "USDY" and settings.target_chain == TargetChain.MANTLE_SEPOLIA:
         if settings.sepolia_usdy_reference_price_usd:
             try:
@@ -175,8 +172,9 @@ def _build_scoped_portfolio(
     settings: Settings | None = None,
 ) -> tuple[PortfolioSnapshotResponse, dict[str, float], str]:
     settings = settings or get_settings()
-    profile_name, target_weights = get_allocation_profile_for_chain(risk_profile, settings.target_chain.value)
-    canonical_profile = normalize_profile_name(profile_name)
+    requested_profile = resolve_requested_profile_name(risk_profile, settings.target_chain.value)
+    profile_name, target_weights, strategy_policy = resolve_target_weights(requested_profile, settings.target_chain.value)
+    canonical_profile = profile_name
     prices = _latest_price_map()
     deposit_price = _resolve_price(deposit_asset_symbol, prices, settings)
     deposit_amount_dec = Decimal(str(deposit_amount))
@@ -240,6 +238,7 @@ def _build_scoped_portfolio(
                 "deposit_amount": deposit_amount,
                 "risk_profile": canonical_profile,
                 "allocation_mode": allocation_mode,
+                "strategy_policy_objective": strategy_policy.objective if strategy_policy else None,
             }
         },
     )
@@ -301,7 +300,8 @@ async def build_decision_context(
             if actual_portfolio_response is not None
             else None
         )
-        effective_profile = _active_profile_name(settings, canonical_profile)
+        effective_profile = canonical_profile
+        _, _, strategy_policy = resolve_target_weights(canonical_profile, settings.target_chain.value)
     else:
         portfolio_task = current_portfolio(
             wallet_address=wallet_address,
@@ -315,8 +315,8 @@ async def build_decision_context(
         portfolio = internal_snapshot_from_response(portfolio_response)
         actual_portfolio_response = portfolio_response
         actual_portfolio = _portfolio_snapshot_from_response(portfolio_response)
-        effective_profile = _active_profile_name(settings, profile_name)
-        _, target_weights = get_allocation_profile_for_chain(effective_profile, settings.target_chain.value)
+        requested_profile = _active_profile_name(settings, profile_name)
+        effective_profile, target_weights, strategy_policy = resolve_target_weights(requested_profile, settings.target_chain.value)
 
     prices, quotes = market_context
     risk_assessment = RiskEngine().evaluate(
@@ -340,6 +340,7 @@ async def build_decision_context(
         quotes=quotes or [],
         profile_name=effective_profile,
         target_weights=target_weights,
+        strategy_policy=strategy_policy,
         scope_type="deposit" if is_scoped else "wallet",
         scope_input={
             "deposit_asset_symbol": deposit_asset_symbol,

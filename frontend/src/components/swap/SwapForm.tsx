@@ -10,18 +10,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { marketApi } from "@/lib/api/market";
 import { useInvestmentScope } from "@/hooks/useInvestmentScope";
 import { useCurrentPortfolio } from "@/hooks/usePortfolio";
+import { useStrategyActive } from "@/hooks/useStrategy";
 import { useSwapQuote } from "@/hooks/useSwap";
 import { useSettings } from "@/hooks/useSystem";
 import { AlertTriangle } from "lucide-react";
 
 const assetOptions = ["USDY", "mETH", "MNT"] as const;
-const riskProfiles = ["Defensive", "Balanced", "Yield-Seeking"] as const;
+const riskProfiles = ["Defensive", "Balanced", "Yield-Seeking"];
 
 export function SwapForm() {
   const navigate = useNavigate();
   const { isConnected, address } = useAccount();
   const chainId = useChainId();
   const { setScope, clearScope } = useInvestmentScope();
+  const strategyActiveQuery = useStrategyActive(address ?? null);
   const portfolioQuery = useCurrentPortfolio();
   const settingsQuery = useSettings();
   const routesQuery = useQuery({
@@ -33,7 +35,14 @@ export function SwapForm() {
 
   const [depositAsset, setDepositAsset] = useState<(typeof assetOptions)[number]>("MNT");
   const [depositAmount, setDepositAmount] = useState("");
-  const [riskProfile, setRiskProfile] = useState<(typeof riskProfiles)[number]>("Balanced");
+  const activeStrategyLabel = strategyActiveQuery.data?.active_version?.version
+    ? `Custom Strategy ${strategyActiveQuery.data.active_version.version}`
+    : null;
+  const availableRiskProfiles = useMemo(
+    () => (activeStrategyLabel ? [activeStrategyLabel, ...riskProfiles] : [...riskProfiles]),
+    [activeStrategyLabel],
+  );
+  const [riskProfile, setRiskProfile] = useState("Balanced");
 
   const pairedTarget = depositAsset === "USDY" ? "mETH" : "USDY";
   const quoteTokenIn = depositAsset === "MNT" ? "WMNT" : depositAsset;
@@ -81,6 +90,12 @@ export function SwapForm() {
     }
     return nextWarnings;
   }, [availableBalance, depositAsset, isConnected, mntWrapConfigured, numericAmount]);
+
+  useEffect(() => {
+    if (activeStrategyLabel && riskProfiles.includes(riskProfile)) {
+      setRiskProfile(activeStrategyLabel);
+    }
+  }, [activeStrategyLabel, riskProfile]);
 
   useEffect(() => {
     if (chainId !== mantleSepoliaTestnet.id || !Number.isFinite(numericAmount) || numericAmount <= 0) {
@@ -150,12 +165,12 @@ export function SwapForm() {
 
           <label className="grid gap-2">
             <span className="text-xs text-muted-foreground">Risk profile</span>
-            <Select value={riskProfile} onValueChange={(value) => setRiskProfile(value as typeof riskProfile)}>
+            <Select value={riskProfile} onValueChange={setRiskProfile}>
               <SelectTrigger className="bg-surface-2">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {riskProfiles.map((profile) => (
+                {availableRiskProfiles.map((profile) => (
                   <SelectItem key={profile} value={profile}>
                     {profile}
                   </SelectItem>

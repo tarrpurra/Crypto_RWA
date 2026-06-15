@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     portfolio_wallet_address: str | None = None
     portfolio_base_currency: str = "USD"
     portfolio_target_weights: str = ""
-    allocation_profile_name: str = "Sepolia Test"
+    allocation_profile_name: str = "Balanced"
     sepolia_mock_prices_enabled: bool = False
     sepolia_mock_routes_enabled: bool = False
     sepolia_mock_token_a_address: str | None = None
@@ -76,9 +76,11 @@ class Settings(BaseSettings):
 
     pyth_hermes_url: str = "https://hermes.pyth.network"
     pyth_hermes_latest_price_path: str = "/v2/updates/price/latest"
-    price_poll_interval_seconds: int = 60
-    quote_poll_interval_seconds: int = 30
-    route_cache_ttl_seconds: int = 60
+    pyth_hermes_connect_timeout_seconds: float = 15.0
+    pyth_hermes_read_timeout_seconds: float = 30.0
+    price_poll_interval_seconds: int = 7200
+    quote_poll_interval_seconds: int = 7200
+    route_cache_ttl_seconds: int = 7200
     oracle_max_age_seconds_default: int = 300
     oracle_max_age_seconds_stable: int = 600
     oracle_max_age_seconds_volatile: int = 120
@@ -123,7 +125,6 @@ class Settings(BaseSettings):
     meth_mainnet_address: str | None = "0xcDA86A272531e8640cD7F1a92c01839911B90bb0"
     meth_sepolia_address: str | None = None
     wmnt_mainnet_address: str | None = "0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8"
-    usdc_mainnet_address: str | None = "0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9"
     weth_mainnet_address: str | None = "0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111"
 
     eth_usd_pyth_feed_id: str | None = "0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace"
@@ -354,20 +355,6 @@ class Settings(BaseSettings):
                 "ratio_feed_id": None,
                 "ondo_oracle_address": None,
                 "decimals": 18,
-            },
-            "USDC_MAINNET": {
-                "asset_key": "USDC_MAINNET",
-                "symbol": "USDC",
-                "chain_id": self.mantle_mainnet_chain_id,
-                "address": self.usdc_mainnet_address,
-                "price_strategy": "route_helper",
-                "primary_reference_source": "dex_quote_only",
-                "dex_quote_required": True,
-                "verified": bool(self.usdc_mainnet_address),
-                "pyth_feed_id": None,
-                "ratio_feed_id": None,
-                "ondo_oracle_address": None,
-                "decimals": 6,
             },
             "WMNT_MAINNET": {
                 "asset_key": "WMNT_MAINNET",

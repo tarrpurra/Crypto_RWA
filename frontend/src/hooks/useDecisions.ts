@@ -4,9 +4,14 @@ import { decisionsApi } from "@/lib/api/decisions";
 import { useInvestmentScope } from "@/hooks/useInvestmentScope";
 import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 
-export function useDecisions() {
+interface UseDecisionsOptions {
+  requireScope?: boolean;
+}
+
+export function useDecisions(options: UseDecisionsOptions = {}) {
   const { effectiveWalletAddress } = usePortfolioWallet();
   const { scope } = useInvestmentScope();
+  const requireScope = options.requireScope ?? false;
   const scopeKey = scope ? JSON.stringify(scope) : null;
   return useQuery({
     queryKey: ["decisions", effectiveWalletAddress, scopeKey],
@@ -22,8 +27,8 @@ export function useDecisions() {
             }
           : null,
     ),
-    enabled: Boolean(effectiveWalletAddress),
-    staleTime: 30_000,
+    enabled: Boolean(effectiveWalletAddress) && (!requireScope || Boolean(scope)),
+    staleTime: 25_000,
     refetchInterval: 30_000,
   });
 }

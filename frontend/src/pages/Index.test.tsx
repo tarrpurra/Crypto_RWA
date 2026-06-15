@@ -8,11 +8,15 @@ import { createTestQueryClient } from "@/test/queryClient";
 
 const navigateMock = vi.hoisted(() => vi.fn());
 const walletState = vi.hoisted(() => ({
-  walletAddress: "",
   storedWallet: "",
   connectedWalletAddress: "",
   connectedChainId: null as number | null,
-  effectiveWalletAddress: "",
+  get walletAddress() {
+    return this.connectedWalletAddress;
+  },
+  get effectiveWalletAddress() {
+    return this.connectedWalletAddress;
+  },
   isSupportedChain: false,
   setWalletAddress: vi.fn(),
 }));
@@ -111,11 +115,9 @@ function renderPage() {
 beforeEach(() => {
   sessionStorage.clear();
   navigateMock.mockReset();
-  walletState.walletAddress = "";
   walletState.storedWallet = "";
   walletState.connectedWalletAddress = "";
   walletState.connectedChainId = null;
-  walletState.effectiveWalletAddress = "";
   walletState.isSupportedChain = false;
   walletState.setWalletAddress.mockReset();
   settingsResponse = {
@@ -173,7 +175,7 @@ beforeEach(() => {
   };
   vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
   fetchMock.mockReset();
-  fetchMock.mockImplementation((input: RequestInfo | URL) => {
+  fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
 
     if (url.endsWith("/health")) {
@@ -318,6 +320,60 @@ beforeEach(() => {
       return Promise.resolve(jsonResponse(allocationResponse));
     }
 
+    if (url.includes("/proposals") && !url.includes("/proposals/create")) {
+      return Promise.resolve(
+        jsonResponse({
+          status: "ok",
+          status_code: "DATA_FRESH",
+          status_label: "DATA_FRESH",
+          status_reason: "Proposal queue loaded.",
+          proposals: [],
+        }),
+      );
+    }
+
+    if (url.includes("/proposals/create")) {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
+      return Promise.resolve(
+        jsonResponse({
+          status: "ok",
+          status_code: "EXECUTION_READY",
+          status_label: "EXECUTION_READY",
+          status_reason: "Proposal created from AI recommendation.",
+          generated_at: "2026-05-27T00:00:00Z",
+          plan_id: "plan-001",
+          deposit_asset_symbol: body.deposit_asset_symbol ?? "MNT",
+          deposit_amount: body.deposit_amount ?? 0,
+          risk_profile: body.risk_profile ?? "Balanced",
+          allocation_mode: body.allocation_mode ?? "AI Suggested",
+          ai_target_allocations: [],
+          selected_target_allocations: [],
+          warning_messages: [],
+          approval_enabled: true,
+          approval_blockers: [],
+          guard_checks: [],
+          estimated_gas_native: null,
+          transaction_steps: [],
+          linked_proposals: [
+            {
+              proposal_id: "proposal-001",
+              asset_symbol: "USDY",
+              action: "SELL",
+              token_in_symbol: "USDY",
+              token_out_symbol: "mETH",
+              amount: 50,
+              status_code: "EXECUTION_READY",
+            },
+          ],
+          risk_assessment: riskResponse,
+          metadata: {
+            runtime_mode: "monitor_only",
+            target_chain: "mantle_sepolia",
+          },
+        }),
+      );
+    }
+
     if (url.includes("/market/ingestion/status")) {
       return Promise.resolve(
         jsonResponse({
@@ -327,6 +383,22 @@ beforeEach(() => {
           status_reason: "Some market-data inputs are still missing or unverified.",
           generated_at: "2026-05-27T00:00:00Z",
           assets: [],
+        }),
+      );
+    }
+
+    if (url.includes("/market/price-history")) {
+      return Promise.resolve(
+        jsonResponse({
+          status: "ok",
+          status_code: "DATA_FRESH",
+          status_label: "DATA_FRESH",
+          status_reason: "Price history retrieved successfully.",
+          asset: "mETH",
+          range: "24h",
+          bucket: "1h",
+          points: [],
+          demo: true,
         }),
       );
     }
@@ -364,12 +436,10 @@ describe("Index", () => {
 
   });
 
-  it("auto launches the trade flow when full access AI is enabled", async () => {
-    walletState.walletAddress = "0x1234567890abcdef1234567890abcdef12345678";
-    walletState.storedWallet = walletState.walletAddress;
-    walletState.connectedWalletAddress = walletState.walletAddress;
+  it("creates a proposal when full access AI recommends rebalance", async () => {
+    walletState.connectedWalletAddress = "0x1234567890abcdef1234567890abcdef12345678";
+    walletState.storedWallet = walletState.connectedWalletAddress;
     walletState.connectedChainId = 5003;
-    walletState.effectiveWalletAddress = walletState.walletAddress;
     walletState.isSupportedChain = true;
     settingsResponse.ai_decision_maker_enabled = true;
     riskResponse = {
@@ -399,7 +469,7 @@ describe("Index", () => {
         wallet_or_vault: walletState.walletAddress,
         profile_name: "balanced",
         current_weights: { MNT: 1 },
-        target_weights: { USDC: 0.5, mETH: 0.3, USDY: 0.2 },
+        target_weights: { USDY: 0.5, mETH: 0.3, MNT: 0.2 },
         recommended_action: "REBALANCE",
         confidence: 0.9,
         reasoning: "Portfolio should be rebalanced.",
@@ -408,19 +478,23 @@ describe("Index", () => {
         created_at: "2026-05-27T00:00:00Z",
       },
       rebalance_actions: [
-        { asset_symbol: "USDC", action: "BUY", amount: 50, route_id: "agni:usdc" },
+        {
+          asset_symbol: "USDY",
+          action: "SELL",
+          amount: 50,
+          route_id: "agni:usdy",
+          token_in_symbol: "USDY",
+          token_out_symbol: "mETH",
+          swap_pair_label: "USDY -> mETH",
+        },
       ],
     };
 
     renderPage();
 
-    await waitFor(() => {
-      expect(navigateMock).toHaveBeenCalled();
-    });
-    const navigationTarget = String(navigateMock.mock.calls[0][0]);
-    expect(navigationTarget.startsWith("/decision-log?")).toBe(true);
-    expect(navigationTarget).toContain("asset=MNT");
-    expect(navigationTarget).toContain("amount=50");
+    const createCall = fetchMock.mock.calls.find(([input, init]) => String(input).includes("/proposals/create") && init?.method === "POST");
+    expect(createCall).toBeUndefined();
+    expect(navigateMock).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: /review swap/i })).not.toBeInTheDocument();
   });
 });

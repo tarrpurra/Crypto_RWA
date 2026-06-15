@@ -12,6 +12,12 @@ from services.agent.app.schemas.portfolio import PortfolioSnapshotResponse
 class RiskEndpointTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(app)
+        from services.agent.repositories.db.session import create_session, init_db
+        from services.agent.repositories.db.models import RiskAssessmentRecord
+        init_db()
+        with create_session() as session:
+            session.query(RiskAssessmentRecord).delete()
+            session.commit()
 
     def test_current_risk_returns_hard_veto_for_missing_portfolio(self) -> None:
         portfolio = PortfolioSnapshotResponse(

@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from web3 import Web3
 
 from services.agent.app.core.settings import Settings
-from services.agent.app.core.status_codes import DataStatusCode, ExecutionStatusCode, RuntimeMode, TargetChain
+from services.agent.app.core.status_codes import DataStatusCode, ExecutionStatusCode, ProposalStatusCode, RuntimeMode, TargetChain
 from services.agent.app.schemas.portfolio import AssetBalance, PortfolioSnapshot, PortfolioSnapshotResponse
 from services.agent.app.schemas.allocation import RebalanceAction
 from services.agent.app.schemas.proposals import (
@@ -32,8 +32,9 @@ from services.agent.modules.market_data import PRICE_SNAPSHOT_STORE
 from services.agent.modules.oracle import get_ondo_usdy_oracle_adapter
 from services.agent.modules.oracle.freshness import age_seconds, utc_now
 from services.agent.modules.quotes import get_quote_service
+from services.agent.modules.strategy_policy.runtime import resolve_requested_profile_name, resolve_target_weights
 from services.agent.repositories.db.market_repository import MarketDataRepository
-from services.agent.strategies.allocation.profiles import get_allocation_profile, get_allocation_profile_for_chain, normalize_profile_name
+from services.agent.strategies.allocation.profiles import get_allocation_profile
 from services.agent.strategies.allocation.rebalance import compute_rebalance
 
 
@@ -84,9 +85,13 @@ def _guard_thresholds(settings: Settings) -> tuple[Decimal, Decimal, Decimal, De
 
 
 def _normalize_weights(request: InvestmentPlanRequest, settings: Settings) -> tuple[dict[str, float], dict[str, float], list[str]]:
-    original_profile_name, original_weights = get_allocation_profile(request.risk_profile)
-    profile_name, ai_weights = get_allocation_profile_for_chain(request.risk_profile, settings.target_chain.value)
+    requested_profile_name = str(request.risk_profile or "").strip()
+    profile_name = resolve_requested_profile_name(requested_profile_name, settings.target_chain.value)
+    profile_name, ai_weights, _ = resolve_target_weights(profile_name, settings.target_chain.value)
     warnings: list[str] = []
+    original_profile_name = profile_name
+    if not profile_name.startswith("Custom Strategy"):
+        original_profile_name, _ = get_allocation_profile(requested_profile_name)
     if request.allocation_mode.lower().startswith("manual"):
         if not request.manual_target_weights:
             raise HTTPException(status_code=400, detail="Manual allocation mode requires manual_target_weights.")
@@ -100,7 +105,7 @@ def _normalize_weights(request: InvestmentPlanRequest, settings: Settings) -> tu
         }
     else:
         selected_weights = dict(ai_weights)
-        if profile_name != original_profile_name:
+        if not profile_name.startswith("Custom Strategy") and profile_name != original_profile_name:
             warnings.append(f"Risk profile alias normalized to {profile_name}.")
     return ai_weights, selected_weights, warnings
 
@@ -171,10 +176,7 @@ def _symbol_price(
         aliases.add("WMNT")
     elif normalized == "WMNT":
         aliases.add("MNT")
-    elif normalized == "USDC":
-        aliases.add("USDC.E")
-    elif normalized == "USDC.E":
-        aliases.add("USDC")
+
 
     for alias in aliases:
         price = prices.get(alias)
@@ -277,7 +279,7 @@ def _latest_price_map() -> dict[str, Decimal]:
 
 def _quote_derived_price(symbol: str, prices: dict[str, Decimal]) -> Decimal | None:
     quote_service = get_quote_service()
-    for stable_symbol in ("USDC", "USDY"):
+    for stable_symbol in ("USDY",):
         stable_price = prices.get(stable_symbol.upper())
         if stable_price is None:
             continue
@@ -667,9 +669,10 @@ def _encode_trade_proposal(
         raise HTTPException(status_code=400, detail=f"{swap.quote.protocol} swap router address is not configured.")
 
     selector = "0xa64e3dd7" if swap.quote.protocol == "AIYIELD" else "0x414bf389"
-    recipient = wallet_address or settings.executor_vault_address
+    recipient = settings.executor_vault_address
     if not recipient:
-        raise HTTPException(status_code=400, detail="No wallet address or executor vault address is configured for trade recipient.")
+        raise HTTPException(status_code=400, detail="Executor vault address is not configured for trade execution.")
+    proposal_scope = wallet_address or "UNCONFIGURED"
 
     now = int(time.time())
     deadline = now + 900
@@ -726,9 +729,9 @@ def _encode_trade_proposal(
     proposal = TradeProposal(
         proposal_id=proposal_id,
         plan_hash=plan_hash,
-        wallet_or_vault=recipient,
+        wallet_or_vault=proposal_scope,
         payload=payload,
-        status_code=ExecutionStatusCode.EXECUTION_READY.value,
+        status_code=ProposalStatusCode.PROPOSAL_PENDING_APPROVAL.value,
         risk_snapshot_id=None,
         created_at=t_now,
         updated_at=t_now,
@@ -753,7 +756,7 @@ def build_investment_plan(
     risk: RiskAssessmentResponse,
     actual_portfolio: PortfolioSnapshotResponse | None = None,
 ) -> tuple[InvestmentPlanResponse, list[tuple[TradeProposal, str]]]:
-    normalized_profile = normalize_profile_name(request.risk_profile)
+    normalized_profile = resolve_requested_profile_name(request.risk_profile, settings.target_chain.value)
     deposit_amount = Decimal(str(request.deposit_amount))
     if deposit_amount <= 0:
         raise HTTPException(status_code=400, detail="Deposit amount must be greater than zero.")
@@ -925,7 +928,17 @@ def build_investment_plan(
     transaction_steps: list[TransactionStep] = []
     step_index = 1
     ai_managed_execution = settings.ai_decision_maker_enabled
-    wrap_native_mnt = request.deposit_asset_symbol.upper() == "MNT" and any(swap.token_in_symbol.upper() == "WMNT" for swap in swaps)
+    # Bug D fix: emit the wrap step whenever native MNT is being deposited,
+    # regardless of whether swap legs were built. Previously the condition
+    # required swaps to exist with token_in_symbol=="WMNT", which meant an
+    # empty-swaps scenario (no quotes yet) produced no wrap step and the
+    # frontend's executeNativeWrapIfNeeded() silently skipped the wrap.
+    wrap_native_mnt = (
+        request.deposit_asset_symbol.upper() == "MNT"
+        and settings.native_mnt_enabled
+        and bool(settings.sepolia_wmnt_address)
+        and not rebalance_swaps
+    )
     if wrap_native_mnt:
         transaction_steps.append(
             TransactionStep(
@@ -987,18 +1000,14 @@ def build_investment_plan(
     elif execution_ready:
         response_status = "ok"
         response_status_code = ExecutionStatusCode.EXECUTION_READY.value
-        if rebalance_swaps:
-            response_status_reason = (
-                "Rebalance plan is ready for automatic execution by full access AI."
-                if settings.ai_decision_maker_enabled
-                else "Rebalance plan is ready for human approval."
-            )
+        if settings.ai_decision_maker_enabled:
+            response_status_reason = "AI auto-approved the trade proposal. Execution is pending through the ExecutorVault on-chain path."
+        elif linked_proposals:
+            response_status_reason = "Trade proposal created. Human approval is required before execution."
+        elif rebalance_swaps:
+            response_status_reason = "Rebalance recommendation is ready, but no approval-ready proposal could be created."
         else:
-            response_status_reason = (
-                "Investment plan is ready for automatic execution by full access AI."
-                if settings.ai_decision_maker_enabled
-                else "Investment plan is ready for human approval."
-            )
+            response_status_reason = "Investment recommendation is ready, but no approval-ready proposal could be created."
     else:
         response_status = "ok"
         response_status_code = ExecutionStatusCode.EXECUTION_SKIPPED.value
@@ -1014,7 +1023,7 @@ def build_investment_plan(
         status_label=response_status_code,
         status_reason=response_status_reason,
         generated_at=utc_now(),
-        plan_id=Web3.to_hex(keccak(f"investment_plan_{uuid.uuid4()}".encode("utf-8"))),
+        plan_id=f"0x{keccak(f'investment_plan_{uuid.uuid4()}'.encode('utf-8')).hex()}",
         deposit_asset_symbol=request.deposit_asset_symbol,
         deposit_amount=request.deposit_amount,
         risk_profile=normalized_profile,
@@ -1038,6 +1047,8 @@ def build_investment_plan(
             "runtime_mode": settings.runtime_mode.value,
             "target_chain": settings.target_chain.value,
             "execution_required": execution_required,
+            "human_approval_required": not settings.ai_decision_maker_enabled and bool(linked_proposals),
+            "proposal_creation_mode": "ai_auto" if settings.ai_decision_maker_enabled else "manual",
         },
     )
     for proposal in linked_proposals:

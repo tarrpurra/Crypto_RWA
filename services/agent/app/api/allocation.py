@@ -81,12 +81,15 @@ async def get_allocation_recommendation(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    decision, actions = compute_rebalance(
-        context.portfolio,
-        context.risk_snapshot,
-        context.profile_name,
-        target_weights_override=context.target_weights,
-    )
+    try:
+        decision, actions = compute_rebalance(
+            context.portfolio,
+            context.risk_snapshot,
+            context.profile_name,
+            target_weights_override=context.target_weights,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     _save_allocation_decision(decision)
 
     status = "ok"
@@ -121,9 +124,6 @@ async def update_active_profile(request: UpdateProfileRequest, response: Respons
         canonical_name = normalize_profile_name(request.profile_name)
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid profile name: {request.profile_name}. Approved: {list(profiles.ALLOCATION_PROFILES.keys())}")
-
-    if settings.target_chain == TargetChain.MANTLE_SEPOLIA:
-        canonical_name = "Sepolia Test"
 
     profiles.ACTIVE_PROFILE_NAME = canonical_name
     return {"status": "ok", "message": f"Active allocation profile set to {canonical_name}"}

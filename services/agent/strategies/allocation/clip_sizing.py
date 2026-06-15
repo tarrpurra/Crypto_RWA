@@ -10,7 +10,7 @@ def clip_trade_amount(asset_symbol: str, requested_val_usd: float, total_portfol
     Limits the trade size of a single rebalance step to:
     - mETH: max 10% of portfolio or $30k
     - USDY: max 15% of portfolio or $50k
-    - USDC / stables: max 20% of portfolio or $75k
+    - Other assets: max 20% of portfolio or $75k
 
     On test networks with small portfolios, a minimum floor ensures
     trades are not clipped to unusably small values.
@@ -27,7 +27,7 @@ def clip_trade_amount(asset_symbol: str, requested_val_usd: float, total_portfol
     elif asset_symbol == "USDY":
         pct_limit = 0.15
         abs_limit = 50000.0
-    else:  # stables/USDC
+    else:  # other / stables
         pct_limit = 0.20
         abs_limit = 75000.0
 

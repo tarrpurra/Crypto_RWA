@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { parseUnits } from "viem"
-import { useAccount, usePublicClient, useSendTransaction, useWriteContract } from "wagmi"
+import { useChainId, usePublicClient, useWriteContract } from "wagmi"
 
+import { usePortfolioWallet } from "@/hooks/usePortfolioWallet"
 import { marketApi } from "@/lib/api/market"
 import type { CreateProposalPayload } from "@/lib/api/types"
 import { toast } from "sonner"
@@ -98,106 +99,11 @@ export function useRejectProposal() {
 
 export function useExecuteProposal() {
   const queryClient = useQueryClient()
-  const { address } = useAccount()
-  const publicClient = usePublicClient()
-  const { sendTransactionAsync } = useSendTransaction()
-  const { writeContractAsync } = useWriteContract()
-
   return useMutation({
-    mutationFn: async (id: string) => {
-      console.info("[frontend][swap] requesting /proposals/{id}/execute", { proposal_id: id, wallet_address: address ?? null })
-      const txData = await marketApi.executeProposal(id)
-      console.info("[frontend][swap] received execute payload", {
-        proposal_id: txData.proposal_id,
-        router: txData.router,
-        token_in: txData.token_in,
-        token_out: txData.token_out,
-        chain_id: txData.chain_id,
-        max_amount_in: txData.max_amount_in,
-        min_amount_out: txData.min_amount_out,
-        native_value: txData.native_value,
-      })
-      const amountIn = BigInt(txData.max_amount_in)
-      const nativeValue = BigInt(txData.native_value)
-      if (amountIn > 0n && publicClient && address) {
-        console.info("[frontend][swap] checking allowance", {
-          token_in: txData.token_in,
-          router: txData.router,
-          amount_in: txData.max_amount_in,
-        })
-        const allowance = (await publicClient.readContract({
-          address: txData.token_in as `0x${string}`,
-          abi: [
-            {
-              type: "function",
-              name: "allowance",
-              stateMutability: "view",
-              inputs: [
-                { name: "owner", type: "address" },
-                { name: "spender", type: "address" },
-              ],
-              outputs: [{ name: "", type: "uint256" }],
-            },
-          ] as const,
-          functionName: "allowance",
-          args: [address, txData.router as `0x${string}`],
-        })) as bigint
-
-        if (allowance < amountIn) {
-          console.info("[frontend][swap] submitting approval transaction", {
-            token_in: txData.token_in,
-            router: txData.router,
-            amount_in: txData.max_amount_in,
-          })
-          const approvalHash = await writeContractAsync({
-            address: txData.token_in as `0x${string}`,
-            abi: [
-              {
-                type: "function",
-                name: "approve",
-                stateMutability: "nonpayable",
-                inputs: [
-                  { name: "spender", type: "address" },
-                  { name: "amount", type: "uint256" },
-                ],
-                outputs: [{ name: "", type: "bool" }],
-              },
-            ] as const,
-            functionName: "approve",
-            chainId: txData.chain_id,
-            args: [txData.router as `0x${string}`, amountIn],
-          })
-          await publicClient.waitForTransactionReceipt({ hash: approvalHash })
-          toast.success(`Token approval confirmed: ${approvalHash.slice(0, 16)}...`)
-        }
-      }
-      console.info("[frontend][swap] submitting router transaction", {
-        router: txData.router,
-        chain_id: txData.chain_id,
-        calldata: txData.calldata,
-        native_value: txData.native_value,
-      })
-      const hash = await sendTransactionAsync({
-        to: txData.router as `0x${string}`,
-        data: txData.calldata as `0x${string}`,
-        chainId: txData.chain_id,
-        value: nativeValue > 0n ? nativeValue : undefined,
-      })
-      console.info("[frontend][swap] router transaction sent", { proposal_id: txData.proposal_id, hash })
-      return { ...txData, hash }
-    },
-    onSuccess: (data) => {
-      toast.success(`Transaction sent: ${data.hash.slice(0, 16)}...`)
+    mutationFn: (id: string) => marketApi.executeProposal(id),
+    onSuccess: (_data, id) => {
       void queryClient.invalidateQueries({ queryKey: ["proposals"] })
-      void queryClient.invalidateQueries({ queryKey: ["proposals", "detail", data.proposal_id] })
-      void queryClient.invalidateQueries({ queryKey: ["portfolio"] })
-      void queryClient.invalidateQueries({ queryKey: ["system", "status"] })
-      void queryClient.invalidateQueries({ queryKey: ["system", "readiness"] })
-      void queryClient.invalidateQueries({ queryKey: ["risk"] })
-      void queryClient.invalidateQueries({ queryKey: ["allocation"] })
-    },
-    onError: (err) => {
-      toast.error(err instanceof Error ? err.message : "Failed to execute proposal")
+      void queryClient.invalidateQueries({ queryKey: ["proposals", "detail", id] })
     },
   })
 }
@@ -216,6 +122,7 @@ export function useWrapMnt() {
   const queryClient = useQueryClient()
   const publicClient = usePublicClient()
   const { writeContractAsync } = useWriteContract()
+  const chainId = useChainId()
 
   return useMutation({
     mutationFn: async ({ wmntAddress, amount }: { wmntAddress: `0x${string}`; amount: string }) => {
@@ -224,6 +131,7 @@ export function useWrapMnt() {
         address: wmntAddress,
         abi: WMNT_ABI,
         functionName: "deposit",
+        chainId,
         value,
       })
       if (publicClient) {
@@ -233,6 +141,9 @@ export function useWrapMnt() {
     },
     onSuccess: (data) => {
       toast.success(`Wrapped MNT: ${data.hash.slice(0, 16)}...`)
+      // Bug G fix: invalidate vault balance so the UI reflects the new WMNT
+      // balance immediately rather than waiting for the next 30-second poll.
+      void queryClient.invalidateQueries({ queryKey: ["vault"] })
       void queryClient.invalidateQueries({ queryKey: ["portfolio"] })
       void queryClient.invalidateQueries({ queryKey: ["system", "status"] })
       void queryClient.invalidateQueries({ queryKey: ["system", "readiness"] })
@@ -245,9 +156,11 @@ export function useWrapMnt() {
 }
 
 export function useProposals(status?: string) {
+  const { effectiveWalletAddress } = usePortfolioWallet()
   return useQuery({
-    queryKey: ["proposals", status],
-    queryFn: () => marketApi.getProposals(status),
+    queryKey: ["proposals", status, effectiveWalletAddress],
+    queryFn: () => marketApi.getProposals(status, effectiveWalletAddress),
     refetchInterval: 30_000,
+    enabled: Boolean(effectiveWalletAddress),
   })
 }

@@ -1,7 +1,10 @@
+import { useNavigate } from "react-router-dom";
+
 export function DashboardMockup() {
-  return (
+   const navigate = useNavigate();
+   return (
     <div
-      className="w-full max-w-[520px] flex-shrink-0 overflow-hidden rounded-xl border border-lp-border"
+       className="w-full max-w-[520px] flex-shrink-0 overflow-hidden rounded-xl border border-lp-border cursor-pointer hover:scale-[1.02] transition-transform duration-200"
       style={{
         transform: "perspective(1100px) rotateY(-8deg) rotateX(3deg)",
         boxShadow: "0 40px 80px rgba(0,0,0,0.7),0 0 80px rgba(212,150,42,0.07)",
@@ -13,7 +16,7 @@ export function DashboardMockup() {
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-lp-gold opacity-75" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-lp-gold" />
         </span>
-        <span className="font-mono text-[10px] text-lp-fg-secondary">Command Nexus · Mantle Sepolia</span>
+        <span className="font-mono text-[10px] text-lp-fg-secondary">YieldMind · Mantle Sepolia</span>
         <span className="ml-auto font-mono text-[10px] text-lp-fg-muted">
           Block <span className="text-lp-gold">#9,241,847</span>
         </span>
@@ -104,7 +107,8 @@ export function DashboardMockup() {
               <div className="h-0.5 rounded-full bg-lp-border">
                 <div
                   className="h-full rounded-full bg-lp-gold"
-                  style={{ width: `${s}%` }}
+                  onClick={() => navigate("/dashboard")}
+       style={{ width: `${s}%` }}
                 />
               </div>
             </div>

@@ -64,6 +64,8 @@ class ProposalListItem(BaseModel):
     selector: str
     token_in: str
     token_out: str
+    token_in_symbol: str | None = None
+    token_out_symbol: str | None = None
     recipient: str
     max_amount_in: str
     min_amount_out: str
@@ -73,6 +75,13 @@ class ProposalListItem(BaseModel):
     nonce: int
     status_code: str
     risk_snapshot_id: str | None = None
+    deposit_asset_symbol: str | None = None
+    deposit_amount: float | None = None
+    risk_profile: str | None = None
+    allocation_mode: str | None = None
+    recommended_action: str | None = None
+    confidence: float | None = None
+    reasoning_summary: str | None = None
     approval_enabled: bool | None = None
     approval_blockers: list[str] = Field(default_factory=list)
     created_at: datetime
@@ -99,20 +108,23 @@ class ProposalMutationResponse(BaseModel):
 class ProposalExecuteResponse(BaseModel):
     status: str
     status_code: str
+    status_label: str | None = None
+    status_reason: str | None = None
     proposal_id: str
-    router: str
-    selector: str
-    calldata: str
-    calldata_hash: str
-    token_in: str
-    token_out: str
-    recipient: str
-    max_amount_in: str
-    min_amount_out: str
-    native_value: str
-    deadline: int
-    nonce: int
-    chain_id: int
+    tx_hash: str | None = None
+    router: str | None = None
+    selector: str | None = None
+    calldata: str | None = None
+    calldata_hash: str | None = None
+    token_in: str | None = None
+    token_out: str | None = None
+    recipient: str | None = None
+    max_amount_in: str | None = None
+    min_amount_out: str | None = None
+    native_value: str | None = None
+    deadline: int | None = None
+    nonce: int | None = None
+    chain_id: int | None = None
 
 
 class InvestmentPlanRequest(BaseModel):
