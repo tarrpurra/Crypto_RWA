@@ -11,6 +11,7 @@ export default defineConfig(({ mode }) => {
     server: {
       host: "::",
       port: 8080,
+      allowedHosts: [".railway.app", "localhost"],
       hmr: {
         overlay: false,
       },
