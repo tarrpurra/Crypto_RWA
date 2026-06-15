@@ -59,7 +59,6 @@ Three specific reasons this product runs on Mantle and not on any other chain.
 
 ```mermaid
 flowchart LR
- flowchart LR
   FE["Frontend<br/>Dashboard + Approvals"]
   BE["Backend<br/>AI + Risk Engine + FastAPI"]
   DATA["Oracles + Market Data<br/>Pyth, Ondo, DEX Quotes"]
