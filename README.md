@@ -85,7 +85,6 @@ flowchart LR
 
 | Component | Technology |
 |---|---|
-| Yield prediction | Trained on 90-day historical yield data |
 | Risk scoring | Isolation Forest anomaly detection |
 | Decision explainability | SHAP feature importance (every decision explained) |
 | API server | FastAPI serving the `/recommend` endpoint |
@@ -116,43 +115,6 @@ If the composite score exceeds 70 out of 100, the cycle is vetoed. The veto is l
 
 **Smart contract risk.** YieldMind interacts with experimental smart contracts. Funds can be lost due to bugs, oracle failures, or market conditions. This is not financial advice.
 
-*I should note that regulatory frameworks for tokenized securities are evolving. The characterisation of USDY above reflects my understanding as of my training cutoff — you should verify current regulatory status directly with Ondo Finance at ondo.finance.*
-
----
-
-## Verified on-chain
-
-Every AI decision emits a `DecisionLogged` event from the vault contract:
-
-```solidity
-event DecisionLogged(
-    uint256 indexed timestamp,
-    string  action,        // "REBALANCE" | "HOLD" | "VETOED"
-    uint256 usdyPercent,   // allocation after decision (basis points)
-    uint256 riskScore,     // composite risk score 0–100
-    uint256 confidence     // model confidence * 1000 (870 = 0.870)
-);
-```
-
-Find every decision in the transaction history of the deployed contract address on [Mantlescan](https://explorer.sepolia.mantle.xyz/address/YOUR_CONTRACT_ADDRESS).
-
----
-
-## Backtesting
-
-The yield scoring model was evaluated against 90 days of historical yield data. The backtest is a simulation — it does not reflect live deployment performance.
-
-| Metric | Value |
-|---|---|
-| Backtest period | 90 days historical data |
-| Strategy vs passive USDY hold | See `/simulations/results/backtest_90d.json` |
-| Sharpe ratio (simulated) | 2.14 |
-| Win rate (directional) | 78.5% |
-| Max simulated drawdown | −0.82% |
-
-*These are model evaluation metrics from a historical simulation. They do not guarantee future performance. You should verify the methodology in `/simulations/backtests/run_backtest.py`.*
-
----
 
 ## Getting started
 
@@ -288,20 +250,85 @@ yieldmind/
 
 ## Security
 
-Static analysis was run using [Slither](https://github.com/crytic/slither). All HIGH severity findings were resolved before deployment. The contracts have not received a formal third-party audit — this is a hackathon submission and should not be used with real funds at scale.
+### Role-based access control
 
-Known limitations:
-- No formal audit
-- Single-signature agent wallet (multi-sig recommended for production)
+Three core contracts implement a shared RBAC system with five roles:
+
+| Role | Grants |
+|---|---|
+| `DEFAULT_ADMIN` | Grant/revoke any role; manage router whitelists and selector allowlists |
+| `EXECUTOR` | Execute approved trades |
+| `APPROVER` | Create, approve, or reject trade proposals |
+| `GUARDIAN` | Pause or unpause the entire system |
+| `RECOVERY` | Emergency withdrawal of tokens or native currency |
+
+### PauseGuardian
+
+Global circuit breaker. When paused, no trade can execute. Maintains a router whitelist and per-router selector allowlist — only pre-approved DEX functions on pre-approved routers can be called.
+
+- `setPaused()` — `GUARDIAN_ROLE`
+- `setRouterWhitelist()` / `setSelectorAllowed()` — `DEFAULT_ADMIN_ROLE`
+
+### TradeApprovalManager
+
+Manages the proposal lifecycle: `NONE → PENDING → APPROVED → EXECUTED` (or `REJECTED` / `EXPIRED`). Every trade must pass through this gate:
+
+1. An `APPROVER` creates and approves a proposal containing the full `ExecutionPayload` (router, selector, calldata hash, tokens, amounts, deadlines).
+2. The proposal hash locks every parameter — any on-chain deviation invalidates it.
+3. Proposals expire after `proposalExpiry` seconds; anyone can mark an expired proposal as `EXPIRED`.
+
+### ExecutorVault
+
+Asset custodian and trade execution engine. Trades flow through `executeApprovedTrade()`:
+
+1. **Role check** — caller must have `EXECUTOR_ROLE`.
+2. **Pause check** — `PauseGuardian.enforceRoute()` ensures the system is live and the router+selector are allowed.
+3. **Proposal check** — `TradeApprovalManager.isApprovedAndLive()` verifies the proposal is approved, not expired, and the hash matches the full payload.
+4. **Calldata validation** — the raw router calldata is decoded per DEX type (Agni, Merchant Moe) and every field is cross-checked against the payload: token in/out, amounts, recipient, deadline, slippage.
+5. **Slippage protection** — post-swap output token balance must increase by at least `minAmountOut`.
+6. **Approval cleanup** — token allowances to the router are zeroed after execution.
+
+### Trade execution pipeline
+
+```
+AI agent (off-chain) ──createProposal──> TradeApprovalManager
+       │                                       │
+       │←────────── proposalId ────────────────│
+       │                                       │
+       │──approveProposal──> TradeApprovalManager
+       │                                       │
+       │──executeApprovedTrade──> ExecutorVault
+                                      │
+                                      ├── PauseGuardian.enforceRoute()
+                                      ├── TradeApprovalManager.isApprovedAndLive()
+                                      ├── Calldata decode & field validation
+                                      ├── Router call (DEX swap)
+                                      ├── Post-swap balance check (slippage)
+                                      └── Token approval zeroing
+```
+
+### Security mechanisms
+
+| Layer | Mechanism | Enforced by |
+|---|---|---|
+| Global pause | PauseGuardian sets `bool paused` | `GUARDIAN_ROLE` |
+| Router allowlist | Only whitelisted DEX routers can be called | `DEFAULT_ADMIN_ROLE` |
+| Selector allowlist | Only approved function selectors per router | `DEFAULT_ADMIN_ROLE` |
+| Proposal gating | Trade must be `APPROVED` before execution | `TradeApprovalManager` |
+| Hash integrity | `keccak256(calldata)` must match pre-approved hash | `ProposalHashLib` |
+| Field consistency | Every decoded calldata field checked against payload | `ExecutorVault` |
+| Spend cap | `amountIn ≤ maxAmountIn` | `ExecutionPayload` |
+| Slippage guard | Output token increase ≥ `minAmountOut` | `ExecutorVault` |
+| Deadline | Trade must execute before `block.timestamp > deadline` | `ExecutionPayload` |
+| Proposal expiry | Proposals expire after `proposalExpiry` seconds | `TradeApprovalManager` |
+| Emergency withdrawal | `RECOVERY_ROLE` can extract tokens/native | `ExecutorVault` |
+| Static analysis | All HIGH findings resolved via Slither | Pre-deployment |
+
+### Known limitations
+
+- No formal third-party audit (hackathon submission)
+- Single-signature executor (multi-sig recommended for production)
 - Testnet deployment only — not validated at mainnet scale
-
----
-
-## Human vs AI benchmark
-
-YieldMind includes a 7-day benchmark simulation demonstrating the yield gap between a human passive hold strategy and the AI's active optimisation. The simulation is modelled on historical USDY and mETH yield spread data. It is not live measured performance.
-
-Access the benchmark at `/turing` in the live app.
 
 ---
 
