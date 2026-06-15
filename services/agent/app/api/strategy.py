@@ -15,14 +15,20 @@ from services.agent.modules.strategy_policy.schemas import (
     StrategyVersionListResponse,
     StrategyRevertRequest,
     StrategySchedulerUpdateRequest,
+    StrategyActiveVersionUpdateRequest,
 )
 
 
 router = APIRouter(prefix="/api/strategy", tags=["strategy"])
 
+_service: StrategyActivationService | None = None
+
 
 def get_service() -> StrategyActivationService:
-    return StrategyActivationService()
+    global _service
+    if _service is None:
+        _service = StrategyActivationService()
+    return _service
 
 
 @router.get("/templates", response_model=StrategyTemplateListResponse)
@@ -53,6 +59,11 @@ def activate_strategy(request: StrategyPolicyDraftRequest) -> StrategyActiveResp
 @router.get("/active", response_model=StrategyActiveResponse)
 def active_strategy(user_address: str | None = None) -> StrategyActiveResponse:
     return get_service().active_state(user_address=user_address)
+
+
+@router.post("/active", response_model=StrategyActiveResponse)
+def update_active_strategy(request: StrategyActiveVersionUpdateRequest) -> StrategyActiveResponse:
+    return get_service().update_active(request)
 
 
 @router.get("/versions", response_model=StrategyVersionListResponse)

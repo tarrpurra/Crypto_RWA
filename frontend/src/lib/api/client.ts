@@ -58,7 +58,7 @@ export async function request<T>(path: string, method: HttpMethod = "GET", body?
     } catch {
       details = undefined;
     }
-    logger.error("api.response.error", { method, path, status: response.status, durationMs });
+    logger.error("api.response.error", { method, path, status: response.status, durationMs, details });
     throw new ApiClientError(`Request failed with status ${response.status}`, response.status, details);
   }
 

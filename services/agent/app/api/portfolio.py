@@ -154,7 +154,7 @@ def _normalize_zero_position(position):
     )
 
 
-PORTFOLIO_STALE_SECONDS = 180
+PORTFOLIO_STALE_SECONDS = 600  # 10 minutes — serve DB snapshot; background agent refreshes on schedule
 
 
 def _snapshot_is_stale(snapshot: PortfolioSnapshotResponse) -> bool:
@@ -214,7 +214,7 @@ def _normalize_zero_snapshot(snapshot: PortfolioSnapshotResponse) -> PortfolioSn
 @router.get("/current", response_model=PortfolioSnapshotResponse)
 async def current_portfolio(
     wallet_address: str | None = None,
-    allow_env_fallback: bool = False,
+    allow_env_fallback: bool = True,
     force_refresh: bool = False,
 ) -> PortfolioSnapshotResponse:
     settings = get_settings()
@@ -389,7 +389,7 @@ async def legacy_portfolio_snapshot(response: Response) -> dict:
 
 @router.get("/snapshots/latest", response_model=PortfolioSnapshotResponse)
 def latest_portfolio_snapshot(wallet_address: str | None = None) -> PortfolioSnapshotResponse:
-    portfolio_address = _resolve_portfolio_address(wallet_address, allow_env_fallback=False)
+    portfolio_address = _resolve_portfolio_address(wallet_address, allow_env_fallback=True)
     if not portfolio_address:
         raise HTTPException(status_code=400, detail="wallet_address is required for latest portfolio snapshot lookup.")
     try:
@@ -403,7 +403,7 @@ def latest_portfolio_snapshot(wallet_address: str | None = None) -> PortfolioSna
 
 @router.get("/snapshots", response_model=PortfolioSnapshotHistoryResponse)
 def portfolio_snapshot_history(limit: int = 20, wallet_address: str | None = None) -> PortfolioSnapshotHistoryResponse:
-    portfolio_address = _resolve_portfolio_address(wallet_address, allow_env_fallback=False)
+    portfolio_address = _resolve_portfolio_address(wallet_address, allow_env_fallback=True)
     if not portfolio_address:
         return PortfolioSnapshotHistoryResponse(
             status="degraded",

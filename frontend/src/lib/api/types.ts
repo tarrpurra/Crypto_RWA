@@ -557,6 +557,8 @@ export interface TradeProposal {
   selector: string
   token_in: string
   token_out: string
+  token_in_symbol?: string | null
+  token_out_symbol?: string | null
   recipient: string
   max_amount_in: string
   min_amount_out: string
@@ -566,6 +568,13 @@ export interface TradeProposal {
   nonce: number
   status_code: string
   risk_snapshot_id: string | null
+  deposit_asset_symbol?: string | null
+  deposit_amount?: number | null
+  risk_profile?: string | null
+  allocation_mode?: string | null
+  recommended_action?: string | null
+  confidence?: number | null
+  reasoning_summary?: string | null
   approval_enabled?: boolean | null
   approval_blockers?: string[]
   created_at: string
@@ -576,7 +585,7 @@ export interface TradeProposalResponse extends StatusEnvelope {
   proposal: TradeProposal
 }
 
-export interface ProposalListItem extends TradeProposal {}
+export type ProposalListItem = TradeProposal;
 
 export interface ProposalMutationResponse extends StatusEnvelope {
   proposal_id: string

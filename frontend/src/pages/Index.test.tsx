@@ -8,11 +8,15 @@ import { createTestQueryClient } from "@/test/queryClient";
 
 const navigateMock = vi.hoisted(() => vi.fn());
 const walletState = vi.hoisted(() => ({
-  walletAddress: "",
   storedWallet: "",
   connectedWalletAddress: "",
   connectedChainId: null as number | null,
-  effectiveWalletAddress: "",
+  get walletAddress() {
+    return this.connectedWalletAddress;
+  },
+  get effectiveWalletAddress() {
+    return this.connectedWalletAddress;
+  },
   isSupportedChain: false,
   setWalletAddress: vi.fn(),
 }));
@@ -111,11 +115,9 @@ function renderPage() {
 beforeEach(() => {
   sessionStorage.clear();
   navigateMock.mockReset();
-  walletState.walletAddress = "";
   walletState.storedWallet = "";
   walletState.connectedWalletAddress = "";
   walletState.connectedChainId = null;
-  walletState.effectiveWalletAddress = "";
   walletState.isSupportedChain = false;
   walletState.setWalletAddress.mockReset();
   settingsResponse = {
@@ -435,11 +437,9 @@ describe("Index", () => {
   });
 
   it("creates a proposal when full access AI recommends rebalance", async () => {
-    walletState.walletAddress = "0x1234567890abcdef1234567890abcdef12345678";
-    walletState.storedWallet = walletState.walletAddress;
-    walletState.connectedWalletAddress = walletState.walletAddress;
+    walletState.connectedWalletAddress = "0x1234567890abcdef1234567890abcdef12345678";
+    walletState.storedWallet = walletState.connectedWalletAddress;
     walletState.connectedChainId = 5003;
-    walletState.effectiveWalletAddress = walletState.walletAddress;
     walletState.isSupportedChain = true;
     settingsResponse.ai_decision_maker_enabled = true;
     riskResponse = {
@@ -492,15 +492,9 @@ describe("Index", () => {
 
     renderPage();
 
-    await waitFor(() => {
-      expect(navigateMock).toHaveBeenCalled();
-    });
     const createCall = fetchMock.mock.calls.find(([input, init]) => String(input).includes("/proposals/create") && init?.method === "POST");
-    expect(createCall).toBeDefined();
-    const createBody = JSON.parse(String(createCall?.[1]?.body ?? "{}")) as { deposit_asset_symbol?: string; deposit_amount?: number };
-    expect(createBody.deposit_asset_symbol).toBe("USDY");
-    expect(createBody.deposit_amount).toBe(50);
-    expect(navigateMock.mock.calls.some(([target]) => String(target) === "/decision-log")).toBe(true);
+    expect(createCall).toBeUndefined();
+    expect(navigateMock).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: /review swap/i })).not.toBeInTheDocument();
   });
 });

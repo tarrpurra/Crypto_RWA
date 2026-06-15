@@ -253,7 +253,6 @@ function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, n
         amount,
       });
 
-      let hash: `0x${string}`;
       // For WMNT, fall back to the wmntAddress prop when the wallet balance
       // entry has no asset_address (covers 0-balance or loading state).
       let effectiveTokenAddress: `0x${string}` | null =
@@ -325,7 +324,7 @@ function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, n
         }
       }
 
-      hash = await writeContractAsync({
+      const hash = await writeContractAsync({
         address: normalizedVaultAddress,
         abi: EXECUTOR_VAULT_ABI,
         functionName: "depositToken",

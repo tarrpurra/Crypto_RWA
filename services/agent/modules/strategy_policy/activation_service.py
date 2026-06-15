@@ -21,6 +21,7 @@ from services.agent.modules.strategy_policy.schemas import (
     StrategyTemplateListResponse,
     StrategyValidationResponse,
     StrategyVersionListResponse,
+    StrategyActiveVersionUpdateRequest,
 )
 from services.agent.modules.strategy_policy.simulation_runner import SimulationContext, run_simulation
 from services.agent.repositories.db.market_repository import MarketDataRepository
@@ -244,6 +245,16 @@ class StrategyActivationService:
             },
         )
         return self.active_state(user_address=request.user_address)
+
+    def update_active(self, request: StrategyActiveVersionUpdateRequest) -> StrategyActiveResponse:
+        draft_request = StrategyPolicyDraftRequest(
+            user_address=request.user_address,
+            strategy_text=request.strategy_text,
+            policy_json=request.policy_json,
+            template_id=request.template_id,
+            actor=request.actor,
+        )
+        return self.activate(draft_request)
 
     def revert(self, version: str, actor: str | None = None) -> StrategyActiveResponse:
         reverted = self.repository.revert_version(version, actor=actor)

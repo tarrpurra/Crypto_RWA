@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+
+if TYPE_CHECKING:
+    from services.agent.modules.market_data.snapshots import PriceIngestionBundle, QuoteIngestionBundle
+
+logger = logging.getLogger("services.agent.db.market_repository")
 
 from services.agent.app.schemas.market_data import NormalizedPriceSnapshot, PriceHistoryPoint, RawPriceSnapshot
 from services.agent.app.schemas.quotes import NormalizedQuoteSnapshot, RawQuoteSnapshot
-from services.agent.modules.market_data.snapshots import PriceIngestionBundle, QuoteIngestionBundle
 from services.agent.repositories.db.normalization import normalize_asset_symbol
 from services.agent.repositories.db.models import PriceSnapshotRecord, QuoteSnapshotRecord
 from services.agent.repositories.db.session import create_session, init_db
@@ -18,10 +25,27 @@ class MarketDataRepository:
 
     def save_price_bundle(self, bundle: PriceIngestionBundle) -> None:
         with create_session() as session:
+            seen_snapshot_ids: set[str] = set()
             for snapshot in bundle.raw_snapshots:
-                session.merge(self._price_record_from_raw(snapshot))
+                if snapshot.snapshot_id in seen_snapshot_ids:
+                    logger.warning("Skipping duplicate raw snapshot %s in bundle", snapshot.snapshot_id)
+                    continue
+                seen_snapshot_ids.add(snapshot.snapshot_id)
+                try:
+                    session.merge(self._price_record_from_raw(snapshot))
+                except IntegrityError as exc:
+                    session.rollback()
+                    logger.warning("Duplicate raw snapshot skipped on persist: %s — %s", snapshot.snapshot_id, exc)
             for snapshot in bundle.normalized_snapshots:
-                session.merge(self._price_record_from_normalized(snapshot))
+                if snapshot.snapshot_id in seen_snapshot_ids:
+                    logger.warning("Skipping duplicate normalized snapshot %s in bundle", snapshot.snapshot_id)
+                    continue
+                seen_snapshot_ids.add(snapshot.snapshot_id)
+                try:
+                    session.merge(self._price_record_from_normalized(snapshot))
+                except IntegrityError as exc:
+                    session.rollback()
+                    logger.warning("Duplicate normalized snapshot skipped on persist: %s — %s", snapshot.snapshot_id, exc)
             session.commit()
 
     def latest_normalized_prices(self, include_null_prices: bool = False) -> list[NormalizedPriceSnapshot]:

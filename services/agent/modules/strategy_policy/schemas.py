@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+DEFAULT_AI_RUN_INTERVAL_SECONDS = 7200
+
 
 class StrategyStatusEnvelope(BaseModel):
     status: str
@@ -53,9 +55,9 @@ class StrategyPolicyConfig(BaseModel):
     allowed_assets: list[str] = Field(default_factory=lambda: ["USDY", "mETH"])
     risk_weights: StrategyRiskWeights = Field(default_factory=StrategyRiskWeights)
     hard_limits: StrategyHardLimits = Field(default_factory=StrategyHardLimits)
-    market_check_interval_seconds: int = 300
-    quote_refresh_interval_seconds: int = 120
-    risk_recompute_interval_seconds: int = 300
+    market_check_interval_seconds: int = DEFAULT_AI_RUN_INTERVAL_SECONDS
+    quote_refresh_interval_seconds: int = DEFAULT_AI_RUN_INTERVAL_SECONDS
+    risk_recompute_interval_seconds: int = DEFAULT_AI_RUN_INTERVAL_SECONDS
     proposal_expiry_seconds: int = 180
     simulation_only_mode: bool = False
     human_approval_required: bool = True

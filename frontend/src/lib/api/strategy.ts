@@ -31,6 +31,7 @@ export const strategyApi = {
   simulate: (body: StrategyDraftRequest) => request<StrategySimulationResponse>("/api/strategy/simulate", "POST", body),
   activate: (body: StrategyDraftRequest) => request<StrategyActiveResponse>("/api/strategy/activate", "POST", body),
   active: (userAddress?: string | null) => request<StrategyActiveResponse>(`/api/strategy/active${queryString({ user_address: userAddress })}`),
+  updateActive: (body: StrategyDraftRequest) => request<StrategyActiveResponse>("/api/strategy/active", "POST", body),
   versions: (userAddress?: string | null) => request<StrategyVersionListResponse>(`/api/strategy/versions${queryString({ user_address: userAddress })}`),
   revert: (body: StrategyRevertRequest) => request<StrategyActiveResponse>("/api/strategy/revert", "POST", body),
   scheduler: (body: StrategySchedulerUpdateRequest) => request<StrategySchedulerSettingsResponse>("/api/strategy/scheduler", "POST", body),

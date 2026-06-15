@@ -173,7 +173,7 @@ export function VaultBalance({
 
           <div className="flex flex-col items-start gap-2 xl:items-end">
             {vaultData?.total_value_usd != null && (
-              <span className="font-mono text-base font-semibold text-foreground whitespace-nowrap">
+              <span className="font-display text-base font-semibold text-foreground whitespace-nowrap">
                 ${toTwo(vaultData.total_value_usd)}
               </span>
             )}
@@ -244,15 +244,15 @@ export function VaultBalance({
 
         <div className="grid gap-2 border-t border-border/70 pt-3 text-[0.72rem] xl:grid-cols-[1fr_auto] xl:items-center">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <span className="text-muted-foreground">Scale {riskScale}</span>
+            <span className="text-muted-foreground">Scale <span className="font-mono text-foreground">{riskScale}</span></span>
             <span className="hidden h-3.5 w-px bg-border sm:block" />
-            <span className="text-muted-foreground">Approval {approvalMode}</span>
+            <span className="text-muted-foreground">Approval <span className="font-sans font-medium text-foreground">{approvalMode}</span></span>
             <span className="hidden h-3.5 w-px bg-border sm:block" />
             <span className="text-muted-foreground">
-              Decision confidence {toPercent(decisionConfidence)}
+              Decision confidence <span className="font-mono text-foreground">{toPercent(decisionConfidence)}</span>
             </span>
             <span className="hidden h-3.5 w-px bg-border sm:block" />
-            <span className="text-muted-foreground">Profile {decisionProfile}</span>
+            <span className="text-muted-foreground">Profile <span className="font-sans font-medium text-foreground">{decisionProfile}</span></span>
           </div>
           <div className="justify-self-start xl:justify-self-end">
             <Button

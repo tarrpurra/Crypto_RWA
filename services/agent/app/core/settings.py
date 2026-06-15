@@ -76,9 +76,11 @@ class Settings(BaseSettings):
 
     pyth_hermes_url: str = "https://hermes.pyth.network"
     pyth_hermes_latest_price_path: str = "/v2/updates/price/latest"
-    price_poll_interval_seconds: int = 60
-    quote_poll_interval_seconds: int = 30
-    route_cache_ttl_seconds: int = 60
+    pyth_hermes_connect_timeout_seconds: float = 15.0
+    pyth_hermes_read_timeout_seconds: float = 30.0
+    price_poll_interval_seconds: int = 7200
+    quote_poll_interval_seconds: int = 7200
+    route_cache_ttl_seconds: int = 7200
     oracle_max_age_seconds_default: int = 300
     oracle_max_age_seconds_stable: int = 600
     oracle_max_age_seconds_volatile: int = 120

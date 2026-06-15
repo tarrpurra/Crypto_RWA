@@ -308,19 +308,19 @@ export function AISidePanel() {
                 )}
                 <div>
                   <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">Prompt</p>
-                  <pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-words border border-border/60 bg-card p-2 font-mono text-[0.68rem] leading-4 text-foreground">
+                  <pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-words border border-border/60 bg-card p-2 font-code text-[0.68rem] leading-4 text-foreground">
                     {prettyDebugValue(aiDebug.prompt)}
                   </pre>
                 </div>
                 <div>
                   <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">Raw Output</p>
-                  <pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-words border border-border/60 bg-card p-2 font-mono text-[0.68rem] leading-4 text-foreground">
+                  <pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-words border border-border/60 bg-card p-2 font-code text-[0.68rem] leading-4 text-foreground">
                     {prettyDebugValue(aiDebug.raw_response)}
                   </pre>
                 </div>
                 <div>
                   <p className="text-[0.7rem] uppercase tracking-wider text-muted-foreground">Parsed Output</p>
-                  <pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-words border border-border/60 bg-card p-2 font-mono text-[0.68rem] leading-4 text-foreground">
+                  <pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap break-words border border-border/60 bg-card p-2 font-code text-[0.68rem] leading-4 text-foreground">
                     {prettyDebugValue(aiDebug.parsed_response)}
                   </pre>
                 </div>

@@ -37,8 +37,17 @@ export const marketApi = {
     request<ProposalMutationResponse>(`/proposals/${id}/approve`, "POST"),
   rejectProposal: (id: string) =>
     request<ProposalMutationResponse>(`/proposals/${id}/reject`, "POST"),
-  getProposals: (status?: string) =>
-    request<ProposalsResponse>(`/proposals${status ? `?status=${status}` : ""}`),
+  getProposals: (status?: string, walletAddress?: string | null) => {
+    const params = new URLSearchParams();
+    if (status) {
+      params.set("status", status);
+    }
+    if (walletAddress?.trim()) {
+      params.set("wallet_address", walletAddress.trim());
+    }
+    const query = params.toString();
+    return request<ProposalsResponse>(`/proposals${query ? `?${query}` : ""}`);
+  },
   executeProposal: (id: string) =>
     request<ProposalExecuteResponse>(`/proposals/${id}/execute`, "POST"),
 };

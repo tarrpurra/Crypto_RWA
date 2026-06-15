@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 
 from services.agent.app.api.investment_scope import InvestmentScopeInput, build_scoped_decision_response
 from services.agent.app.api.vault import get_vault_balance_snapshot
+from services.agent.app.core.settings import get_settings
 from services.agent.app.core.status_codes import ExecutionStatusCode
 from services.agent.app.schemas.proposals import (
     InvestmentPlanRequest,
@@ -58,6 +59,27 @@ def _safe_decimal(value: str | None) -> Decimal:
         return Decimal(str(value or "0"))
     except (InvalidOperation, TypeError, ValueError):
         return Decimal("0")
+
+
+def _linked_summary_for_proposal(plan_json: dict[str, Any] | None, proposal_id: str) -> dict[str, Any]:
+    if not isinstance(plan_json, dict):
+        return {}
+    linked = plan_json.get("linked_proposals")
+    if not isinstance(linked, list):
+        return {}
+    for item in linked:
+        if isinstance(item, dict) and item.get("proposal_id") == proposal_id:
+            return item
+    return {}
+
+
+def _risk_summary_for_proposal(plan_json: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(plan_json, dict):
+        return {}
+    risk_assessment = plan_json.get("risk_assessment")
+    if isinstance(risk_assessment, dict):
+        return risk_assessment
+    return {}
 
 
 def _save_proposal_record(proposal: TradeProposal, calldata: str) -> None:
@@ -228,11 +250,12 @@ async def create_investment_plan(request: InvestmentPlanRequest) -> InvestmentPl
         risk=context.risk_assessment,
     )
     logger.info(
-        "Investment plan generated: status=%s status_code=%s linked_proposals=%d approval_enabled=%s",
+        "Investment plan generated: status=%s status_code=%s linked_proposals=%d approval_enabled=%s ai_decision_maker_enabled=%s",
         plan_response.status,
         plan_response.status_code,
         len(plan_response.linked_proposals),
         plan_response.approval_enabled,
+        settings.ai_decision_maker_enabled,
     )
     for proposal, calldata in proposal_pairs:
         _save_proposal_record(proposal, calldata)
@@ -241,6 +264,37 @@ async def create_investment_plan(request: InvestmentPlanRequest) -> InvestmentPl
             InvestmentPlanRepository().save_plan_for_proposals(plan_response)
         except Exception as exc:
             logger.warning("Failed to persist investment plan detail: %s", exc)
+
+    # AI auto-approve: when ai_decision_maker_enabled is on, immediately transition
+    # all newly-saved proposals from PROPOSAL_PENDING_APPROVAL to PROPOSAL_APPROVED
+    # so no human gate blocks the flow.  The status is updated in a single session
+    # per proposal to maintain the same atomicity guarantees as the manual approve path.
+    if settings.ai_decision_maker_enabled and plan_response.linked_proposals:
+        init_db()
+        for linked in plan_response.linked_proposals:
+            proposal_id = linked.proposal_id
+            try:
+                with create_session() as session:
+                    from sqlalchemy import select as _select
+
+                    record = session.scalar(
+                        _select(TradeProposalRecord).where(
+                            TradeProposalRecord.proposal_id == proposal_id
+                        )
+                    )
+                    if record and record.status_code not in _APPROVE_TERMINAL_STATES:
+                        record.status_code = "PROPOSAL_APPROVED"
+                        record.updated_at = utc_now()
+                        session.commit()
+                        logger.info(
+                            "AI auto-approved proposal %s (ai_decision_maker_enabled=True)",
+                            proposal_id,
+                        )
+            except Exception as exc:
+                logger.warning(
+                    "AI auto-approve failed for proposal %s: %s", proposal_id, exc
+                )
+
     return plan_response
 
 
@@ -359,7 +413,7 @@ async def reject_proposal(proposal_id: str) -> ProposalMutationResponse:
 
 
 @router.get("/proposals", response_model=ProposalListResponse)
-async def list_proposals(status: str | None = None) -> ProposalListResponse:
+async def list_proposals(status: str | None = None, wallet_address: str | None = None) -> ProposalListResponse:
     """Return the trade proposal queue.
 
     Bug 4 fix: the previous implementation loaded *all* InvestmentPlanRecord
@@ -370,7 +424,7 @@ async def list_proposals(status: str | None = None) -> ProposalListResponse:
     """
     init_db()
     with create_session() as session:
-        from sqlalchemy import select, outerjoin
+        from sqlalchemy import func, select, outerjoin
 
         # Bug 4: single joined query instead of two separate queries +
         # in-Python merge.
@@ -386,6 +440,8 @@ async def list_proposals(status: str | None = None) -> ProposalListResponse:
         )
         if status:
             query = query.where(TradeProposalRecord.status_code == status)
+        if wallet_address:
+            query = query.where(func.lower(TradeProposalRecord.wallet_or_vault) == wallet_address.lower())
         rows = session.execute(query).all()
 
     items = [
@@ -397,6 +453,8 @@ async def list_proposals(status: str | None = None) -> ProposalListResponse:
             selector=record.selector,
             token_in=record.token_in,
             token_out=record.token_out,
+            token_in_symbol=_linked_summary_for_proposal(plan_json, record.proposal_id).get("token_in_symbol"),
+            token_out_symbol=_linked_summary_for_proposal(plan_json, record.proposal_id).get("token_out_symbol"),
             recipient=record.recipient,
             max_amount_in=record.max_amount_in,
             min_amount_out=record.min_amount_out,
@@ -406,6 +464,13 @@ async def list_proposals(status: str | None = None) -> ProposalListResponse:
             nonce=record.nonce,
             status_code=record.status_code,
             risk_snapshot_id=record.risk_snapshot_id,
+            deposit_asset_symbol=(plan_json or {}).get("deposit_asset_symbol"),
+            deposit_amount=(plan_json or {}).get("deposit_amount"),
+            risk_profile=(plan_json or {}).get("risk_profile"),
+            allocation_mode=(plan_json or {}).get("allocation_mode"),
+            recommended_action=_risk_summary_for_proposal(plan_json).get("recommended_action"),
+            confidence=_risk_summary_for_proposal(plan_json).get("confidence"),
+            reasoning_summary=_risk_summary_for_proposal(plan_json).get("reasoning_summary"),
             approval_enabled=(plan_json or {}).get("approval_enabled"),
             approval_blockers=list((plan_json or {}).get("approval_blockers") or []),
             created_at=record.created_at,
@@ -417,21 +482,56 @@ async def list_proposals(status: str | None = None) -> ProposalListResponse:
         status="ok",
         status_code="DATA_FRESH",
         status_label="DATA_FRESH",
-        status_reason="Trade proposal queue loaded.",
+        status_reason="Trade proposal queue loaded." if not wallet_address else "Wallet-scoped trade proposal queue loaded.",
         proposals=items,
     )
 
 
 @router.post("/proposals/{proposal_id}/execute", response_model=ProposalExecuteResponse)
 async def execute_proposal(proposal_id: str) -> ProposalExecuteResponse:
-    logger.warning(
-        "Direct wallet execution endpoint blocked for proposal_id=%s because approved trades must execute from the ExecutorVault path.",
+    """Acknowledge an execution request for an approved proposal.
+
+    Direct connected-wallet execution is not available — approved trades execute
+    through the ExecutorVault on-chain path.  This endpoint records the intent and
+    returns a vault-pending status so the frontend can surface a consistent log
+    entry without receiving a hard error.
+    """
+    logger.info(
+        "Execution intent recorded for proposal_id=%s — awaiting ExecutorVault on-chain path.",
         proposal_id,
     )
-    raise HTTPException(
-        status_code=409,
-        detail=(
-            "Direct connected-wallet execution is disabled. "
-            "Deposit funds into the vault and execute approved trades through the ExecutorVault path only."
+    # Transition the proposal to PROPOSAL_EXECUTING so the UI can reflect vault-pending state.
+    init_db()
+    _EXECUTE_TERMINAL_STATES = frozenset({"PROPOSAL_EXECUTED", "PROPOSAL_REJECTED"})
+    with create_session() as session:
+        from sqlalchemy import select as _select
+
+        record = session.scalar(
+            _select(TradeProposalRecord).where(TradeProposalRecord.proposal_id == proposal_id)
+        )
+        if not record:
+            raise HTTPException(status_code=404, detail=f"Proposal not found: {proposal_id}")
+        if record.status_code in _EXECUTE_TERMINAL_STATES:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Cannot mark proposal {proposal_id} as executing: "
+                    f"current status {record.status_code} is terminal."
+                ),
+            )
+        if record.status_code == "PROPOSAL_APPROVED":
+            record.status_code = "PROPOSAL_EXECUTING"
+            record.updated_at = utc_now()
+            session.commit()
+            logger.info("Proposal %s transitioned to PROPOSAL_EXECUTING.", proposal_id)
+    return ProposalExecuteResponse(
+        status="ok",
+        status_code="EXECUTION_VAULT_PENDING",
+        status_label="EXECUTION_VAULT_PENDING",
+        status_reason=(
+            "Execution intent recorded. Approved trades execute through the ExecutorVault "
+            "on-chain path and are not submitted directly from this endpoint."
         ),
+        proposal_id=proposal_id,
+        tx_hash=None,
     )

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { PageScaffold } from "@/components/rwa/PageScaffold";
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -30,7 +29,7 @@ import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 import { useVaultBalance, useWalletBalance } from "@/hooks/useVault";
 import { useStrategyActive } from "@/hooks/useStrategy";
 import { normalizeAddress } from "@/lib/addresses";
-import { useCreateProposal, useProposals } from "@/hooks/useSwap";
+import { useProposals } from "@/hooks/useSwap";
 import type { PortfolioPosition, PortfolioSnapshotResponse } from "@/lib/api/types";
 
 const assetOptions = ["USDY", "mETH", "MNT"] as const;
@@ -48,7 +47,6 @@ function toNumeric(value: string | number | null | undefined): number {
 }
 
 const Index = () => {
-  const navigate = useNavigate();
   const { login } = useAuth();
   const { scope, setScope, clearScope } = useInvestmentScope();
   const [depositAsset, setDepositAsset] =
@@ -62,7 +60,6 @@ const Index = () => {
   const updateSettings = useUpdateSettings();
   const dashboardSummaryQuery = useDashboardSummary();
   const allocationQuery = useAllocationRecommendation();
-  const createProposal = useCreateProposal();
   const proposalsQuery = useProposals();
   const marketIngestionQuery = useMarketIngestionStatus();
   const latestPricesQuery = useLatestPrices();
@@ -347,11 +344,11 @@ const Index = () => {
           })),
         ...(reasoningNotes.length > 0
           ? [{
-              name: "notes",
-              severity: "info",
-              message: reasoningNotes[0],
-              blocksExecution: false,
-            }]
+            name: "notes",
+            severity: "info",
+            message: reasoningNotes[0],
+            blocksExecution: false,
+          }]
           : []),
       ],
       decision: {
@@ -402,14 +399,14 @@ const Index = () => {
   const swapRecommendations =
     allocation?.decision.recommended_action === "REBALANCE"
       ? allocation.rebalance_actions.filter(
-          (action) => action.action !== "HOLD" && action.amount > 0,
-        )
+        (action) => action.action !== "HOLD" && action.amount > 0,
+      )
       : [];
   const primarySwapRecommendation = swapRecommendations[0] ?? null;
   const swapPairLabel = primarySwapRecommendation
     ? (primarySwapRecommendation.swap_pair_label ??
       (primarySwapRecommendation.token_in_symbol &&
-      primarySwapRecommendation.token_out_symbol
+        primarySwapRecommendation.token_out_symbol
         ? `${primarySwapRecommendation.token_in_symbol} -> ${primarySwapRecommendation.token_out_symbol}`
         : primarySwapRecommendation.asset_symbol))
     : null;
@@ -421,7 +418,7 @@ const Index = () => {
   const autoCreateProposalRef = useRef<string | null>(null);
   useEffect(() => {
     autoCreateProposalRef.current = sessionStorage.getItem("lastAutoCreateProposalKey");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally empty — only runs once after first mount
   const launchAssetSymbol =
     primarySwapRecommendation?.token_in_symbol ?? depositAsset;
@@ -430,18 +427,6 @@ const Index = () => {
   const suggestedLaunchAmount = primarySwapRecommendation
     ? Number.parseFloat(String(primarySwapRecommendation.amount))
     : 0;
-  const launchAssetBalance = useMemo(() => {
-    const candidates = vaultData?.balances ?? [];
-    const position =
-      candidates.find((item) => item.asset_symbol === launchAssetSymbol) ??
-      (launchAssetSymbol === "MNT"
-        ? candidates.find((item) => item.asset_symbol === "WMNT")
-        : undefined) ??
-      (launchAssetSymbol === "WMNT"
-        ? candidates.find((item) => item.asset_symbol === "MNT")
-        : undefined);
-    return position?.balance?.trim() ?? "";
-  }, [launchAssetSymbol, vaultData?.balances]);
   const hasActivePlan = useMemo(() => {
     const wallet = effectiveWalletAddress?.toLowerCase();
     if (!wallet || !pendingProposal) {
@@ -532,7 +517,7 @@ const Index = () => {
   ]);
 
   useEffect(() => {
-    if (!aiDecisionMakerEnabled || proposalsQuery.isLoading || recommendationAction !== "REBALANCE" || !primarySwapRecommendation) {
+    if (proposalsQuery.isLoading || !primarySwapRecommendation) {
       autoCreateProposalRef.current = null;
       sessionStorage.removeItem("lastAutoCreateProposalKey");
       return;
@@ -548,15 +533,6 @@ const Index = () => {
       !Number.isFinite(effectiveParsed) ||
       effectiveParsed <= 0
     ) {
-      return;
-    }
-    const totalVaultValue = Number.parseFloat(vaultData?.total_value_usd ?? "0");
-    if (!vaultData?.balances?.length || !Number.isFinite(totalVaultValue) || totalVaultValue <= 0) {
-      toast.warning("Deposit funds into the vault before AI can create a trade proposal.");
-      return;
-    }
-    if (launchAssetBalance && Number.parseFloat(launchAssetBalance) < effectiveParsed) {
-      toast.warning("Vault balance is too low for AI proposal creation.");
       return;
     }
 
@@ -576,40 +552,16 @@ const Index = () => {
     autoCreateProposalRef.current = autoCreateKey;
     sessionStorage.setItem("lastAutoCreateProposalKey", autoCreateKey);
     toast.info(
-      "AI is generating a guarded proposal from the current recommendation.",
-    );
-    createProposal.mutate(
-      {
-        wallet_address: effectiveWalletAddress ?? connectedWalletAddress ?? null,
-        deposit_asset_symbol: launchAssetSymbol,
-        deposit_amount: effectiveParsed,
-        risk_profile: riskProfile,
-        allocation_mode: "AI Suggested",
-      },
-      {
-        onSuccess: (response) => {
-          toast.success(response.status_reason);
-          navigate("/decision-log");
-        },
-        onError: (error) => {
-          toast.error(error instanceof Error ? error.message : "Failed to create proposal from AI recommendation.");
-        },
-      },
+      `Recommendation is ready for ${launchAssetSymbol}. Open Decision Log when you're ready to review the proposal.`,
     );
   }, [
-    aiDecisionMakerEnabled,
     connectedWalletAddress,
-    createProposal,
     effectiveWalletAddress,
     launchAmount,
-    launchAssetBalance,
     launchAssetSymbol,
-    navigate,
     primarySwapRecommendation,
     recommendationAction,
     proposalsQuery.isLoading,
-    vaultData?.balances,
-    vaultData?.total_value_usd,
     swapRecommendations,
     riskProfile,
   ]);
@@ -694,12 +646,9 @@ const Index = () => {
               decisions={decisions}
               aiReasoningData={aiReasoningData}
               isLoading={
-                !allocation &&
                 !risk &&
                 !decisions &&
-                (allocationQuery.isLoading ||
-                  dashboardSummaryQuery.isLoading ||
-                  decisionsQuery.isLoading)
+                dashboardSummaryQuery.isLoading
               }
               hasConnectedWallet={hasConnectedSupportedWallet}
               aiDecisionMakerEnabled={aiDecisionMakerEnabled}

@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 import { useSettings } from "@/hooks/useSystem";
 import { marketApi } from "@/lib/api/market";
 
@@ -11,13 +12,14 @@ export function ProposalNotification() {
   const lastSeenCount = useRef(0);
   const initializedRef = useRef(false);
   const settingsQuery = useSettings();
+  const { effectiveWalletAddress } = usePortfolioWallet();
   const aiDecisionMakerEnabled = settingsQuery.data?.ai_decision_maker_enabled ?? false;
 
   const { data: proposalsResponse } = useQuery({
-    queryKey: ["proposals", "notification"],
-    queryFn: () => marketApi.getProposals(),
+    queryKey: ["proposals", "notification", effectiveWalletAddress],
+    queryFn: () => marketApi.getProposals(undefined, effectiveWalletAddress),
     refetchInterval: 15_000,
-    enabled: true,
+    enabled: Boolean(effectiveWalletAddress),
   });
 
   useEffect(() => {
@@ -27,40 +29,42 @@ export function ProposalNotification() {
       return;
     }
 
-    const pendingProposals =
+    // In AI mode proposals skip PENDING_APPROVAL and land in PROPOSAL_APPROVED/EXECUTING.
+    // Track newly-approved proposals so the notification fires when the AI acts.
+    const trackedProposals =
       proposalsResponse?.proposals?.filter(
-        (p) => p.status_code === "PROPOSAL_PENDING_APPROVAL",
+        (p) => p.status_code === "PROPOSAL_APPROVED" || p.status_code === "PROPOSAL_EXECUTING",
       ) ?? [];
 
     if (!initializedRef.current) {
-      lastSeenCount.current = pendingProposals.length;
+      lastSeenCount.current = trackedProposals.length;
       initializedRef.current = true;
       return;
     }
-    if (pendingProposals.length === 0) {
+    if (trackedProposals.length === 0) {
       return;
     }
-    if (pendingProposals.length <= lastSeenCount.current) {
+    if (trackedProposals.length <= lastSeenCount.current) {
       return;
     }
-    lastSeenCount.current = pendingProposals.length;
+    lastSeenCount.current = trackedProposals.length;
 
-    const latest = pendingProposals[0];
+    const latest = trackedProposals[0];
     const planTo = latest.plan_hash?.slice(0, 12) ?? latest.proposal_id.slice(0, 12);
 
     toast(
       <div className="w-full">
         <div className="mb-1 flex items-center gap-2">
           <span className="rounded bg-primary/15 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-primary">
-            REBALANCE PROPOSED
+            AI AUTO-APPROVED
           </span>
           <span className="relative flex h-2 w-2">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
           </span>
         </div>
-        <p className="text-sm text-foreground">AI created a trade proposal</p>
-        <p className="mt-1 text-xs text-muted-foreground">Plan {planTo} is waiting for human approval.</p>
+        <p className="text-sm text-foreground">AI created and auto-approved a trade proposal</p>
+        <p className="mt-1 text-xs text-muted-foreground">Plan {planTo} is queued for vault execution.</p>
         <div className="mt-3 flex gap-2">
           <button
             type="button"

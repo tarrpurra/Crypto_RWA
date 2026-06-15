@@ -1001,7 +1001,7 @@ def build_investment_plan(
         response_status = "ok"
         response_status_code = ExecutionStatusCode.EXECUTION_READY.value
         if settings.ai_decision_maker_enabled:
-            response_status_reason = "AI created a trade proposal from the passed recommendation. Human approval is required before execution."
+            response_status_reason = "AI auto-approved the trade proposal. Execution is pending through the ExecutorVault on-chain path."
         elif linked_proposals:
             response_status_reason = "Trade proposal created. Human approval is required before execution."
         elif rebalance_swaps:
@@ -1047,7 +1047,7 @@ def build_investment_plan(
             "runtime_mode": settings.runtime_mode.value,
             "target_chain": settings.target_chain.value,
             "execution_required": execution_required,
-            "human_approval_required": bool(linked_proposals),
+            "human_approval_required": not settings.ai_decision_maker_enabled and bool(linked_proposals),
             "proposal_creation_mode": "ai_auto" if settings.ai_decision_maker_enabled else "manual",
         },
     )

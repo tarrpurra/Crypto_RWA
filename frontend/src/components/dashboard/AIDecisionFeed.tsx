@@ -91,7 +91,7 @@ export function AIDecisionFeed() {
           <p className="terminal-label text-primary">AI Decision</p>
           <h3 className="mt-0.5 text-sm font-semibold text-foreground">Latest recommendation</h3>
         </div>
-        <span className="rounded border border-primary/20 bg-primary/10 px-2 py-0.5 font-mono text-[0.6rem] font-semibold uppercase text-primary">
+        <span className="rounded border border-primary/20 bg-primary/10 px-2 py-0.5 font-sans text-[0.6rem] font-semibold uppercase text-primary">
           Live
         </span>
       </div>
@@ -123,7 +123,10 @@ export function AIDecisionFeed() {
                   <span className="text-[0.65rem] text-muted-foreground">{item.label}</span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className={cn("font-mono text-xs font-medium", item.status === "ok" ? "text-success" : item.status === "warn" ? "text-warning" : "text-foreground")}>
+                  <span className={cn(
+                    item.key === "risk-score" || item.key === "confidence" ? "font-mono text-xs font-medium" : "font-sans text-xs font-medium",
+                    item.status === "ok" ? "text-success" : item.status === "warn" ? "text-warning" : "text-foreground"
+                  )}>
                     {item.value}
                   </span>
                   {item.detail && (

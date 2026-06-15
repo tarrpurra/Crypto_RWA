@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { parseUnits } from "viem"
 import { useChainId, usePublicClient, useWriteContract } from "wagmi"
 
+import { usePortfolioWallet } from "@/hooks/usePortfolioWallet"
 import { marketApi } from "@/lib/api/market"
 import type { CreateProposalPayload } from "@/lib/api/types"
 import { toast } from "sonner"
@@ -97,11 +98,12 @@ export function useRejectProposal() {
 }
 
 export function useExecuteProposal() {
+  const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async () => {
-      throw new Error(
-        "Direct wallet execution is disabled. Deposit funds into the vault and use the ExecutorVault execution path only.",
-      )
+    mutationFn: (id: string) => marketApi.executeProposal(id),
+    onSuccess: (_data, id) => {
+      void queryClient.invalidateQueries({ queryKey: ["proposals"] })
+      void queryClient.invalidateQueries({ queryKey: ["proposals", "detail", id] })
     },
   })
 }
@@ -154,9 +156,11 @@ export function useWrapMnt() {
 }
 
 export function useProposals(status?: string) {
+  const { effectiveWalletAddress } = usePortfolioWallet()
   return useQuery({
-    queryKey: ["proposals", status],
-    queryFn: () => marketApi.getProposals(status),
+    queryKey: ["proposals", status, effectiveWalletAddress],
+    queryFn: () => marketApi.getProposals(status, effectiveWalletAddress),
     refetchInterval: 30_000,
+    enabled: Boolean(effectiveWalletAddress),
   })
 }

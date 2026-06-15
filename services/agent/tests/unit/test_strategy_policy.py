@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from services.agent.modules.strategy_policy.policy_extractor import extract_policy, get_template_policy
+from services.agent.modules.strategy_policy.schemas import DEFAULT_AI_RUN_INTERVAL_SECONDS
 from services.agent.modules.strategy_policy.policy_validator import validate_policy
 from services.agent.modules.strategy_policy.prompt_safety import scan_prompt
 
@@ -19,7 +20,9 @@ class StrategyPolicyTests(unittest.TestCase):
 
         self.assertEqual(policy.objective, "balanced_yield")
         self.assertLessEqual(policy.hard_limits.max_llm_influence_pct, 40)
-        self.assertGreaterEqual(policy.market_check_interval_seconds, 60)
+        self.assertEqual(policy.market_check_interval_seconds, DEFAULT_AI_RUN_INTERVAL_SECONDS)
+        self.assertEqual(policy.quote_refresh_interval_seconds, DEFAULT_AI_RUN_INTERVAL_SECONDS)
+        self.assertEqual(policy.risk_recompute_interval_seconds, DEFAULT_AI_RUN_INTERVAL_SECONDS)
 
     def test_policy_extraction_uses_template_bias(self) -> None:
         policy = extract_policy(
@@ -48,7 +51,21 @@ class StrategyPolicyTests(unittest.TestCase):
         self.assertTrue(any(error.code == "LLM_INFLUENCE_TOO_HIGH" for error in validation.validation_errors))
         self.assertTrue(any(error.code == "HUMAN_APPROVAL_TOO_PERMISSIVE" for error in validation.validation_errors))
 
+    def test_policy_validation_allows_two_hour_scheduler_cadence(self) -> None:
+        policy = extract_policy(
+            "Balanced strategy with USDY and mETH only.",
+            template_name="Balanced Yield Guardian",
+            policy_json={
+                "market_check_interval_seconds": DEFAULT_AI_RUN_INTERVAL_SECONDS,
+                "quote_refresh_interval_seconds": DEFAULT_AI_RUN_INTERVAL_SECONDS,
+                "risk_recompute_interval_seconds": DEFAULT_AI_RUN_INTERVAL_SECONDS,
+            },
+        )
+
+        validation = validate_policy(policy)
+
+        self.assertEqual(validation.status, "validated")
+
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -163,14 +163,14 @@ function buildCardData(props: AIReasoningPanelProps) {
     0;
   const hardVeto = risk?.hard_veto_status === "active";
   const needsApproval =
-    risk?.required_human_approval_status === "required" || !aiDecisionMakerEnabled;
+    !aiDecisionMakerEnabled && risk?.required_human_approval_status === "required";
   const executionGate: ExecutionGate = hardVeto
     ? "blocked_by_guardrail"
-    : !aiDecisionMakerEnabled
-      ? "needs_human_approval"
-      : decisions?.ai_debug?.mode === "simulation"
+    : aiDecisionMakerEnabled
+      ? decisions?.ai_debug?.mode === "simulation"
         ? "simulation_only"
-        : "allowed";
+        : "allowed"
+      : "needs_human_approval";
 
   const decisionReason = normalizeSentence(
     allocation?.decision.reasoning ??
@@ -192,13 +192,17 @@ function buildCardData(props: AIReasoningPanelProps) {
   const reasoningEvents = aiReasoningData?.events ?? [];
   const nextStep = hardVeto
     ? "Execution is blocked until the guard condition clears and inputs return to a safe state."
-    : needsApproval
-      ? "A human review is required before the proposal can move into execution."
-      : swapRecommendations.length > 0
-          ? `The system is ready to execute ${swapRecommendations.length} linked swap leg${
-            swapRecommendations.length > 1 ? "s" : ""
-          }.`
-        : "No execution step is required. The system remains in monitoring mode.";
+    : aiDecisionMakerEnabled
+      ? swapRecommendations.length > 0
+        ? `Full access AI auto-approved and queued ${swapRecommendations.length} swap leg${swapRecommendations.length > 1 ? "s" : ""} for vault execution.`
+        : "Full access AI is monitoring the portfolio. No execution step is required at this time."
+      : needsApproval
+        ? "A human review is required before the proposal can move into execution."
+        : swapRecommendations.length > 0
+            ? `The system is ready to execute ${swapRecommendations.length} linked swap leg${
+              swapRecommendations.length > 1 ? "s" : ""
+            }.`
+          : "No execution step is required. The system remains in monitoring mode.";
 
   const sources = Array.from(
     new Set([
@@ -325,13 +329,15 @@ function buildCardData(props: AIReasoningPanelProps) {
 
     timeline.push({
       title: "Final Decision",
-      status: action === "PAUSE" ? "paused" : needsApproval ? "warning" : "complete",
+      status: action === "PAUSE" ? "paused" : aiDecisionMakerEnabled ? "complete" : needsApproval ? "warning" : "complete",
       detail:
         action === "PAUSE"
           ? "Pause strategy and request human approval."
-          : needsApproval
-            ? "Recommendation is ready but still requires human approval."
-            : "Decision is ready to move into execution.",
+          : aiDecisionMakerEnabled
+            ? "Decision auto-approved by full access AI. Vault execution intent submitted."
+            : needsApproval
+              ? "Recommendation is ready but still requires human approval."
+              : "Decision is ready to move into execution.",
     });
   }
 

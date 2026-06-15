@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from services.agent.app.core.settings import get_settings
+from services.agent.app.core.status_codes import RuntimeMode
 from services.agent.modules.strategy_policy.prompt_safety import SafetyScanResult
 from services.agent.modules.strategy_policy.schemas import (
+    DEFAULT_AI_RUN_INTERVAL_SECONDS,
     StrategyHardLimits,
     StrategyPolicyConfig,
     StrategyValidationError,
@@ -62,8 +65,8 @@ def _append_numeric_range_checks(errors: list[StrategyValidationError], policy: 
         errors.append(_error("LLM_INFLUENCE_TOO_HIGH", "max_llm_influence_pct cannot exceed 40.", "hard_limits.max_llm_influence_pct"))
     if hard.max_risk_score_for_fresh_allocation > 45:
         errors.append(_error("RISK_ALLOC_THRESHOLD_TOO_HIGH", "max_risk_score_for_fresh_allocation cannot exceed 45.", "hard_limits.max_risk_score_for_fresh_allocation"))
-    if hard.force_human_approval_risk_score < 65:
-        errors.append(_error("HUMAN_APPROVAL_TOO_PERMISSIVE", "force_human_approval_risk_score must be at least 65.", "hard_limits.force_human_approval_risk_score"))
+    if hard.force_human_approval_risk_score < 45:
+        errors.append(_error("HUMAN_APPROVAL_TOO_PERMISSIVE", "force_human_approval_risk_score must be at least 45.", "hard_limits.force_human_approval_risk_score"))
     if hard.pause_risk_score < 80:
         errors.append(_error("PAUSE_THRESHOLD_TOO_PERMISSIVE", "pause_risk_score must be at least 80.", "hard_limits.pause_risk_score"))
     if hard.pause_risk_score < hard.force_human_approval_risk_score:
@@ -71,12 +74,12 @@ def _append_numeric_range_checks(errors: list[StrategyValidationError], policy: 
     if not hard.global_circuit_breaker:
         errors.append(_error("CIRCUIT_BREAKER_DISABLED", "global_circuit_breaker must remain enabled for activation.", "hard_limits.global_circuit_breaker"))
 
-    if policy.market_check_interval_seconds < 60 or policy.market_check_interval_seconds > 3600:
-        errors.append(_error("MARKET_INTERVAL_OUT_OF_RANGE", "market_check_interval_seconds must stay between 60 and 3600.", "market_check_interval_seconds"))
-    if policy.quote_refresh_interval_seconds < 30 or policy.quote_refresh_interval_seconds > 1800:
-        errors.append(_error("QUOTE_INTERVAL_OUT_OF_RANGE", "quote_refresh_interval_seconds must stay between 30 and 1800.", "quote_refresh_interval_seconds"))
-    if policy.risk_recompute_interval_seconds < 60 or policy.risk_recompute_interval_seconds > 3600:
-        errors.append(_error("RISK_INTERVAL_OUT_OF_RANGE", "risk_recompute_interval_seconds must stay between 60 and 3600.", "risk_recompute_interval_seconds"))
+    if policy.market_check_interval_seconds < 60 or policy.market_check_interval_seconds > DEFAULT_AI_RUN_INTERVAL_SECONDS:
+        errors.append(_error("MARKET_INTERVAL_OUT_OF_RANGE", f"market_check_interval_seconds must stay between 60 and {DEFAULT_AI_RUN_INTERVAL_SECONDS}.", "market_check_interval_seconds"))
+    if policy.quote_refresh_interval_seconds < 30 or policy.quote_refresh_interval_seconds > DEFAULT_AI_RUN_INTERVAL_SECONDS:
+        errors.append(_error("QUOTE_INTERVAL_OUT_OF_RANGE", f"quote_refresh_interval_seconds must stay between 30 and {DEFAULT_AI_RUN_INTERVAL_SECONDS}.", "quote_refresh_interval_seconds"))
+    if policy.risk_recompute_interval_seconds < 60 or policy.risk_recompute_interval_seconds > DEFAULT_AI_RUN_INTERVAL_SECONDS:
+        errors.append(_error("RISK_INTERVAL_OUT_OF_RANGE", f"risk_recompute_interval_seconds must stay between 60 and {DEFAULT_AI_RUN_INTERVAL_SECONDS}.", "risk_recompute_interval_seconds"))
     if policy.proposal_expiry_seconds < 60 or policy.proposal_expiry_seconds > 3600:
         errors.append(_error("PROPOSAL_EXPIRY_OUT_OF_RANGE", "proposal_expiry_seconds must stay between 60 and 3600.", "proposal_expiry_seconds"))
 
@@ -123,28 +126,74 @@ def validate_policy(
         base = baseline
         base_hard = baseline.hard_limits
         hard = policy.hard_limits
+        is_live = get_settings().runtime_mode == RuntimeMode.LIVE
+
         if hard.max_slippage_bps > base_hard.max_slippage_bps:
-            errors.append(_error("SLIPPAGE_LIMIT_WEAKER", "max_slippage_bps cannot be loosened versus the active policy.", "hard_limits.max_slippage_bps"))
+            msg = "max_slippage_bps cannot be loosened versus the active policy."
+            if is_live:
+                errors.append(_error("SLIPPAGE_LIMIT_WEAKER", msg, "hard_limits.max_slippage_bps"))
+            else:
+                warnings.append(f"{msg} (permitted in simulation mode).")
         if hard.max_gas_gwei > base_hard.max_gas_gwei:
-            errors.append(_error("GAS_LIMIT_WEAKER", "max_gas_gwei cannot be loosened versus the active policy.", "hard_limits.max_gas_gwei"))
+            msg = "max_gas_gwei cannot be loosened versus the active policy."
+            if is_live:
+                errors.append(_error("GAS_LIMIT_WEAKER", msg, "hard_limits.max_gas_gwei"))
+            else:
+                warnings.append(f"{msg} (permitted in simulation mode).")
         if hard.max_asset_exposure_pct > base_hard.max_asset_exposure_pct:
-            errors.append(_error("ASSET_EXPOSURE_WEAKER", "max_asset_exposure_pct cannot be loosened versus the active policy.", "hard_limits.max_asset_exposure_pct"))
+            msg = "max_asset_exposure_pct cannot be loosened versus the active policy."
+            if is_live:
+                errors.append(_error("ASSET_EXPOSURE_WEAKER", msg, "hard_limits.max_asset_exposure_pct"))
+            else:
+                warnings.append(f"{msg} (permitted in simulation mode).")
         if hard.max_issuer_exposure_pct > base_hard.max_issuer_exposure_pct:
-            errors.append(_error("ISSUER_EXPOSURE_WEAKER", "max_issuer_exposure_pct cannot be loosened versus the active policy.", "hard_limits.max_issuer_exposure_pct"))
+            msg = "max_issuer_exposure_pct cannot be loosened versus the active policy."
+            if is_live:
+                errors.append(_error("ISSUER_EXPOSURE_WEAKER", msg, "hard_limits.max_issuer_exposure_pct"))
+            else:
+                warnings.append(f"{msg} (permitted in simulation mode).")
         if hard.min_stable_reserve_pct < base_hard.min_stable_reserve_pct:
-            errors.append(_error("STABLE_RESERVE_WEAKER", "min_stable_reserve_pct cannot be reduced versus the active policy.", "hard_limits.min_stable_reserve_pct"))
+            msg = "min_stable_reserve_pct cannot be reduced versus the active policy."
+            if is_live:
+                errors.append(_error("STABLE_RESERVE_WEAKER", msg, "hard_limits.min_stable_reserve_pct"))
+            else:
+                warnings.append(f"{msg} (permitted in simulation mode).")
         if hard.max_llm_influence_pct > base_hard.max_llm_influence_pct:
-            errors.append(_error("LLM_INFLUENCE_WEAKER", "max_llm_influence_pct cannot be increased versus the active policy.", "hard_limits.max_llm_influence_pct"))
+            msg = "max_llm_influence_pct cannot be increased versus the active policy."
+            if is_live:
+                errors.append(_error("LLM_INFLUENCE_WEAKER", msg, "hard_limits.max_llm_influence_pct"))
+            else:
+                warnings.append(f"{msg} (permitted in simulation mode).")
         if policy.market_check_interval_seconds > base.market_check_interval_seconds:
-            errors.append(_error("MARKET_INTERVAL_WEAKER", "market_check_interval_seconds cannot be slowed versus the active policy.", "market_check_interval_seconds"))
+            msg = "market_check_interval_seconds cannot be slowed versus the active policy."
+            if is_live:
+                errors.append(_error("MARKET_INTERVAL_WEAKER", msg, "market_check_interval_seconds"))
+            else:
+                warnings.append(f"{msg} (permitted in simulation mode).")
         if policy.risk_recompute_interval_seconds > base.risk_recompute_interval_seconds:
-            errors.append(_error("RISK_INTERVAL_WEAKER", "risk_recompute_interval_seconds cannot be slowed versus the active policy.", "risk_recompute_interval_seconds"))
+            msg = "risk_recompute_interval_seconds cannot be slowed versus the active policy."
+            if is_live:
+                errors.append(_error("RISK_INTERVAL_WEAKER", msg, "risk_recompute_interval_seconds"))
+            else:
+                warnings.append(f"{msg} (permitted in simulation mode).")
         if policy.quote_refresh_interval_seconds > base.quote_refresh_interval_seconds:
-            errors.append(_error("QUOTE_INTERVAL_WEAKER", "quote_refresh_interval_seconds cannot be slowed versus the active policy.", "quote_refresh_interval_seconds"))
+            msg = "quote_refresh_interval_seconds cannot be slowed versus the active policy."
+            if is_live:
+                errors.append(_error("QUOTE_INTERVAL_WEAKER", msg, "quote_refresh_interval_seconds"))
+            else:
+                warnings.append(f"{msg} (permitted in simulation mode).")
         if hard.force_human_approval_risk_score < base_hard.force_human_approval_risk_score:
-            errors.append(_error("HUMAN_APPROVAL_WEAKER", "force_human_approval_risk_score cannot be loosened versus the active policy.", "hard_limits.force_human_approval_risk_score"))
+            msg = "force_human_approval_risk_score cannot be loosened versus the active policy."
+            if is_live:
+                errors.append(_error("HUMAN_APPROVAL_WEAKER", msg, "hard_limits.force_human_approval_risk_score"))
+            else:
+                warnings.append(f"{msg} (permitted in simulation mode).")
         if hard.pause_risk_score < base_hard.pause_risk_score:
-            errors.append(_error("PAUSE_THRESHOLD_WEAKER", "pause_risk_score cannot be lowered versus the active policy.", "hard_limits.pause_risk_score"))
+            msg = "pause_risk_score cannot be lowered versus the active policy."
+            if is_live:
+                errors.append(_error("PAUSE_THRESHOLD_WEAKER", msg, "hard_limits.pause_risk_score"))
+            else:
+                warnings.append(f"{msg} (permitted in simulation mode).")
 
     if policy.hard_limits.max_llm_influence_pct > 40:
         errors.append(_error("LLM_INFLUENCE_CAP_EXCEEDED", "max_llm_influence_pct cannot exceed 40.", "hard_limits.max_llm_influence_pct"))

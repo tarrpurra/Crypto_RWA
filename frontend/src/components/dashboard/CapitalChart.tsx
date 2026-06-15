@@ -126,14 +126,51 @@ export function CapitalChart({
     }
   }, [selectedSeries, tokenSeriesOptions]);
 
-  const currentPoints = selectedSeries ? points[selectedSeries] ?? [] : [];
+  const currentPoints = useMemo(
+    () => (selectedSeries ? points[selectedSeries] ?? [] : []),
+    [points, selectedSeries],
+  );
 
   const chartData = useMemo(() => {
     return currentPoints.map((pt) => ({
       timestamp: new Date(pt.time).getTime(),
-      value: pt.avg ?? pt.close ?? 0,
+      value: pt.close ?? pt.avg ?? 0,
+      low: pt.low ?? pt.close ?? pt.avg ?? 0,
+      high: pt.high ?? pt.close ?? pt.avg ?? 0,
     }));
   }, [currentPoints]);
+
+  const yDomain = useMemo<[number, number] | undefined>(() => {
+    if (chartData.length === 0) {
+      return undefined;
+    }
+
+    const lows = chartData
+      .map((point) => point.low)
+      .filter((value) => Number.isFinite(value));
+    const highs = chartData
+      .map((point) => point.high)
+      .filter((value) => Number.isFinite(value));
+
+    if (lows.length === 0 || highs.length === 0) {
+      return undefined;
+    }
+
+    const min = Math.min(...lows);
+    const max = Math.max(...highs);
+
+    if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      return undefined;
+    }
+
+    if (min === max) {
+      const fallbackPadding = Math.max(Math.abs(min) * 0.02, 1);
+      return [Math.max(0, min - fallbackPadding), max + fallbackPadding];
+    }
+
+    const padding = Math.max((max - min) * 0.12, max * 0.005);
+    return [Math.max(0, min - padding), max + padding];
+  }, [chartData]);
 
   const activeLabel = selectedSeries;
   const title = selectedSeries ? `${selectedSeries} price history` : "Token price history";
@@ -255,7 +292,7 @@ export function CapitalChart({
                 domain={["dataMin", "dataMax"]}
                 axisLine={false}
                 tickLine={false}
-                tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10, fontFamily: "Space Grotesk" }}
                 dy={4}
                 interval="preserveStartEnd"
                 tickFormatter={(value: number) => formatAxisDate(value, sameDayRange)}
@@ -264,10 +301,11 @@ export function CapitalChart({
               <YAxis
                 axisLine={false}
                 tickLine={false}
-                tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
+                tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10, fontFamily: "Space Grotesk" }}
                 dx={-4}
                 tickFormatter={formatYAxisValue}
                 width={48}
+                domain={yDomain ?? ["auto", "auto"]}
               />
               <Tooltip content={<CustomTooltip valueLabel={activeLabel} />} cursor={false} />
 

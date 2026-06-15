@@ -78,6 +78,14 @@ export function useActivateStrategy() {
   });
 }
 
+export function useUpdateActiveStrategy() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: StrategyDraftRequest) => strategyApi.updateActive(body),
+    onSuccess: () => invalidateStrategy(queryClient),
+  });
+}
+
 export function useRevertStrategy() {
   const queryClient = useQueryClient();
   return useMutation({

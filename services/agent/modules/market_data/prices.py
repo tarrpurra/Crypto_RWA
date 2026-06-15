@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from uuid import uuid4
@@ -9,15 +11,101 @@ from services.agent.app.core.settings import Settings, TargetChain, get_settings
 from services.agent.app.core.status_codes import DataStatusCode
 from services.agent.app.schemas.market_data import AssetIngestionStatus, AssetMetadata, NormalizedPriceSnapshot, RawPriceSnapshot
 from services.agent.modules.market_data.snapshots import PriceIngestionBundle
+from services.agent.repositories.db.market_repository import MarketDataRepository
 from services.agent.modules.oracle import (
     HermesClient,
     OndoUsdyOracleAdapter,
+    OracleFallbackService,
     age_seconds,
     evaluate_freshness,
     parse_hermes_price_update,
     utc_now,
 )
+
 logger = logging.getLogger("services.agent.market_data.prices")
+
+# ---------------------------------------------------------------------------
+# Process-level price bundle cache
+# ---------------------------------------------------------------------------
+# All callers (vault, portfolio, market endpoints) share one in-flight Hermes
+# request per TTL window.  A second caller that arrives while the first fetch
+# is still running awaits the same Future instead of launching a duplicate
+# request.  On failure the last successful bundle is returned so transient
+# ConnectTimeout errors don't propagate to every concurrent API handler.
+
+_PRICE_CACHE_TTL_SECONDS: float = 30.0
+
+
+class _PriceBundleCache:
+    """Singleton async TTL cache with in-flight request deduplication."""
+
+    def __init__(self, ttl: float = _PRICE_CACHE_TTL_SECONDS) -> None:
+        self._ttl = ttl
+        self._bundle: PriceIngestionBundle | None = None
+        self._fetched_at: float = 0.0           # monotonic time of last successful fetch
+        self._inflight: asyncio.Future[PriceIngestionBundle] | None = None  # dedup sentinel
+
+    def _is_fresh(self) -> bool:
+        return (
+            self._bundle is not None
+            and (time.monotonic() - self._fetched_at) < self._ttl
+        )
+
+    async def get(self, fetch_fn) -> PriceIngestionBundle:
+        """Return a cached bundle if fresh, else call fetch_fn() exactly once.
+
+        Concurrent callers waiting for the same in-flight request share one
+        Future so only a single HTTP round-trip to Hermes is made.
+        """
+        if self._is_fresh() and self._bundle is not None:
+            return self._bundle
+
+        # Another coroutine already fired the request — join it.
+        if self._inflight is not None and not self._inflight.done():
+            try:
+                return await asyncio.shield(self._inflight)
+            except Exception:
+                # The in-flight request failed; fall through to return stale data
+                # or raise if we have no stale data at all.
+                if self._bundle is not None:
+                    logger.warning(
+                        "Hermes in-flight fetch failed; returning last cached price bundle "
+                        "(age %.1f s).",
+                        time.monotonic() - self._fetched_at,
+                    )
+                    return self._bundle
+                raise
+
+        # We are the designated fetcher — create a Future others can join.
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future[PriceIngestionBundle] = loop.create_future()
+        self._inflight = future
+        try:
+            bundle = await fetch_fn()
+            self._bundle = bundle
+            self._fetched_at = time.monotonic()
+            future.set_result(bundle)
+            return bundle
+        except Exception as exc:
+            future.set_exception(exc)
+            if self._bundle is not None:
+                logger.warning(
+                    "Hermes fetch failed (%s); serving last cached price bundle "
+                    "(age %.1f s) to avoid propagating the error.",
+                    type(exc).__name__,
+                    time.monotonic() - self._fetched_at,
+                )
+                return self._bundle
+            raise
+        finally:
+            # Clear sentinel so the next miss triggers a fresh fetch.
+            if self._inflight is future:
+                self._inflight = None
+
+
+# Module-level singleton — shared across all callers in the same process.
+_price_bundle_cache = _PriceBundleCache()
+
 
 
 @dataclass(frozen=True)
@@ -28,11 +116,22 @@ class PriceInputs:
 
 
 class PriceService:
-    def __init__(self, settings: Settings | None = None, hermes_client: HermesClient | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        hermes_client: HermesClient | None = None,
+        oracle_fallback: OracleFallbackService | None = None,
+    ) -> None:
         self.settings = settings or get_settings()
         self.hermes_client = hermes_client or HermesClient(
             base_url=self.settings.pyth_hermes_url,
             latest_price_path=self.settings.pyth_hermes_latest_price_path,
+            connect_timeout=self.settings.pyth_hermes_connect_timeout_seconds,
+            timeout=self.settings.pyth_hermes_read_timeout_seconds,
+        )
+        self.oracle_fallback = oracle_fallback or OracleFallbackService(
+            settings=self.settings,
+            hermes_client=self.hermes_client,
         )
         self.ondo_usdy_adapter = OndoUsdyOracleAdapter(self.settings)
 
@@ -265,19 +364,46 @@ class PriceService:
         return statuses
 
     async def fetch_latest_prices(self) -> PriceIngestionBundle:
+        """Fetch prices, served from the process-level TTL cache when fresh.
+
+        All concurrent callers share one in-flight Hermes request per 30-second
+        window.  On Hermes failure the last successful bundle is returned so
+        transient ConnectTimeout errors don't surface to every API handler.
+        """
+        return await _price_bundle_cache.get(self._do_fetch_latest_prices)
+
+    async def _do_fetch_latest_prices(self) -> PriceIngestionBundle:
+        """Raw (uncached) oracle fetch — called by the cache layer only."""
         assets = self.asset_metadata_for_target_chain()
         feed_ids = self._collect_feed_ids(assets)
-        hermes_response = None
+        persisted_prices_by_asset = self._latest_persisted_prices_by_asset()
+
+        oracle_response = None
+        parsed_by_feed_id: dict[str, object] = {}
+        source_label = "none"
+
         if feed_ids:
-            try:
-                hermes_response = await self.hermes_client.fetch_latest_price_updates(feed_ids)
-            except Exception as exc:
-                logger.warning("Hermes price fetch failed: %s: %r", type(exc).__name__, exc)
-        parsed_by_feed_id = self._parse_feeds(feed_ids, hermes_response.payload if hermes_response else {})
+            parsed_by_feed_id, source_label = await self.oracle_fallback.fetch_parsed_prices(feed_ids)
+            now = utc_now()
+            if source_label == "pyth_hermes":
+                oracle_response = _oracle_response_from_source("pyth_hermes", feed_ids, now)
+            elif source_label == "pyth_onchain":
+                oracle_response = _oracle_response_from_source("pyth_onchain", feed_ids, now)
+                logger.warning(
+                    "All %d Hermes feed(s) failed; using on-chain Pyth contract fallback.",
+                    len(feed_ids),
+                )
 
         bundle = PriceIngestionBundle()
         for asset in assets:
-            raw_snapshots, normalized_snapshot = self._build_asset_price(asset, hermes_response, parsed_by_feed_id)
+            persisted_snapshot = persisted_prices_by_asset.get(asset.asset_key.lower()) or persisted_prices_by_asset.get(asset.symbol.lower())
+            raw_snapshots, normalized_snapshot = self._build_asset_price(
+                asset,
+                oracle_response,
+                parsed_by_feed_id,
+                persisted_snapshot,
+                persisted_prices_by_asset,
+            )
             bundle.raw_snapshots.extend(raw_snapshots)
             bundle.normalized_snapshots.append(normalized_snapshot)
         return bundle
@@ -328,7 +454,60 @@ class PriceService:
             raw_snapshot_ids=[],
         )
 
-    def _build_asset_price(self, asset: AssetMetadata, hermes_response, parsed_by_feed_id: dict[str, object]) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
+    def _latest_persisted_prices_by_asset(self) -> dict[str, NormalizedPriceSnapshot]:
+        try:
+            snapshots = MarketDataRepository().latest_normalized_prices()
+        except Exception as exc:
+            logger.warning("Persisted price fallback lookup failed: %s: %r", type(exc).__name__, exc)
+            return {}
+
+        indexed: dict[str, NormalizedPriceSnapshot] = {}
+        for snapshot in snapshots:
+            indexed[snapshot.asset_key.lower()] = snapshot
+            indexed.setdefault(snapshot.asset_symbol.lower(), snapshot)
+        return indexed
+
+    def _fallback_or_missing(
+        self,
+        asset: AssetMetadata,
+        persisted_snapshot: NormalizedPriceSnapshot | None,
+        reason: str,
+        *,
+        status: str = "missing",
+        status_code: str | None = None,
+    ) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
+        if persisted_snapshot is None:
+            return self._missing_snapshot(asset, reason, status=status, status_code=status_code)
+
+        now = utc_now()
+        fallback_reason = f"{reason} Using the latest persisted normalized price snapshot as a fallback."
+        return [], NormalizedPriceSnapshot(
+            snapshot_id=str(uuid4()),
+            asset_key=asset.asset_key,
+            asset_symbol=asset.symbol,
+            asset_address=asset.address,
+            chain_id=asset.chain_id,
+            price_usd=persisted_snapshot.price_usd,
+            confidence_interval_usd=persisted_snapshot.confidence_interval_usd,
+            publish_timestamp=persisted_snapshot.publish_timestamp,
+            observed_timestamp=now,
+            age_seconds=persisted_snapshot.age_seconds,
+            freshness_status="degraded",
+            status_code=status_code or "PYTH_PARSE_FAILED_FALLBACK_USED",
+            status_reason=fallback_reason,
+            derivation_method="latest_persisted_snapshot",
+            data_sources_used=["latest_persisted_snapshot"],
+            raw_snapshot_ids=[],
+        )
+
+    def _build_asset_price(
+        self,
+        asset: AssetMetadata,
+        hermes_response,
+        parsed_by_feed_id: dict[str, object],
+        persisted_snapshot: NormalizedPriceSnapshot | None = None,
+        persisted_prices_by_asset: dict[str, NormalizedPriceSnapshot] | None = None,
+    ) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
         inputs = self._price_inputs(asset)
         if asset.price_strategy == "sepolia_mock_fixed":
             return self._build_sepolia_mock_price(asset)
@@ -348,19 +527,25 @@ class PriceService:
                     data_source_label="pyth_direct",
                 )
             if asset.address:
-                quote_derived = self._build_wmnt_quote_reference_price(asset, hermes_response, parsed_by_feed_id)
+                quote_derived = self._build_wmnt_quote_reference_price(
+                    asset,
+                    hermes_response,
+                    parsed_by_feed_id,
+                    persisted_prices_by_asset=persisted_prices_by_asset or {},
+                )
                 if quote_derived is not None:
                     return quote_derived
-                return self._missing_snapshot(
+                return self._fallback_or_missing(
                     asset,
+                    persisted_snapshot,
                     "WMNT could not be priced because the MNT/USD Pyth feed is unavailable and no usable WMNT/USDY quote fallback was found.",
                     status="unverified",
                     status_code=DataStatusCode.DATA_PARTIAL.value,
                 )
-            return self._missing_snapshot(asset, "WMNT address is not configured.", status="unverified")
+            return self._fallback_or_missing(asset, persisted_snapshot, "WMNT address is not configured.", status="unverified")
 
         if asset.symbol == "USDY":
-            return self._build_usdy_price(asset, hermes_response, parsed_by_feed_id)
+            return self._build_usdy_price(asset, hermes_response, parsed_by_feed_id, persisted_snapshot=persisted_snapshot)
         if (
             asset.symbol == "mETH"
             and self.settings.target_chain == TargetChain.MANTLE_SEPOLIA
@@ -383,11 +568,16 @@ class PriceService:
 
         inputs = self._price_inputs(asset)
         if not inputs.eth_usd_feed_id:
-            return self._missing_snapshot(asset, "ETH/USD Pyth feed id is not configured or not verified.", status="unverified")
+            return self._fallback_or_missing(
+                asset,
+                persisted_snapshot,
+                "ETH/USD Pyth feed id is not configured or not verified.",
+                status="unverified",
+            )
 
         eth_obs = parsed_by_feed_id.get(inputs.eth_usd_feed_id)
         if eth_obs is None:
-            return self._missing_snapshot(asset, "ETH/USD price update could not be parsed from Hermes.")
+            return self._fallback_or_missing(asset, persisted_snapshot, "ETH/USD price update could not be parsed from Hermes.")
 
         if inputs.direct_feed_id and parsed_by_feed_id.get(inputs.direct_feed_id) is not None:
             direct_obs = parsed_by_feed_id[inputs.direct_feed_id]
@@ -511,7 +701,13 @@ class PriceService:
         )
         return [raw_snapshot], normalized
 
-    def _build_usdy_price(self, asset: AssetMetadata, hermes_response, parsed_by_feed_id: dict[str, object]) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
+    def _build_usdy_price(
+        self,
+        asset: AssetMetadata,
+        hermes_response,
+        parsed_by_feed_id: dict[str, object],
+        persisted_snapshot: NormalizedPriceSnapshot | None = None,
+    ) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot]:
         if self.settings.target_chain == TargetChain.MANTLE_SEPOLIA:
             inputs = self._price_inputs(asset)
             direct_obs = parsed_by_feed_id.get(inputs.direct_feed_id) if inputs.direct_feed_id else None
@@ -543,7 +739,13 @@ class PriceService:
             freshness_status = "unverified" if oracle_read.status.status == "selector_verification_required" else "missing"
             if oracle_read.status.status == "simulation_only":
                 freshness_status = "unverified"
-            return self._missing_snapshot(asset, f"Ondo USDY oracle status: {oracle_read.status.status}.", status=freshness_status, status_code=status_code)
+            return self._fallback_or_missing(
+                asset,
+                persisted_snapshot,
+                f"Ondo USDY oracle status: {oracle_read.status.status}.",
+                status=freshness_status,
+                status_code=status_code,
+            )
 
         observation = oracle_read.observation
         now = utc_now()
@@ -656,6 +858,7 @@ class PriceService:
         asset: AssetMetadata,
         hermes_response,
         parsed_by_feed_id: dict[str, object],
+        persisted_prices_by_asset: dict[str, NormalizedPriceSnapshot] | None = None,
     ) -> tuple[list[RawPriceSnapshot], NormalizedPriceSnapshot] | None:
         usdy_asset = next(
             (
@@ -668,7 +871,18 @@ class PriceService:
         if usdy_asset is None:
             return None
 
-        _, usdy_snapshot = self._build_usdy_price(usdy_asset, hermes_response, parsed_by_feed_id)
+        usdy_persisted_snapshot = None
+        if persisted_prices_by_asset:
+            usdy_persisted_snapshot = (
+                persisted_prices_by_asset.get(usdy_asset.asset_key.lower())
+                or persisted_prices_by_asset.get(usdy_asset.symbol.lower())
+            )
+        _, usdy_snapshot = self._build_usdy_price(
+            usdy_asset,
+            hermes_response,
+            parsed_by_feed_id,
+            persisted_snapshot=usdy_persisted_snapshot,
+        )
         if not usdy_snapshot.price_usd:
             return None
 
@@ -847,5 +1061,40 @@ class PriceService:
         return [eth_raw, ratio_raw], normalized
 
 
+def _oracle_response_from_source(
+    source: str,
+    feed_ids: list[str],
+    now: datetime,
+) -> object:
+    """Build a duck-typed response object for downstream snapshot builders.
+
+    The returned object quacks like ``HermesFetchResponse`` for the attributes
+    that ``_build_*`` methods access (``.source_url``, ``.payload``,
+    ``.fetched_at``).
+    """
+    urls = {
+        "pyth_hermes": "https://hermes.pyth.network/v2/updates/price/latest",
+        "pyth_onchain": "pyth_contract",
+    }
+    return _OracleResponse(
+        source_url=urls.get(source, source),
+        payload={},
+        fetched_at=now,
+    )
+
+
+class _OracleResponse:
+    """Minimal response object that exposes source_url / payload / fetched_at."""
+
+    def __init__(self, source_url: str, payload: dict, fetched_at: datetime) -> None:
+        self.source_url = source_url
+        self.payload = payload
+        self.fetched_at = fetched_at
+
+
 def get_price_service() -> PriceService:
+    """Return a PriceService whose fetch_latest_prices is backed by the
+    process-level TTL cache.  All callers share one oracle round-trip per
+    cache window, eliminating concurrent duplicate requests.
+    """
     return PriceService()

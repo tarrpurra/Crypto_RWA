@@ -3,6 +3,124 @@
 ### 2026-06-14
 
 Type:
+Decision Log scoped decision-query gating
+
+Author:
+Codex
+
+Summary:
+
+- fixed a frontend race where Decision Log could request `/decisions` with only `wallet_address` before route-driven investment scope had been hydrated, causing backend logs with `deposit_asset=None` and other null scope fields
+- added a `requireScope` option to the shared decisions hook and now require scope for Decision Log entirely, so the backend recommendation call that drives proposal creation only fires after scope is available
+
+Affected scope:
+
+- frontend/src/hooks/useDecisions.ts
+- frontend/src/pages/DecisionLog.tsx
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- backend logs: Decision Log review flows should stop emitting the initial unscoped `/decisions` request for pages opened with `asset`, `amount`, or `risk` query params
+- frontend: dashboard surfaces can still use the unscoped decisions query path, while Decision Log waits for scoped inputs when that page is acting as the trade-review surface
+
+### 2026-06-14
+
+Type:
+Decision Log backend summary wiring
+
+Author:
+Codex
+
+Summary:
+
+- extended the backend `/proposals` list response to include decision-log summary fields already stored in each proposal's persisted `plan_json`, including token symbols, deposit context, AI confidence, recommended action, and reasoning summary
+- updated the Decision Log page to render confidence, route labels, reasoning snippets, and aggregate confidence metrics from backend proposal data instead of falling back to the currently selected detail record
+- added regression coverage for wallet-scoped proposal listing with the new decision summary fields
+
+Affected scope:
+
+- services/agent/app/schemas/proposals.py
+- services/agent/app/api/decisions.py
+- services/agent/tests/unit/test_decisions_api.py
+- frontend/src/lib/api/types.ts
+- frontend/src/pages/DecisionLog.tsx
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- frontend: Decision Log rows and summary cards now reflect backend proposal metadata rather than placeholders for non-selected rows
+- backend: the proposal queue endpoint now acts as the summary data source for Decision Log without requiring an extra per-row detail fetch
+- verification not executed in this pass because no frontend or Python test commands were run
+
+### 2026-06-14
+
+Type:
+Backend scheduler cadence moved to 2 hours
+
+Author:
+Codex
+
+Summary:
+
+- changed backend market and quote polling defaults from sub-minute refreshes to a 2-hour cadence
+- aligned strategy policy defaults and seeded scheduler settings so AI market checks, quote refreshes, and risk recomputes all default to 7200 seconds
+- widened strategy interval validation to accept 2-hour cadences and normalized persisted scheduler rows to the new default on repository startup
+
+Affected scope:
+
+- services/agent/app/core/settings.py
+- services/agent/modules/strategy_policy/schemas.py
+- services/agent/modules/strategy_policy/policy_extractor.py
+- services/agent/modules/strategy_policy/policy_validator.py
+- services/agent/modules/strategy_policy/repository.py
+- services/agent/.env
+- services/agent/.env.example
+- services/agent/tests/unit/test_strategy_policy.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- backend: default full-data refresh cadence is now 2 hours instead of 1 minute
+- AI scheduling: active strategy scheduler defaults now expose a 7200-second cadence for market checks, quotes, and risk recompute
+- verification not executed in this pass because no Python test commands were run
+
+### 2026-06-14
+
+Type:
+Decision Log-owned AI recommendation proposal flow
+
+Author:
+Codex
+
+Summary:
+
+- moved AI recommendation handoff so the dashboard no longer creates trade proposals directly; instead it sends the user into Decision Log with the current scoped recommendation inputs
+- updated Decision Log to auto-create a guarded proposal from an AI `REBALANCE` recommendation inside the review page itself, including recommendation-only mode when the user enters the page through the review flow
+- scoped proposal list reads to the active wallet address so Decision Log and proposal notifications only surface the current user’s proposal queue
+- added backend regression coverage for wallet-scoped proposal listing
+
+Affected scope:
+
+- frontend/src/pages/Index.tsx
+- frontend/src/pages/DecisionLog.tsx
+- frontend/src/hooks/useSwap.ts
+- frontend/src/components/dashboard/ProposalNotification.tsx
+- frontend/src/lib/api/market.ts
+- services/agent/app/api/decisions.py
+- services/agent/tests/unit/test_decisions_api.py
+- docs/ai-data-analytics/Changes.md
+
+Impact:
+
+- AI recommendations now turn into reviewable proposals on the Decision Log page, which makes that page the single operator review surface before approval and execution
+- recommendation-only users can still get an AI-generated proposal in Decision Log without needing Full access AI to be enabled
+- wallet isolation improves because proposal notifications and review queues stop mixing proposals from other users
+- verification not executed in this pass because no test commands were run
+
+### 2026-06-14
+
+Type:
 WMNT fallback valuation and stale vault cost-basis guard
 
 Author:
@@ -2572,3 +2690,23 @@ Commands the user still needs to run:
 
 - run the frontend test file for the dashboard flow
 - run the Python unit tests for the settings and allocation paths
+
+### 2026-06-14
+
+Type:
+Feature
+
+Summary:
+
+- redesigned the Decision Log page into a dashboard-style audit surface with summary cards, search and filters, and a transaction table closer to the requested UI
+- added client-side pagination at 5 decision rows per page
+- kept row selection wired to the existing proposal detail panel so clicking a transaction opens its approval, reasoning, allocation, evidence, and execution details below
+
+Affected scope:
+
+- frontend/src/pages/DecisionLog.tsx
+
+Impact:
+
+- frontend: Decision Log now behaves like a paginated transaction review table instead of a recent-session sidebar
+- operator flow: proposal details remain inspectable from the same page after row selection, so review and approval actions still stay in one place

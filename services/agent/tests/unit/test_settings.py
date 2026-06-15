@@ -1,7 +1,12 @@
+import asyncio
 import unittest
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from services.agent.app.core.settings import Settings
 from services.agent.app.core.status_codes import RuntimeMode, TargetChain
+from services.agent.app.schemas.market_data import AssetMetadata, NormalizedPriceSnapshot
+from services.agent.app.schemas.quotes import NormalizedQuoteSnapshot
 from services.agent.modules.market_data.prices import PriceService
 
 
@@ -134,6 +139,107 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(meth_status.status, "simulation_only")
         self.assertEqual(meth_status.status_code, "DATA_PARTIAL")
         self.assertEqual(meth_status.required_sources[0], "manual_mirror")
+
+    @patch("services.agent.modules.quotes.service.QuoteService.best_quote_for_pair")
+    def test_wmnt_uses_quote_derived_price_when_mnt_feed_is_unavailable(self, best_quote_for_pair) -> None:
+        settings = Settings(
+            _env_file=None,
+            target_chain=TargetChain.MANTLE_SEPOLIA,
+            sepolia_usdy_address="0x0000000000000000000000000000000000000002",
+            sepolia_wmnt_address="0x0000000000000000000000000000000000000005",
+            sepolia_meth_address=None,
+            mnt_pyth_feed_id="TODO_MNT_FEED",
+            usdy_pyth_feed_id=None,
+        )
+        best_quote_for_pair.return_value = NormalizedQuoteSnapshot(
+            snapshot_id="quote-1",
+            protocol="AIYIELD",
+            route_id="aiyield:WMNT:USDY",
+            route_label="test_swap_router",
+            chain_id=5003,
+            token_in_symbol="WMNT",
+            token_out_symbol="USDY",
+            amount_in="1",
+            amount_out="0.55392783",
+            quoted_price="0.55392783",
+            estimated_slippage_bps="0",
+            route_depth_usd=None,
+            candidate_rank=1,
+            sample_timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+            freshness_status="fresh",
+            status_code="QUOTE_FRESH",
+            status_reason="fresh",
+            data_sources_used=["test_quote"],
+        )
+
+        hermes_client = MagicMock()
+        hermes_client.fetch_latest_price_updates = AsyncMock(return_value=None)
+        bundle = asyncio.run(PriceService(settings, hermes_client=hermes_client).fetch_latest_prices())
+
+        wmnt_snapshot = next(snapshot for snapshot in bundle.normalized_snapshots if snapshot.asset_symbol == "WMNT")
+        self.assertEqual(wmnt_snapshot.price_usd, "0.55392783")
+        self.assertEqual(wmnt_snapshot.derivation_method, "wmnt_usdy_quote")
+        self.assertEqual(wmnt_snapshot.freshness_status, "simulation_only")
+
+    @patch("services.agent.modules.market_data.prices.MarketDataRepository")
+    def test_uses_persisted_price_when_hermes_is_unavailable(self, market_repository_cls) -> None:
+        settings = Settings(
+            _env_file=None,
+            target_chain=TargetChain.MANTLE_MAINNET,
+            mantle_mainnet_rpc_url="https://example-mainnet",
+            usdy_mainnet_address="0x0000000000000000000000000000000000000002",
+            ondo_usdy_oracle_address="0x0000000000000000000000000000000000000003",
+            ondo_usdy_oracle_method_selector="0x12345678",
+        )
+
+        market_repository = MagicMock()
+        market_repository.latest_normalized_prices.return_value = [
+            NormalizedPriceSnapshot(
+                snapshot_id="persisted-usdy",
+                asset_key="USDY",
+                asset_symbol="USDY",
+                asset_address="0x0000000000000000000000000000000000000002",
+                chain_id=5000,
+                price_usd="1.01",
+                confidence_interval_usd=None,
+                publish_timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                observed_timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                age_seconds=120,
+                freshness_status="stale",
+                status_code="DATA_PARTIAL",
+                status_reason="Persisted normalized price snapshot.",
+                derivation_method="ondo_redemption_oracle",
+                data_sources_used=["ondo_redemption_oracle"],
+                raw_snapshot_ids=["raw-1"],
+            )
+        ]
+        market_repository_cls.return_value = market_repository
+
+        hermes_client = MagicMock()
+        hermes_client.fetch_latest_price_updates = AsyncMock(side_effect=RuntimeError("hermes unavailable"))
+
+        price_service = PriceService(settings, hermes_client=hermes_client)
+        price_service.asset_metadata_for_target_chain = MagicMock(
+            return_value=[
+                AssetMetadata(
+                    asset_key="USDY",
+                    symbol="USDY",
+                    chain_id=5000,
+                    address="0x0000000000000000000000000000000000000002",
+                    verified=True,
+                    price_strategy="ondo_oracle",
+                    primary_reference_source="ondo_redemption_price_oracle",
+                    dex_quote_required=True,
+                    ondo_oracle_address="0x0000000000000000000000000000000000000003",
+                )
+            ]
+        )
+
+        bundle = asyncio.run(price_service._do_fetch_latest_prices())
+
+        self.assertEqual(len(bundle.normalized_snapshots), 1)
+        self.assertEqual(bundle.normalized_snapshots[0].price_usd, "1.01")
+        self.assertIn("fallback", bundle.normalized_snapshots[0].status_reason.lower())
 
 
 if __name__ == "__main__":

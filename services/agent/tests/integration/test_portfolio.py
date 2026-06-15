@@ -13,7 +13,47 @@ class PortfolioEndpointTests(unittest.TestCase):
         self.client = TestClient(app)
 
     def test_current_portfolio_returns_ok_with_real_data_when_balances_are_available(self) -> None:
-        with patch("services.agent.app.api.portfolio._save_snapshot_best_effort"):
+        from unittest.mock import AsyncMock, MagicMock
+        from services.agent.modules.market_data.snapshots import PriceIngestionBundle
+        from services.agent.app.schemas.market_data import NormalizedPriceSnapshot
+        from services.agent.app.core.status_codes import DataStatusCode
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC)
+        bundle = PriceIngestionBundle(
+            normalized_snapshots=[
+                NormalizedPriceSnapshot(
+                    snapshot_id="price-1",
+                    asset_key="WMNT",
+                    asset_symbol="WMNT",
+                    chain_id=5003,
+                    price_usd="1.0",
+                    observed_timestamp=now,
+                    publish_timestamp=now,
+                    freshness_status="ok",
+                    status_code=DataStatusCode.ORACLE_FRESH.value,
+                    status_reason="fresh",
+                    derivation_method="pyth",
+                    data_sources_used=["test"],
+                )
+            ]
+        )
+        mock_service = MagicMock()
+        mock_service.fetch_latest_prices = AsyncMock(return_value=bundle)
+
+        with (
+            patch("services.agent.app.api.portfolio._save_snapshot_best_effort"),
+            patch("services.agent.app.api.portfolio.get_price_service", return_value=mock_service),
+            patch("services.agent.app.api.portfolio._read_vault_portfolio", return_value=[
+                MagicMock(
+                    asset_key="WMNT",
+                    asset_symbol="WMNT",
+                    balance="100",
+                    status_code="DATA_FRESH",
+                    valuation_status="valued"
+                )
+            ])
+        ):
             response = self.client.get("/portfolio/current")
 
         self.assertEqual(response.status_code, 200)

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import * as SliderPrimitive from "@radix-ui/react-slider";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -12,6 +13,8 @@ import {
   SlidersHorizontal,
   Sparkles,
   Workflow,
+  Save,
+  RotateCcw,
 } from "lucide-react";
 
 import { PageScaffold, StatusPill } from "@/components/rwa/PageScaffold";
@@ -28,7 +31,6 @@ import {
 } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useAllocationRecommendation } from "@/hooks/useAllocation";
@@ -47,6 +49,7 @@ import {
   useStrategyVersions,
   useUpdateStrategyScheduler,
   useValidateStrategy,
+  useUpdateActiveStrategy,
 } from "@/hooks/useStrategy";
 import { useChainStatus, useServiceStatus, useSettings, useSystemHealth } from "@/hooks/useSystem";
 import type {
@@ -56,6 +59,7 @@ import type {
   StrategyTemplateSummary,
   StrategyValidationResponse,
   StrategyVersionRecordResponse,
+  StrategyValidationError,
 } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
@@ -91,9 +95,50 @@ const FALLBACK_POLICY: StrategyPolicyConfig = {
   notes: ["Capital preservation biased policy template."],
 };
 
-const DEFAULT_STRATEGY_TEXT =
-  "Use a conservative policy with USDY and mETH only, keep stable reserve above 40%, cap slippage at 0.50%, and review market conditions every 5 minutes.";
+const DEFAULT_STRATEGY_TEXT = `/**
+ * YieldMind Institutional Core Directives
+ * Last updated: 2024-10-24 14:30 UTC
+ */
+
+Act as a conservative institutional yield optimizer.
+Prioritize capital preservation over high-risk yield spikes.
+Validate all RWA yields against Pyth oracles.
+
+Veto any liquidity pool with <$5M depth.
+Require multi-sig approval for transactions exceeding 500 ETH equivalent.
+
+// Fallback procedure
+If execution fails or slippage exceeds threshold, revert to stablecoin baseline strategy.`;
 const SEEDED_DEFAULT_STRATEGY_TEXT = "Seeded default strategy policy.";
+
+function highlightPrompt(text: string): string {
+  if (!text) return "";
+  let escaped = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  const keywords = ["Act as", "Prioritize", "Validate", "Veto", "Require", "If", "revert"];
+  const lines = escaped.split("\n");
+  const highlightedLines = lines.map(line => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("/*") || trimmed.startsWith("*") || trimmed.startsWith("//")) {
+      return `<span class="text-[#A08858]/50">${line}</span>`;
+    }
+    
+    let newLine = line;
+    keywords.forEach(keyword => {
+      const escapedKeyword = keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+      const regex = new RegExp(`\\b${escapedKeyword}\\b`, 'g');
+      newLine = newLine.replace(regex, `<span class="text-[#D4962A] font-semibold">${keyword}</span>`);
+    });
+
+    newLine = newLine.replace(/(\b\d+(?:\.\d+)?%|\b\d+\s+ETH\b|\b\$\d+M\b)/gi, `<span class="text-[#D4962A]/90 font-medium">$1</span>`);
+    return newLine;
+  });
+
+  return highlightedLines.join("\n");
+}
 
 type StatusTone = "ready" | "degraded" | "blocked" | "neutral";
 
@@ -224,26 +269,44 @@ function splitAssets(value: string) {
 }
 
 function buildPolicySnippet(policy: StrategyPolicyConfig) {
+  const objectiveMap: Record<string, string> = {
+    capital_preservation_first: "conservative institutional yield optimizer",
+    balanced_yield: "balanced yield optimizer seeking optimal risk-adjusted returns",
+    emergency_defensive: "defensive capital preservation vault driver",
+    yield_guard: "risk-capped yield generator",
+  };
+  const objDesc = objectiveMap[policy.objective] ?? "institutional yield optimizer";
   const assets = policy.allowed_assets.length ? policy.allowed_assets.join(" and ") : "approved assets";
   const reserve = formatPercent(policy.hard_limits.min_stable_reserve_pct, 0);
-  const slippage = formatCount(policy.hard_limits.max_slippage_bps);
-  const marketCheck = formatInterval(policy.market_check_interval_seconds);
-  const humanApproval = policy.human_approval_required ? "require human approval" : "allow execution without human approval";
-  const circuitBreaker = policy.hard_limits.global_circuit_breaker ? "keep the global circuit breaker on" : "leave the global circuit breaker off";
-  const objective = humanize(policy.objective).toLowerCase();
+  const slippage = (policy.hard_limits.max_slippage_bps / 100).toFixed(2) + "%";
+  const humanApproval = policy.human_approval_required 
+    ? `Require human approval if risk score exceeds ${policy.hard_limits.force_human_approval_risk_score}%.`
+    : "Allow execution without manual intervention under safe conditions.";
+  const circuitBreaker = policy.hard_limits.global_circuit_breaker 
+    ? "If system risk levels cross safety thresholds, revert to stablecoin baseline strategy and trigger circuit breakers."
+    : "Monitor risk levels and adjust allocations dynamically.";
 
   return [
-    `Objective: ${objective}.`,
-    `Trade only ${assets}.`,
-    `Keep stable reserve at or above ${reserve}.`,
-    `Cap slippage at ${slippage} bps and review markets every ${marketCheck}.`,
-    `${humanApproval} and ${circuitBreaker}.`,
-  ].join(" ");
+    "/**",
+    " * YieldMind Institutional Core Directives",
+    ` * Strategy Version: ${policy.strategy_version}`,
+    " */",
+    "",
+    `Act as a ${objDesc}.`,
+    "Prioritize capital preservation over high-risk yield spikes.",
+    `Validate all yields against Pyth oracles and only allocate to ${assets}.`,
+    "",
+    `Veto execution if stable reserve falls below ${reserve} or slippage exceeds ${slippage}.`,
+    humanApproval,
+    "",
+    "// Fallback procedure",
+    circuitBreaker
+  ].join("\n");
 }
 
 function resolveStrategyText(rawPromptSnapshot: string | null | undefined, policy: StrategyPolicyConfig) {
   const normalized = rawPromptSnapshot?.trim();
-  if (!normalized || normalized === SEEDED_DEFAULT_STRATEGY_TEXT) {
+  if (!normalized || normalized === SEEDED_DEFAULT_STRATEGY_TEXT || normalized === "Seeded default strategy policy.") {
     return buildPolicySnippet(policy);
   }
   return normalized;
@@ -261,23 +324,6 @@ function snapshotSignature(
   });
 }
 
-function panelClassName(extra?: string) {
-  return cn("border border-border bg-card px-4 py-4 sm:px-5", extra);
-}
-
-function toneClasses(tone: StatusTone) {
-  if (tone === "ready") {
-    return "border-success/25 bg-success/8 text-success";
-  }
-  if (tone === "degraded") {
-    return "border-warning/25 bg-warning/10 text-warning";
-  }
-  if (tone === "blocked") {
-    return "border-destructive/25 bg-destructive/10 text-destructive";
-  }
-  return "border-border bg-surface-2/70 text-muted-foreground";
-}
-
 function HeroStat({
   label,
   value,
@@ -286,150 +332,50 @@ function HeroStat({
   value: string;
 }) {
   return (
-    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-      <span className="font-medium text-foreground">{value}</span>
+    <div className="flex items-center gap-1.5 text-[#A08858]">
+      <span className="font-semibold text-[#D4962A] font-mono">{value}</span>
       <span>{label}</span>
+      <span className="text-[#3A2812] px-1.5">•</span>
     </div>
   );
 }
 
-function PolicyChip({
+function PremiumSlider({
   label,
   value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="rounded-sm border border-border bg-surface-2/60 px-3 py-2">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
-      <p className="mt-1 text-sm font-medium text-foreground">{value}</p>
-    </div>
-  );
-}
-
-function ReadinessRow({
-  label,
-  value,
-  tone = "neutral",
-}: {
-  label: string;
-  value: string;
-  tone?: StatusTone;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4 border-b border-border/70 py-2.5 last:border-b-0">
-      <span className="text-sm text-muted-foreground">{label}</span>
-      <span className={cn("text-sm font-medium", tone === "blocked" ? "text-destructive" : tone === "degraded" ? "text-warning" : "text-foreground")}>
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function CompactStatusCard({
-  title,
-  tone,
-  status,
-  summary,
-  detail,
-  children,
-}: {
-  title: string;
-  tone: StatusTone;
-  status: string;
-  summary: string;
-  detail: string;
-  children?: React.ReactNode;
-}) {
-  return (
-    <section className={cn("rounded-sm border px-4 py-4", toneClasses(tone))}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{title}</p>
-          <p className="mt-2 text-base font-semibold text-foreground">{status}</p>
-          <p className="mt-1 text-sm text-muted-foreground">{summary}</p>
-        </div>
-        <StatusPill tone={tone}>{status}</StatusPill>
-      </div>
-      <p className="mt-3 text-xs leading-5 text-muted-foreground">{detail}</p>
-      {children ? <div className="mt-3">{children}</div> : null}
-    </section>
-  );
-}
-
-function DetailRow({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4 py-2 text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium text-foreground">{value}</span>
-    </div>
-  );
-}
-
-function WeightSlider({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  onChange: (next: number) => void;
-}) {
-  return (
-    <div className="space-y-3 rounded-sm border border-border bg-surface-2/55 p-3">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-sm font-medium text-foreground">{label}</span>
-        <span className="text-sm text-muted-foreground">{formatPercent(value * 100, 0)}</span>
-      </div>
-      <Slider
-        value={[Math.round(value * 100)]}
-        max={100}
-        step={1}
-        onValueChange={(next) => onChange((next[0] ?? 0) / 100)}
-      />
-    </div>
-  );
-}
-
-function LimitCard({
-  label,
-  value,
-  suffix,
-  onChange,
-  min,
-  max,
+  min = 0,
+  max = 100,
   step = 1,
+  suffix = "",
+  onChange,
 }: {
   label: string;
   value: number;
-  suffix: string;
-  onChange: (next: number) => void;
-  min: number;
-  max: number;
+  min?: number;
+  max?: number;
   step?: number;
+  suffix?: string;
+  onChange: (val: number) => void;
 }) {
   return (
-    <div className="rounded-sm border border-border bg-surface-2/55 px-3 py-3">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
-      <div className="mt-3 flex items-center gap-2">
-        <Input
-          type="number"
-          value={value}
-          min={min}
-          max={max}
-          step={step}
-          onChange={(event) => onChange(Number.parseFloat(event.target.value) || 0)}
-          className="h-9"
-        />
-        <span className="whitespace-nowrap text-xs text-muted-foreground">{suffix}</span>
+    <div className="space-y-2.5">
+      <div className="flex items-center justify-between text-xs tracking-wide font-sans">
+        <span className="font-semibold uppercase tracking-[0.12em] text-[#A08858]">{label}</span>
+        <span className="font-mono font-medium text-[#D4962A]">{value}{suffix}</span>
       </div>
+      <SliderPrimitive.Root
+        className="relative flex w-full touch-none select-none items-center cursor-pointer py-1"
+        value={[value]}
+        min={min}
+        max={max}
+        step={step}
+        onValueChange={(vals) => onChange(vals[0] ?? 0)}
+      >
+        <SliderPrimitive.Track className="relative h-1.5 w-full grow overflow-hidden bg-[#150F07] border border-[#3A2812]/50 rounded-none">
+          <SliderPrimitive.Range className="absolute h-full bg-[#D4962A]" />
+        </SliderPrimitive.Track>
+        <SliderPrimitive.Thumb className="block h-3.5 w-2 bg-[#D4962A] border border-[#0E0B06] rounded-none focus:outline-none focus:ring-1 focus:ring-[#D4962A] transition-transform hover:scale-y-110 active:scale-y-110" />
+      </SliderPrimitive.Root>
     </div>
   );
 }
@@ -445,19 +391,27 @@ function HistoryRow({
 }) {
   const isActive = version.status === "active";
   return (
-    <div className="flex flex-col gap-3 border-b border-border py-3 last:border-b-0">
+    <div className="flex flex-col gap-3 py-3 border-b border-[#3A2812]/30 last:border-b-0">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-foreground">{version.version}</span>
-            <Badge variant={isActive ? "secondary" : "outline"}>{isActive ? "Active" : "Previous"}</Badge>
+            <span className="text-xs font-bold font-mono text-[#F4EDD6]">{version.version}</span>
+            <Badge variant={isActive ? "secondary" : "outline"} className="rounded-none text-[10px] uppercase font-mono px-1.5 py-0 border-[#3A2812] bg-[#1E1509] text-[#D4962A]">
+              {isActive ? "Active" : "Previous"}
+            </Badge>
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-1 text-xs text-[#A08858]">
             {humanize(version.active_policy_json.objective)} • {formatRelativeAge(version.activated_at ? new Date(version.activated_at) : null)}
           </p>
         </div>
         {!isActive ? (
-          <Button variant="outline" size="sm" onClick={() => onRevert(version.version)} disabled={disabled}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onRevert(version.version)}
+            disabled={disabled}
+            className="rounded-none border-[#3A2812] h-7 text-[10px] uppercase tracking-wider font-semibold text-[#F4EDD6] hover:bg-[#1E1509] hover:text-[#D4962A]"
+          >
             Revert
           </Button>
         ) : null}
@@ -472,14 +426,14 @@ function AuditRow({
   event: StrategyAuditEventResponse;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-border py-3 last:border-b-0">
+    <div className="flex items-start justify-between gap-4 py-3 border-b border-[#3A2812]/30 last:border-b-0">
       <div>
-        <p className="text-sm font-medium text-foreground">{humanize(event.event_type)}</p>
-        <p className="mt-1 text-xs text-muted-foreground">
+        <p className="text-xs font-semibold text-[#D4962A] uppercase tracking-wider">{humanize(event.event_type)}</p>
+        <p className="mt-1 text-[11px] text-[#A08858]">
           {formatAddress(event.actor)} • {formatRelativeAge(new Date(event.created_at))}
         </p>
       </div>
-      <span className="text-xs text-muted-foreground">{event.strategy_version_id ?? "system"}</span>
+      <span className="text-[10px] font-mono text-[#A08858]/60">{event.strategy_version_id ?? "system"}</span>
     </div>
   );
 }
@@ -509,6 +463,7 @@ export default function StrategyStudio() {
   const validateMutation = useValidateStrategy();
   const simulateMutation = useSimulateStrategy();
   const activateMutation = useActivateStrategy();
+  const updateActiveMutation = useUpdateActiveStrategy();
   const revertMutation = useRevertStrategy();
   const schedulerMutation = useUpdateStrategyScheduler();
 
@@ -525,10 +480,40 @@ export default function StrategyStudio() {
   const [validationResult, setValidationResult] = useState<StrategyValidationResponse | null>(null);
   const [simulationResult, setSimulationResult] = useState<StrategySimulationResponse | null>(null);
   const [lastActionMessage, setLastActionMessage] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState("policy");
-  const [editingScheduler, setEditingScheduler] = useState(false);
+  const [activeTab, setActiveTab] = useState("strategy");
+  const [validationError, setValidationError] = useState<{
+    status?: string;
+    safety_score?: number;
+    errors?: StrategyValidationError[];
+    safe_suggestion?: string | null;
+    message?: string;
+  } | null>(null);
+
+  // Local UI States
+  const [assetsInputText, setAssetsInputText] = useState("");
+  const [minProtocolTier, setMinProtocolTier] = useState("Tier 2");
+  const [kellyAggressiveness, setKellyAggressiveness] = useState(0.45);
+  const [riskEngineSensitivity, setRiskEngineSensitivity] = useState(65);
+
   const initializedRef = useRef(false);
   const baselineSignatureRef = useRef<string>("");
+
+  const lineNumbersRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const highlightPreRef = useRef<HTMLPreElement>(null);
+
+  const handleScroll = () => {
+    if (lineNumbersRef.current && textareaRef.current && highlightPreRef.current) {
+      lineNumbersRef.current.scrollTop = textareaRef.current.scrollTop;
+      highlightPreRef.current.scrollTop = textareaRef.current.scrollTop;
+      highlightPreRef.current.scrollLeft = textareaRef.current.scrollLeft;
+    }
+  };
+
+  const dynamicLinesCount = useMemo(() => {
+    const count = strategyText.split("\n").length;
+    return Math.max(12, count);
+  }, [strategyText]);
 
   const targetChain = healthQuery.data?.target_chain ?? serviceQuery.data?.target_chain ?? chainQuery.data?.target_chain ?? "Loading";
   const runtimeMode = healthQuery.data?.runtime_mode ?? serviceQuery.data?.runtime_mode ?? "Loading";
@@ -548,6 +533,7 @@ export default function StrategyStudio() {
       setPolicy(clonePolicy(activeVersion.active_policy_json));
       setStrategyText(resolvedText);
       setSelectedTemplateId(templateId);
+      setAssetsInputText(activeVersion.active_policy_json.allowed_assets.join(", "));
       baselineSignatureRef.current = snapshotSignature(
         resolvedText,
         activeVersion.active_policy_json,
@@ -558,6 +544,7 @@ export default function StrategyStudio() {
       setPolicy(clonePolicy(templates[0].policy_json));
       setStrategyText(templates[0].prompt_text);
       setSelectedTemplateId(templateId);
+      setAssetsInputText(templates[0].policy_json.allowed_assets.join(", "));
       baselineSignatureRef.current = snapshotSignature(templates[0].prompt_text, templates[0].policy_json, templateId);
     }
     initializedRef.current = true;
@@ -587,7 +574,6 @@ export default function StrategyStudio() {
   const latestSimulation = simulationResult ?? activeData?.latest_simulation ?? null;
   const validationTone = statusTone(latestValidation?.status, latestValidation?.status_code);
   const simulationTone = statusTone(latestSimulation?.status, latestSimulation?.status_code);
-  const activeTone = statusTone(activeVersion?.status, activeVersion?.status);
 
   const latestGeneratedAt = latestTimestamp([
     portfolioQuery.data?.generated_at,
@@ -638,33 +624,6 @@ export default function StrategyStudio() {
   const isDirty = baselineSignature ? baselineSignature !== currentSignature : true;
 
   const validationPassed = latestValidation?.status === "ok" && (latestValidation.validation_errors?.length ?? 0) === 0;
-  const simulationPassed =
-    latestSimulation?.simulation?.recommendation !== "reject" &&
-    latestSimulation?.status !== "error" &&
-    simulationTone !== "blocked";
-
-  const latestDraftId =
-    createDraftMutation.data?.draft_id ??
-    latestValidation?.draft_id ??
-    latestSimulation?.draft_id ??
-    activeData?.last_validation?.draft_id ??
-    null;
-
-  const workflowLabel = isDirty
-    ? "Draft"
-    : validationPassed
-        ? "Validated"
-        : simulationPassed
-          ? "Simulated"
-        : activeVersion
-          ? "Active"
-          : "Standby";
-
-  const allowedAssetsInput = useMemo(() => policy.allowed_assets.join(", "), [policy.allowed_assets]);
-
-  const updatePolicy = (updater: (draft: StrategyPolicyConfig) => StrategyPolicyConfig) => {
-    setPolicy((current) => updater(clonePolicy(current)));
-  };
 
   const syncBaseline = (nextText: string, nextPolicy: StrategyPolicyConfig, nextTemplateId: string) => {
     baselineSignatureRef.current = snapshotSignature(nextText, nextPolicy, nextTemplateId);
@@ -677,6 +636,8 @@ export default function StrategyStudio() {
     setPolicy(clonePolicy(template.policy_json));
     setStrategyText(template.prompt_text);
     setSelectedTemplateId(String(template.id));
+    setAssetsInputText(template.policy_json.allowed_assets.join(", "));
+    setValidationError(null);
     setLastActionMessage(`Applied ${template.name}.`);
   };
 
@@ -691,6 +652,7 @@ export default function StrategyStudio() {
       setPolicy(clonePolicy(activeVersion.active_policy_json));
       setStrategyText(resolvedText);
       setSelectedTemplateId(templateId);
+      setAssetsInputText(activeVersion.active_policy_json.allowed_assets.join(", "));
       setLastActionMessage("Loaded active strategy into the editor.");
       return;
     }
@@ -698,34 +660,19 @@ export default function StrategyStudio() {
       setPolicy(clonePolicy(templates[0].policy_json));
       setStrategyText(templates[0].prompt_text);
       setSelectedTemplateId(String(templates[0].id));
+      setAssetsInputText(templates[0].policy_json.allowed_assets.join(", "));
       setLastActionMessage(`Loaded ${templates[0].name}.`);
     }
   };
 
-  const onDraft = () => {
-    createDraftMutation.mutate(requestBody, {
-      onSuccess: (response) => {
-        syncBaseline(strategyText, policy, selectedTemplateId);
-        setLastActionMessage(`Draft saved as #${response.draft_id}.`);
-      },
-    });
-  };
-
-  const onValidate = () => {
-    validateMutation.mutate(requestBody, {
-      onSuccess: (response) => {
-        setValidationResult(response);
-        syncBaseline(strategyText, policy, selectedTemplateId);
-        setLastActionMessage(
-          response.status === "ok"
-            ? `Safety check passed at ${response.safety_score}/100.`
-            : "Safety check found blocking issues.",
-        );
-      },
-    });
+  const onDiscardChanges = () => {
+    loadActiveIntoForm();
+    setValidationError(null);
+    setLastActionMessage("Discarded unsaved modifications.");
   };
 
   const onSimulate = () => {
+    setValidationError(null);
     simulateMutation.mutate(requestBody, {
       onSuccess: (response) => {
         setSimulationResult(response);
@@ -743,14 +690,32 @@ export default function StrategyStudio() {
           requires_simulation: true,
           safe_suggestion: response.safe_suggestion ?? null,
         });
-        syncBaseline(strategyText, policy, selectedTemplateId);
-        setLastActionMessage(`Impact simulation ${response.simulation.recommendation}.`);
+        setLastActionMessage(`Impact simulation: ${response.simulation.recommendation}.`);
+      },
+      onError: (error: any) => {
+        const details = error.details;
+        if (details && typeof details === "object" && details.detail) {
+          const det = details.detail;
+          setValidationError({
+            status: det.status || "rejected",
+            safety_score: det.safety_score,
+            errors: det.errors || [],
+            safe_suggestion: det.safe_suggestion,
+            message: det.message || "Strategy simulation failed validation checks.",
+          });
+        } else {
+          setValidationError({
+            message: error.message || "An unexpected error occurred during simulation.",
+          });
+        }
+        setLastActionMessage("Simulation failed due to policy validation exceptions.");
       },
     });
   };
 
-  const onActivate = () => {
-    activateMutation.mutate(requestBody, {
+  const onSaveStrategy = () => {
+    setValidationError(null);
+    updateActiveMutation.mutate(requestBody, {
       onSuccess: (response) => {
         const nextPolicy = response.active_version?.active_policy_json ?? policy;
         const nextText = response.active_version
@@ -758,10 +723,29 @@ export default function StrategyStudio() {
           : strategyText;
         setPolicy(clonePolicy(nextPolicy));
         setStrategyText(nextText);
+        setAssetsInputText(nextPolicy.allowed_assets.join(", "));
         setValidationResult(response.last_validation ?? null);
         setSimulationResult(response.latest_simulation ?? null);
         syncBaseline(nextText, nextPolicy, selectedTemplateId);
-        setLastActionMessage(`Activated ${response.active_version?.version ?? "strategy"}.`);
+        setLastActionMessage(`Saved and activated ${response.active_version?.version ?? "strategy"}.`);
+      },
+      onError: (error: any) => {
+        const details = error.details;
+        if (details && typeof details === "object" && details.detail) {
+          const det = details.detail;
+          setValidationError({
+            status: det.status || "rejected",
+            safety_score: det.safety_score,
+            errors: det.errors || [],
+            safe_suggestion: det.safe_suggestion,
+            message: det.message || "Strategy activation failed validation checks.",
+          });
+        } else {
+          setValidationError({
+            message: error.message || "An unexpected error occurred while saving the strategy.",
+          });
+        }
+        setLastActionMessage("Save failed due to policy validation exceptions.");
       },
     });
   };
@@ -779,6 +763,7 @@ export default function StrategyStudio() {
             const nextText = resolveStrategyText(response.active_version.raw_prompt_snapshot, nextPolicy);
             setPolicy(clonePolicy(nextPolicy));
             setStrategyText(nextText);
+            setAssetsInputText(nextPolicy.allowed_assets.join(", "));
             syncBaseline(nextText, nextPolicy, selectedTemplateId);
           }
           setLastActionMessage(`Reverted to ${version}.`);
@@ -799,22 +784,16 @@ export default function StrategyStudio() {
       },
       {
         onSuccess: () => {
-          setEditingScheduler(false);
           setLastActionMessage("Scheduler settings updated.");
         },
       },
     );
   };
 
-  const policyChips = [
-    { label: "Objective", value: humanize(policy.objective) },
-    { label: "Assets", value: policy.allowed_assets.join(" · ") || "-" },
-    { label: "Max Slippage", value: `${formatCount(policy.hard_limits.max_slippage_bps)} bps` },
-    { label: "Stable Reserve", value: formatPercent(policy.hard_limits.min_stable_reserve_pct, 0) },
-    { label: "LLM Influence", value: formatPercent(policy.hard_limits.max_llm_influence_pct, 0) },
-    { label: "Market Check", value: formatInterval(policy.market_check_interval_seconds) },
-    { label: "Circuit Breaker", value: policy.hard_limits.global_circuit_breaker ? "On" : "Off" },
-  ];
+  const updatePolicy = (updater: (draft: StrategyPolicyConfig) => StrategyPolicyConfig) => {
+    setPolicy((current) => updater(clonePolicy(current)));
+    setValidationError(null);
+  };
 
   const safetySummary = validationPassed
     ? `Passed · ${formatCount(latestValidation?.safety_score ?? 0)}/100`
@@ -822,8 +801,8 @@ export default function StrategyStudio() {
       ? `${humanize(latestValidation.status_code)} · ${formatCount(latestValidation.safety_score)}/100`
       : "Pending";
   const safetyDetail = validationPassed
-    ? `${formatCount(latestValidation?.validation_errors.length ?? 0)} blocking errors.`
-    : latestValidation?.status_reason ?? "Run validation before activation.";
+    ? `${formatCount(latestValidation?.validation_errors?.length ?? 0)} blocking errors.`
+    : latestValidation?.status_reason ?? "Run validation/simulation before activation.";
   const simulationSummary = latestSimulation
     ? `${humanize(latestSimulation.simulation.recommendation)} · ${formatCount(latestSimulation.simulation.expected_risk_score)}/100`
     : "Pending";
@@ -832,454 +811,773 @@ export default function StrategyStudio() {
         latestSimulation.simulation.protective_actions.length,
       )}`
     : "Simulation is optional before activation.";
-  const activationDetail = !validationPassed
-    ? "Validate the policy first."
-    : isDirty
-      ? "Unsaved edits must be revalidated."
-      : "Activation gate is clear.";
-  const nextStep = !validationPassed
-    ? "Run validation before activation."
-    : isDirty
-      ? "Save or revalidate the modified draft."
-      : "Activation is available.";
 
   return (
     <PageScaffold
-      title="Strategy Studio"
+      title="Strategic Studio"
       description="Bounded strategy policy controls, simulation, versioning, and audit history backed by the strategy policy service."
     >
-      <div className="flex flex-col gap-4 pb-24">
-        <section className={panelClassName("py-3 sm:py-4")}>
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div className="max-w-3xl">
-              <div className="flex items-start gap-3">
-                <div className="inline-flex h-8 w-8 items-center justify-center rounded-sm border border-primary/20 bg-primary/8 text-primary">
-                  <Sparkles className="h-3.5 w-3.5" />
-                </div>
-                <div>
-                  <h1 className="text-[1.75rem] font-semibold tracking-[-0.03em] text-foreground">Strategy Studio</h1>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Edit the bounded policy the AI can use. The system prompt stays locked.
+      <div className="font-sans select-none space-y-8 rounded-xl border border-[#3A2812] bg-[#0E0B06] p-6 text-[#F4EDD6] sm:p-8 pb-28">
+        {/* Header Block */}
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="font-heading text-[44px] uppercase tracking-[0.05em] leading-none text-[#F4EDD6]">
+              STRATEGIC STUDIO
+            </h1>
+            <p className="mt-1 text-sm text-[#A08858]">
+              Institutional control center for configuring AI reasoning, risk parameters, and execution protocols.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-y-1">
+              <HeroStat label="signals" value={formatCount(liveSignalCount)} />
+              <HeroStat label="chain" value={targetChain} />
+              <HeroStat label="runtime" value={humanize(runtimeMode)} />
+              <HeroStat label="checked" value={formatRelativeAge(latestGeneratedAt)} />
+            </div>
+          </div>
+          <div className="flex items-center gap-2 self-start sm:self-center">
+            <div className="flex items-center gap-2 border border-[#D4962A]/40 bg-[#D4962A]/10 px-3 py-1.5 text-xs text-[#D4962A]">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#D4962A] opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-[#D4962A]" />
+              </span>
+              <span className="text-[10px] font-bold tracking-[0.1em] uppercase font-sans">
+                MODIFICATION MODE ACTIVE
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <hr className="border-[#3A2812]" />
+
+        {/* Tabs container */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <TabsList className="h-10 w-full justify-start gap-1 rounded-none border-b border-[#3A2812] bg-[#0E0B06] p-0 mb-6">
+            <TabsTrigger
+              value="strategy"
+              className="rounded-none border-b-2 border-transparent px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.14em] text-[#A08858] data-[state=active]:border-[#D4962A] data-[state=active]:bg-[#1E1509] data-[state=active]:text-[#D4962A] hover:text-[#F4EDD6]"
+            >
+              Strategy
+            </TabsTrigger>
+            <TabsTrigger
+              value="weights"
+              className="rounded-none border-b-2 border-transparent px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.14em] text-[#A08858] data-[state=active]:border-[#D4962A] data-[state=active]:bg-[#1E1509] data-[state=active]:text-[#D4962A] hover:text-[#F4EDD6]"
+            >
+              Risk Weights
+            </TabsTrigger>
+            <TabsTrigger
+              value="scheduler"
+              className="rounded-none border-b-2 border-transparent px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.14em] text-[#A08858] data-[state=active]:border-[#D4962A] data-[state=active]:bg-[#1E1509] data-[state=active]:text-[#D4962A] hover:text-[#F4EDD6]"
+            >
+              Scheduler
+            </TabsTrigger>
+            <TabsTrigger
+              value="history"
+              className="rounded-none border-b-2 border-transparent px-5 py-2.5 text-xs font-semibold uppercase tracking-[0.14em] text-[#A08858] data-[state=active]:border-[#D4962A] data-[state=active]:bg-[#1E1509] data-[state=active]:text-[#D4962A] hover:text-[#F4EDD6]"
+            >
+              History
+            </TabsTrigger>
+          </TabsList>
+
+          {/* TAB 1: STRATEGY */}
+          <TabsContent value="strategy" className="mt-0 outline-none">
+            <div className="grid gap-6 lg:grid-cols-12">
+              {/* Left Column: Prompt Architect */}
+              <div className="lg:col-span-7 space-y-6">
+                <div className="border border-[#3A2812] bg-[#1E1509] p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <SlidersHorizontal className="h-4 w-4 text-[#D4962A]" />
+                      <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-[#A08858]">
+                        SYSTEM PROMPT ARCHITECT
+                      </h2>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="rounded-none border-[#3A2812] text-xs font-mono bg-[#150F07] text-[#F4EDD6]">
+                        {activeVersion?.version ?? policy.strategy_version}
+                      </Badge>
+                      <Badge className="rounded-none bg-[#D4962A]/15 text-[#D4962A] border border-[#D4962A]/30 text-[10px] font-bold font-sans uppercase px-2 py-0.5">
+                        Core Engine
+                      </Badge>
+                    </div>
+                  </div>
+
+                  {/* Template Picker */}
+                  <div className="flex flex-col gap-3 mb-4 md:flex-row md:items-end">
+                    <div className="flex-1 space-y-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-[#A08858]">Select Base Template</span>
+                      <Select
+                        value={selectedTemplateId}
+                        onValueChange={(val) => {
+                          setSelectedTemplateId(val);
+                          setValidationError(null);
+                        }}
+                      >
+                        <SelectTrigger className="rounded-none border-[#3A2812] bg-[#150F07] text-[#F4EDD6] h-9 text-xs focus:ring-[#D4962A]">
+                          <SelectValue placeholder="Select a strategy template" />
+                        </SelectTrigger>
+                        <SelectContent className="border-[#3A2812] bg-[#0E0B06] text-[#F4EDD6] rounded-none">
+                          {templates.map((template) => (
+                            <SelectItem key={template.id} value={String(template.id)} className="text-xs focus:bg-[#1E1509] focus:text-[#D4962A] rounded-none">
+                              {template.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Button
+                      variant="outline"
+                      className="rounded-none border-[#3A2812] hover:bg-[#150F07] hover:text-[#D4962A] h-9 text-xs uppercase font-semibold text-[#F4EDD6]"
+                      onClick={() => applyTemplate(selectedTemplate)}
+                      disabled={!selectedTemplate}
+                    >
+                      Apply Template
+                    </Button>
+                  </div>
+
+                  {/* Custom Code Editor */}
+                  <div className="flex rounded-none border border-[#3A2812] bg-[#0E0B06] font-mono text-xs overflow-hidden h-72">
+                    {/* Line Numbers */}
+                    <div
+                      ref={lineNumbersRef}
+                      className="select-none border-r border-[#3A2812]/50 bg-[#150F07]/70 px-2.5 py-3 text-right text-[#A08858]/40 w-10 flex flex-col font-mono text-[11px] leading-[18px] overflow-hidden scrollbar-none"
+                    >
+                      {Array.from({ length: dynamicLinesCount }, (_, i) => (
+                        <div key={i}>{i + 1}</div>
+                      ))}
+                    </div>
+                    {/* Editor Container */}
+                    <div className="relative flex-1 h-full overflow-hidden">
+                      {/* Highlighted Pre */}
+                      <pre
+                        ref={highlightPreRef}
+                        className="absolute inset-0 pointer-events-none px-3 py-3 font-mono text-[11px] leading-[18px] whitespace-pre-wrap break-all overflow-hidden bg-transparent text-[#F4EDD6] text-left"
+                        dangerouslySetInnerHTML={{ __html: highlightPrompt(strategyText) }}
+                      />
+                      {/* Editor Textarea */}
+                      <textarea
+                        ref={textareaRef}
+                        onScroll={handleScroll}
+                        value={strategyText}
+                        onChange={(event) => {
+                          setStrategyText(event.target.value);
+                          setValidationError(null);
+                        }}
+                        className="absolute inset-0 h-full w-full resize-none border-0 bg-transparent px-3 py-3 font-mono text-[11px] leading-[18px] text-transparent caret-[#F4EDD6] placeholder:text-[#A08858]/30 focus:outline-none focus:ring-0 focus-visible:ring-0 overflow-y-auto"
+                        placeholder="Enter system prompt guidelines here..."
+                      />
+                    </div>
+                  </div>
+
+                  {/* Editor Footer */}
+                  <div className="flex items-center justify-between border-t border-[#3A2812] bg-[#150F07] px-3.5 py-2 text-[11px] font-mono text-[#A08858]">
+                    <div className="flex items-center gap-4">
+                      <span>Characters: <span className="text-[#D4962A]">{strategyText.length}</span></span>
+                      <span>Tokens: <span className="text-[#D4962A]">~{Math.ceil(strategyText.length / 4)}</span></span>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={loadActiveIntoForm}
+                      className="h-6 gap-1 px-1.5 text-[11px] text-[#D4962A] hover:bg-[#1E1509] hover:text-[#D4962A] rounded-none font-sans font-semibold uppercase tracking-wider"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5 mr-1" />
+                      Revert to previous
+                    </Button>
+                  </div>
+
+                  <p className="mt-3 text-[11px] text-[#A08858] leading-relaxed font-sans">
+                    The prompt acts as the policy boundary constraint for AI decisions. Keep objective statements concise and clear.
                   </p>
-                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-                    <HeroStat label="signals" value={formatCount(liveSignalCount)} />
-                    <HeroStat label="chain" value={targetChain} />
-                    <HeroStat label="runtime" value={humanize(runtimeMode)} />
-                    <HeroStat label="checked" value={formatRelativeAge(latestGeneratedAt)} />
+                </div>
+
+                {validationError && (
+                  <div className="border border-[#D4962A]/40 bg-[#1E1509] p-5 font-mono space-y-4 text-xs">
+                    <div className="flex items-center justify-between border-b border-[#D4962A]/20 pb-2">
+                      <div className="flex items-center gap-2 text-[#D4962A]">
+                        <AlertTriangle className="h-4 w-4 animate-pulse" />
+                        <span className="font-bold uppercase tracking-wider">// POLICY VALIDATION EXCEPTION</span>
+                      </div>
+                      {validationError.safety_score !== undefined && (
+                        <span className="text-[10px] text-[#A08858]">
+                          Safety Score: <span className="text-[#D4962A] font-semibold">{validationError.safety_score}/100</span>
+                        </span>
+                      )}
+                    </div>
+
+                    {validationError.message && (
+                      <div className="text-[#F4EDD6] leading-relaxed">
+                        {validationError.message}
+                      </div>
+                    )}
+
+                    {validationError.errors && validationError.errors.length > 0 && (
+                      <div className="space-y-2.5">
+                        {validationError.errors.map((err, idx) => (
+                          <div key={idx} className="border-l-2 border-[#D4962A] pl-3 py-1 bg-[#150F07]/50">
+                            <div className="flex items-center gap-2 text-[#D4962A] font-semibold text-[11px]">
+                              <span>{err.code}</span>
+                              {err.field && (
+                                <span className="text-[#A08858] font-normal text-[10px]">
+                                  (Target: {err.field})
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[#F4EDD6]/90 mt-1 text-[11px] leading-relaxed">
+                              {err.message}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {validationError.safe_suggestion && (
+                      <div className="border-t border-[#3A2812]/50 pt-3 text-[11px]">
+                        <span className="text-[#D4962A] uppercase font-bold tracking-wider block mb-1">
+                          💡 Safe Suggestion:
+                        </span>
+                        <span className="text-[#A08858] leading-relaxed block font-sans">
+                          {validationError.safe_suggestion}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Right Column: Guardrails & Sources */}
+              <div className="lg:col-span-5 space-y-6">
+                {/* Hard Veto Guardrails */}
+                <div className="border border-[#3A2812] bg-[#1E1509] p-5 space-y-5">
+                  <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-[#A08858]">
+                    HARD VETO GUARDRAILS
+                  </h2>
+
+                  {/* Slippage Slider */}
+                  <PremiumSlider
+                    label="Max Slippage Threshold"
+                    value={Number((policy.hard_limits.max_slippage_bps / 100).toFixed(1))}
+                    min={0.1}
+                    max={5.0}
+                    step={0.1}
+                    suffix="%"
+                    onChange={(val) =>
+                      updatePolicy((draft) => ({
+                        ...draft,
+                        hard_limits: { ...draft.hard_limits, max_slippage_bps: Math.round(val * 100) },
+                      }))
+                    }
+                  />
+
+                  {/* Gas Slider */}
+                  <PremiumSlider
+                    label="Max Execution Gas Fee"
+                    value={policy.hard_limits.max_gas_gwei}
+                    min={10}
+                    max={300}
+                    step={5}
+                    suffix=" GWEI"
+                    onChange={(val) =>
+                      updatePolicy((draft) => ({
+                        ...draft,
+                        hard_limits: { ...draft.hard_limits, max_gas_gwei: val },
+                      }))
+                    }
+                  />
+
+                  {/* Allowed Assets Tag Editor */}
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#A08858]">Allowed Assets</span>
+                      <span className="text-[10px] text-[#A08858]/70 font-mono">Comma-separated</span>
+                    </div>
+                    <Input
+                      value={assetsInputText}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setAssetsInputText(val);
+                        const parsed = val.split(",").map(a => a.trim()).filter(Boolean);
+                        updatePolicy((draft) => ({
+                          ...draft,
+                          allowed_assets: parsed,
+                        }));
+                      }}
+                      placeholder="USDY, mETH, WMNT"
+                      className="rounded-none border-[#3A2812] bg-[#150F07] text-[#F4EDD6] text-xs h-9 focus-visible:ring-[#D4962A]"
+                    />
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {policy.allowed_assets.map((asset) => (
+                        <Badge
+                          key={asset}
+                          variant="outline"
+                          className="rounded-none border-[#3A2812] bg-[#150F07] text-[#F4EDD6] font-mono text-[10px] px-2 py-0.5"
+                        >
+                          {asset}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Protocol Tier Dropdown */}
+                  <div className="space-y-2">
+                    <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#A08858]">Min Protocol Tier</span>
+                    <Select
+                      value={minProtocolTier}
+                      onValueChange={(val) => {
+                        setMinProtocolTier(val);
+                        setValidationError(null);
+                      }}
+                    >
+                      <SelectTrigger className="rounded-none border-[#3A2812] bg-[#150F07] text-[#F4EDD6] h-9 text-xs focus:ring-[#D4962A]">
+                        <SelectValue placeholder="Select Tier" />
+                      </SelectTrigger>
+                      <SelectContent className="border-[#3A2812] bg-[#0E0B06] text-[#F4EDD6] rounded-none">
+                        <SelectItem value="Tier 1" className="text-xs rounded-none focus:bg-[#1E1509] focus:text-[#D4962A]">Tier 1 - High Liquidity / Low Risk</SelectItem>
+                        <SelectItem value="Tier 2" className="text-xs rounded-none focus:bg-[#1E1509] focus:text-[#D4962A]">Tier 2 - Balanced Liquidity / Medium Risk</SelectItem>
+                        <SelectItem value="Tier 3" className="text-xs rounded-none focus:bg-[#1E1509] focus:text-[#D4962A]">Tier 3 - Higher Yield / Higher Risk</SelectItem>
+                        <SelectItem value="Tier 4" className="text-xs rounded-none focus:bg-[#1E1509] focus:text-[#D4962A]">Tier 4 - Experimental Feeds / Maximum Risk</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Global Circuit Breaker Toggle */}
+                  <div className="flex items-center justify-between border-t border-[#3A2812]/50 pt-4">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#F4EDD6]">Global Circuit Breaker</p>
+                      <p className="text-[10px] text-[#A08858] leading-normal mt-0.5 max-w-[280px]">
+                        Forces immediate freeze of trade execution if system risk levels cross limits.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={policy.hard_limits.global_circuit_breaker}
+                      onClick={() => updatePolicy((draft) => ({
+                        ...draft,
+                        hard_limits: {
+                          ...draft.hard_limits,
+                          global_circuit_breaker: !draft.hard_limits.global_circuit_breaker,
+                        },
+                      }))}
+                      className={cn(
+                        "relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-none transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#D4962A] disabled:cursor-not-allowed disabled:opacity-50 border border-[#3A2812]",
+                        policy.hard_limits.global_circuit_breaker ? "bg-[#D4962A]" : "bg-[#1C150D]"
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "pointer-events-none block h-3 w-3 rounded-none bg-[#0E0B06] shadow-lg ring-0 transition-transform",
+                          policy.hard_limits.global_circuit_breaker ? "translate-x-5" : "translate-x-1"
+                        )}
+                      />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Active Data Sources */}
+                <div className="border border-[#3A2812] bg-[#1E1509] p-5">
+                  <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-[#A08858]">
+                    ACTIVE DATA SOURCES
+                  </h2>
+                  <div className="space-y-3 mt-4 font-sans">
+                    <div className="flex items-center justify-between py-1 text-xs">
+                      <span className="text-[#F4EDD6]">Pyth Network Oracles</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] font-mono text-[#D4962A] uppercase tracking-[0.1em]">Connected</span>
+                        <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between py-1 text-xs">
+                      <span className="text-[#F4EDD6]">Governance Forum Scraper</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] font-mono text-[#D4962A] uppercase tracking-[0.1em]">Active</span>
+                        <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 self-start">
-              <StatusPill tone={isDirty ? "degraded" : activeTone}>{workflowLabel}</StatusPill>
-              <Badge variant="outline">{activeVersion?.version ?? policy.strategy_version}</Badge>
-            </div>
-          </div>
-        </section>
-
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col gap-3">
-          <TabsList className="h-12 w-full justify-start gap-1 rounded-none border border-border bg-card p-1">
-            <TabsTrigger value="policy" className="rounded-none px-4 py-2 text-sm">
-              Policy
-            </TabsTrigger>
-            <TabsTrigger value="scheduler" className="rounded-none px-4 py-2 text-sm">
-              Scheduler
-            </TabsTrigger>
-            <TabsTrigger value="history" className="rounded-none px-4 py-2 text-sm">
-              History
-            </TabsTrigger>
-          </TabsList>
-
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <div className="min-w-0">
-              <TabsContent value="policy" className="mt-0">
-                <section className={panelClassName()}>
-                  <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
-                      <h2 className="text-lg font-semibold text-foreground">Strategy Policy</h2>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        Choose a template, edit the strategy brief, then validate before activation.
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button variant="outline" size="sm" onClick={loadActiveIntoForm}>
-                        Load Active
-                      </Button>
-                    </div>
+            {/* Simulation & Safety Feedback */}
+            {(latestValidation || latestSimulation) && (
+              <div className="grid gap-4 md:grid-cols-2 mt-6">
+                {/* Safety Check Status Card */}
+                <div className={cn(
+                  "border p-4 rounded-none",
+                  validationTone === "ready" ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-200" :
+                  validationTone === "degraded" ? "border-amber-500/20 bg-amber-500/5 text-amber-200" :
+                  validationTone === "blocked" ? "border-red-500/20 bg-red-500/5 text-red-200" :
+                  "border-[#3A2812] bg-[#1E1509] text-[#A08858]"
+                )}>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold uppercase tracking-[0.12em]">Safety Gate Status</span>
+                    <Badge className={cn(
+                      "rounded-none text-[10px] uppercase tracking-wider px-2 py-0.5",
+                      validationTone === "ready" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" :
+                      validationTone === "degraded" ? "bg-amber-500/10 text-amber-400 border border-amber-500/30" :
+                      "bg-red-500/10 text-red-400 border border-red-500/30"
+                    )}>
+                      {safetySummary}
+                    </Badge>
                   </div>
-
-                  <div className="mt-4 grid gap-4">
-                    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
-                      <label className="space-y-2">
-                        <span className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Template</span>
-                        <Select value={selectedTemplateId} onValueChange={setSelectedTemplateId}>
-                          <SelectTrigger className="rounded-none">
-                            <SelectValue placeholder="Select a strategy template" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {templates.map((template) => (
-                              <SelectItem key={template.id} value={String(template.id)}>
-                                {template.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </label>
-                      <div className="flex items-end">
-                        <Button variant="outline" className="w-full md:w-auto" onClick={() => applyTemplate(selectedTemplate)} disabled={!selectedTemplate}>
-                          Apply Template
-                        </Button>
-                      </div>
-                    </div>
-
-                    <label className="space-y-2">
-                      <span className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Strategy Brief</span>
-                      <Textarea
-                        value={strategyText}
-                        onChange={(event) => setStrategyText(event.target.value)}
-                        className="min-h-[108px] rounded-none"
-                      />
-                    </label>
-
-                    <div className="space-y-3 border-t border-border pt-4">
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <h3 className="text-sm font-semibold text-foreground">Policy Preview</h3>
-                          <p className="mt-1 text-sm text-muted-foreground">7 active rules. Show summary first and open details only on demand.</p>
+                  <p className="text-xs text-[#A08858] leading-relaxed font-sans">{safetyDetail}</p>
+                  {latestValidation?.validation_errors?.length ? (
+                    <div className="mt-3 space-y-2 border-t border-[#3A2812]/50 pt-2.5 font-mono">
+                      {latestValidation.validation_errors.slice(0, 3).map((error, idx) => (
+                        <div key={idx} className="text-[11px] leading-relaxed">
+                          <span className="font-semibold text-red-400">{error.code}:</span> {error.message}
                         </div>
-                        <Drawer>
-                          <DrawerTrigger asChild>
-                            <Button variant="link" size="sm" className="h-auto px-0 text-sm">
-                              View JSON
-                            </Button>
-                          </DrawerTrigger>
-                          <DrawerContent className="max-h-[85vh]">
-                            <DrawerHeader>
-                              <DrawerTitle>Policy JSON</DrawerTitle>
-                              <DrawerDescription>Raw policy data is available on demand, not by default.</DrawerDescription>
-                            </DrawerHeader>
-                            <div className="px-4 pb-5">
-                              <pre className="max-h-[60vh] overflow-auto rounded-sm border border-border bg-surface-2/60 p-4 text-[12px] leading-6 text-foreground">
-                                {JSON.stringify(policy, null, 2)}
-                              </pre>
-                            </div>
-                          </DrawerContent>
-                        </Drawer>
-                      </div>
-                      <div className="space-y-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Assets</span>
-                          {policy.allowed_assets.map((asset) => (
-                            <Badge key={asset} variant="outline">
-                              {asset}
-                            </Badge>
-                          ))}
-                        </div>
-                        <Collapsible>
-                          <CollapsibleTrigger asChild>
-                            <Button variant="ghost" size="sm" className="h-auto px-0 text-xs">
-                              Edit assets
-                              <ChevronDown className="ml-2 h-3.5 w-3.5" />
-                            </Button>
-                          </CollapsibleTrigger>
-                          <CollapsibleContent className="pt-2">
-                            <Input
-                              value={allowedAssetsInput}
-                              onChange={(event) =>
-                                updatePolicy((draft) => ({
-                                  ...draft,
-                                  allowed_assets: splitAssets(event.target.value),
-                                }))
-                              }
-                              className="rounded-none"
-                            />
-                          </CollapsibleContent>
-                        </Collapsible>
-                      </div>
-                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                        {policyChips.map((item) => (
-                          <PolicyChip key={item.label} label={item.label} value={item.value} />
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </section>
-              </TabsContent>
-
-              <TabsContent value="scheduler" className="mt-0">
-                <section className={panelClassName()}>
-                  <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
-                      <h2 className="text-lg font-semibold text-foreground">Scheduler</h2>
-                      <p className="mt-1 text-sm text-muted-foreground">Keep timing rules separate from policy editing so they only appear when needed.</p>
-                    </div>
-                    <Button variant="outline" size="sm" onClick={() => setEditingScheduler((current) => !current)}>
-                      <Settings2 className="mr-2 h-4 w-4" />
-                      {editingScheduler ? "Hide Edit" : "Edit Schedule"}
-                    </Button>
-                  </div>
-
-                  <div className="mt-4 divide-y divide-border">
-                    <DetailRow label="Market Check" value={`Every ${formatInterval(policy.market_check_interval_seconds)}`} />
-                    <DetailRow label="Quote Refresh" value={`Every ${formatInterval(policy.quote_refresh_interval_seconds)}`} />
-                    <DetailRow label="Risk Recompute" value={`Every ${formatInterval(policy.risk_recompute_interval_seconds)}`} />
-                    <DetailRow label="Proposal Expiry" value={formatInterval(policy.proposal_expiry_seconds)} />
-                  </div>
-
-                  {editingScheduler ? (
-                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                      <LimitCard
-                        label="Market Check"
-                        value={policy.market_check_interval_seconds}
-                        suffix="seconds"
-                        min={60}
-                        max={3600}
-                        step={15}
-                        onChange={(next) =>
-                          updatePolicy((draft) => ({
-                            ...draft,
-                            market_check_interval_seconds: next,
-                          }))
-                        }
-                      />
-                      <LimitCard
-                        label="Quote Refresh"
-                        value={policy.quote_refresh_interval_seconds}
-                        suffix="seconds"
-                        min={30}
-                        max={1800}
-                        step={15}
-                        onChange={(next) =>
-                          updatePolicy((draft) => ({
-                            ...draft,
-                            quote_refresh_interval_seconds: next,
-                          }))
-                        }
-                      />
-                      <LimitCard
-                        label="Risk Recompute"
-                        value={policy.risk_recompute_interval_seconds}
-                        suffix="seconds"
-                        min={60}
-                        max={3600}
-                        step={15}
-                        onChange={(next) =>
-                          updatePolicy((draft) => ({
-                            ...draft,
-                            risk_recompute_interval_seconds: next,
-                          }))
-                        }
-                      />
-                      <LimitCard
-                        label="Proposal Expiry"
-                        value={policy.proposal_expiry_seconds}
-                        suffix="seconds"
-                        min={60}
-                        max={3600}
-                        step={15}
-                        onChange={(next) =>
-                          updatePolicy((draft) => ({
-                            ...draft,
-                            proposal_expiry_seconds: next,
-                          }))
-                        }
-                      />
+                      ))}
                     </div>
                   ) : null}
+                </div>
 
-                  {editingScheduler ? (
-                    <div className="mt-4 flex justify-end">
-                      <Button onClick={onUpdateScheduler} disabled={schedulerMutation.isPending}>
-                        Save Schedule
-                      </Button>
+                {/* Impact Simulation Status Card */}
+                <div className={cn(
+                  "border p-4 rounded-none",
+                  simulationTone === "ready" ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-200" :
+                  simulationTone === "degraded" ? "border-amber-500/20 bg-amber-500/5 text-amber-200" :
+                  simulationTone === "blocked" ? "border-red-500/20 bg-red-500/5 text-red-200" :
+                  "border-[#3A2812] bg-[#1E1509] text-[#A08858]"
+                )}>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold uppercase tracking-[0.12em]">Impact Simulation</span>
+                    <Badge className={cn(
+                      "rounded-none text-[10px] uppercase tracking-wider px-2 py-0.5",
+                      simulationTone === "ready" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" :
+                      simulationTone === "degraded" ? "bg-amber-500/10 text-amber-400 border border-amber-500/30" :
+                      "bg-red-500/10 text-red-400 border border-red-500/30"
+                    )}>
+                      {simulationSummary}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-[#A08858] leading-relaxed font-sans">{simulationDetail}</p>
+                  {latestSimulation?.simulation?.critical_findings?.length ? (
+                    <div className="mt-3 space-y-1.5 border-t border-[#3A2812]/50 pt-2.5 font-mono">
+                      {latestSimulation.simulation.critical_findings.map((finding, idx) => (
+                        <div key={idx} className="text-[11px] text-amber-400/90 leading-relaxed">
+                          • {finding}
+                        </div>
+                      ))}
                     </div>
                   ) : null}
-                </section>
-              </TabsContent>
-
-              <TabsContent value="history" className="mt-0">
-                <div className="grid gap-4">
-                  <section className={panelClassName()}>
-                    <div className="border-b border-border pb-4">
-                      <h2 className="text-lg font-semibold text-foreground">Version History</h2>
-                      <p className="mt-1 text-sm text-muted-foreground">Compact first, details only if the version matters.</p>
-                    </div>
-                    <div className="mt-2">
-                      {versions.length ? (
-                        versions.slice(0, 10).map((version) => (
-                          <HistoryRow
-                            key={version.id}
-                            version={version}
-                            onRevert={onRevert}
-                            disabled={revertMutation.isPending}
-                          />
-                        ))
-                      ) : (
-                        <p className="py-4 text-sm text-muted-foreground">No strategy versions available yet.</p>
-                      )}
-                    </div>
-                  </section>
-
-                  <section className={panelClassName()}>
-                    <div className="border-b border-border pb-4">
-                      <h2 className="text-lg font-semibold text-foreground">Audit Trail</h2>
-                      <p className="mt-1 text-sm text-muted-foreground">Collapsed event rows keep the record visible without dominating the page.</p>
-                    </div>
-                    <div className="mt-2">
-                      {auditEvents.length ? (
-                        auditEvents.slice(0, 12).map((event) => <AuditRow key={event.id} event={event} />)
-                      ) : (
-                        <p className="py-4 text-sm text-muted-foreground">No audit events available yet.</p>
-                      )}
-                    </div>
-                  </section>
                 </div>
-              </TabsContent>
-            </div>
+              </div>
+            )}
+          </TabsContent>
 
-            <aside className="min-w-0">
-              <section className={panelClassName("sticky top-20 space-y-4 px-4 py-4")}>
-                <div className="border-b border-border pb-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h2 className="text-base font-semibold text-foreground">Readiness</h2>
-                      <p className="mt-1 text-sm text-muted-foreground">Compact status rows keep the next action obvious.</p>
-                    </div>
-                    <StatusPill tone={isDirty ? "degraded" : activeTone}>{workflowLabel}</StatusPill>
-                  </div>
-                </div>
-
+          {/* TAB 2: RISK WEIGHTS */}
+          <TabsContent value="weights" className="mt-0 outline-none">
+            <div className="border border-[#3A2812] bg-[#1E1509] p-5 space-y-6">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between border-b border-[#3A2812]/50 pb-4">
                 <div>
-                  <ReadinessRow label="Status" value={workflowLabel} tone={isDirty ? "degraded" : activeTone} />
-                  <ReadinessRow label="Active Version" value={activeVersion?.version ?? policy.strategy_version} tone={activeTone} />
-                  <ReadinessRow label="Safety" value={safetySummary} tone={validationTone} />
-                  <ReadinessRow label="Risk" value={`${formatCount(currentRiskScore)}/100`} tone={statusTone(riskQuery.data?.status, riskQuery.data?.status_code)} />
-                  <ReadinessRow label="Simulation" value={simulationSummary} tone={simulationTone} />
-                  <ReadinessRow label="Activation" value={!validationPassed || isDirty ? "Blocked" : "Ready"} tone={!validationPassed || isDirty ? "blocked" : "ready"} />
-                  <ReadinessRow label="Runtime" value={humanize(runtimeMode)} />
-                  <ReadinessRow label="AI Access" value={aiAccessEnabled ? "On" : "Off"} />
-                  <ReadinessRow label="Checked" value={formatRelativeAge(latestGeneratedAt)} />
+                  <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-[#A08858]">
+                    STRATEGIC RISK WEIGHTS
+                  </h2>
+                  <p className="text-xs text-[#A08858] mt-1 max-w-xl font-sans">
+                    Configure the weights allocated to the risk assessment inputs. All core risk factors must equal 100% total.
+                  </p>
                 </div>
-
-                <div className="rounded-sm border border-border bg-surface-2/55 px-3 py-3">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Next step</p>
-                  <p className="mt-2 text-sm font-medium text-foreground">{nextStep}</p>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{activationDetail}</p>
-                </div>
-              </section>
-            </aside>
-          </div>
-        </Tabs>
-
-        <section className="grid gap-3 lg:grid-cols-3">
-          <CompactStatusCard
-            title="Safety Check"
-            tone={validationTone}
-            status={safetySummary}
-            summary={latestValidation?.validation_errors?.length ? `${latestValidation.validation_errors.length} blocking issues` : "Run validation before activation."}
-            detail={safetyDetail}
-          >
-            {latestValidation?.validation_errors?.length ? (
-              <Collapsible>
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-auto px-0 text-xs">
-                    View details
-                    <ChevronDown className="ml-2 h-3.5 w-3.5" />
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-2 pt-3">
-                  {latestValidation.validation_errors.slice(0, 4).map((error) => (
-                    <div key={`${error.code}-${error.field ?? "field"}`} className="rounded-sm border border-border bg-background px-3 py-2">
-                      <p className="text-xs font-semibold text-foreground">{error.code}</p>
-                      <p className="mt-1 text-xs leading-5 text-muted-foreground">{error.message}</p>
+                <div className="self-start md:self-center font-mono">
+                  {Math.abs(riskWeightTotal - 1.0) > 0.001 ? (
+                    <div className="flex items-center gap-2 border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs text-amber-400 font-sans">
+                      <AlertTriangle className="h-4 w-4" />
+                      <span>Total: {(riskWeightTotal * 100).toFixed(0)}%</span>
                     </div>
-                  ))}
-                </CollapsibleContent>
-              </Collapsible>
-            ) : null}
-          </CompactStatusCard>
-
-          <CompactStatusCard
-            title="Impact Simulation"
-            tone={simulationTone}
-            status={simulationSummary}
-            summary={latestSimulation ? `${formatCount(latestSimulation.simulation.protective_actions.length)} protective actions` : "Pending"}
-            detail={simulationDetail}
-          >
-            {latestSimulation ? (
-              <Collapsible>
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-auto px-0 text-xs">
-                    View details
-                    <ChevronDown className="ml-2 h-3.5 w-3.5" />
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-2 pt-3">
-                  {latestSimulation.simulation.critical_findings.length ? (
-                    latestSimulation.simulation.critical_findings.map((finding) => (
-                      <div key={finding} className="rounded-sm border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
-                        {finding}
-                      </div>
-                    ))
                   ) : (
-                    <div className="rounded-sm border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
-                      No critical findings. Protective actions stay available in backend policy checks.
+                    <div className="flex items-center gap-2 border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-400 font-sans">
+                      <CheckCircle2 className="h-4 w-4" />
+                      <span>Total: 100%</span>
                     </div>
                   )}
-                </CollapsibleContent>
-              </Collapsible>
-            ) : null}
-          </CompactStatusCard>
+                </div>
+              </div>
 
-          <CompactStatusCard
-            title="Activation Gate"
-            tone={!validationPassed || isDirty ? "degraded" : "ready"}
-            status={!validationPassed || isDirty ? "Not ready" : "Ready"}
-            summary={latestDraftId ? `Draft #${latestDraftId}` : "No saved draft yet"}
-            detail={activationDetail}
-          />
-        </section>
+              {/* Sliders Grid */}
+              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+                {/* Core Weights */}
+                <PremiumSlider
+                  label="LLM Sentiment Influence"
+                  value={Math.round(policy.risk_weights.llm_sentiment * 100)}
+                  suffix="%"
+                  onChange={(val) =>
+                    updatePolicy((draft) => ({
+                      ...draft,
+                      risk_weights: { ...draft.risk_weights, llm_sentiment: val / 100 },
+                    }))
+                  }
+                />
 
-        <section className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 px-4 shadow-sm backdrop-blur-md">
-          <div className="mx-auto flex min-h-14 w-full max-w-[1440px] flex-col gap-2 py-2 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
-              <AlertTriangle className="h-4 w-4 text-primary" />
-              <span className="truncate">
-                {lastActionMessage ??
-                  (isDirty ? "Unsaved changes present. Save the draft, then validate before activation." : "Policy is aligned with the last saved state.")}
-              </span>
+                <PremiumSlider
+                  label="Liquidity Weight"
+                  value={Math.round(policy.risk_weights.liquidity * 100)}
+                  suffix="%"
+                  onChange={(val) =>
+                    updatePolicy((draft) => ({
+                      ...draft,
+                      risk_weights: { ...draft.risk_weights, liquidity: val / 100 },
+                    }))
+                  }
+                />
+
+                <PremiumSlider
+                  label="Oracle Stability Weight"
+                  value={Math.round(policy.risk_weights.oracle * 100)}
+                  suffix="%"
+                  onChange={(val) =>
+                    updatePolicy((draft) => ({
+                      ...draft,
+                      risk_weights: { ...draft.risk_weights, oracle: val / 100 },
+                    }))
+                  }
+                />
+
+                <PremiumSlider
+                  label="Depeg Risk Weight"
+                  value={Math.round(policy.risk_weights.depeg * 100)}
+                  suffix="%"
+                  onChange={(val) =>
+                    updatePolicy((draft) => ({
+                      ...draft,
+                      risk_weights: { ...draft.risk_weights, depeg: val / 100 },
+                    }))
+                  }
+                />
+
+                <PremiumSlider
+                  label="Execution Route Weight"
+                  value={Math.round(policy.risk_weights.execution * 100)}
+                  suffix="%"
+                  onChange={(val) =>
+                    updatePolicy((draft) => ({
+                      ...draft,
+                      risk_weights: { ...draft.risk_weights, execution: val / 100 },
+                    }))
+                  }
+                />
+
+                {/* Simulated Sliders (UI Only to match mockup) */}
+                <PremiumSlider
+                  label="Kelly Aggressiveness"
+                  value={kellyAggressiveness}
+                  min={0.0}
+                  max={1.0}
+                  step={0.05}
+                  suffix=""
+                  onChange={(val) => {
+                    setKellyAggressiveness(val);
+                    setValidationError(null);
+                  }}
+                />
+
+                <PremiumSlider
+                  label="Risk Engine Sensitivity"
+                  value={riskEngineSensitivity}
+                  suffix="%"
+                  onChange={(val) => {
+                    setRiskEngineSensitivity(val);
+                    setValidationError(null);
+                  }}
+                />
+              </div>
+
+              {/* Status Message */}
+              <div className="mt-4 font-sans">
+                {Math.abs(riskWeightTotal - 1.0) > 0.001 ? (
+                  <div className="flex items-center gap-2 border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-400">
+                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                    <span>Attention: Core risk weights total is {(riskWeightTotal * 100).toFixed(0)}%. They must normalize to 100% before saving.</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-400">
+                    <CheckCircle2 className="h-4 w-4 shrink-0" />
+                    <span>Weights are fully normalized (100%).</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* TAB 3: SCHEDULER */}
+          <TabsContent value="scheduler" className="mt-0 outline-none">
+            <div className="border border-[#3A2812] bg-[#1E1509] p-5 space-y-6">
+              <div>
+                <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-[#A08858]">
+                  SCHEDULER SETTINGS
+                </h2>
+                <p className="text-xs text-[#A08858] mt-1 font-sans">
+                  Configure the timing parameters for pricing updates, risk check triggers, and execution parameters.
+                </p>
+              </div>
+
+              <div className="grid gap-6 md:grid-cols-2">
+                <PremiumSlider
+                  label="Market Check Cadence"
+                  value={policy.market_check_interval_seconds}
+                  min={60}
+                  max={3600}
+                  step={15}
+                  suffix=" seconds"
+                  onChange={(val) =>
+                    updatePolicy((draft) => ({
+                      ...draft,
+                      market_check_interval_seconds: val,
+                    }))
+                  }
+                />
+
+                <PremiumSlider
+                  label="Quote Refresh Cadence"
+                  value={policy.quote_refresh_interval_seconds}
+                  min={30}
+                  max={1800}
+                  step={15}
+                  suffix=" seconds"
+                  onChange={(val) =>
+                    updatePolicy((draft) => ({
+                      ...draft,
+                      quote_refresh_interval_seconds: val,
+                    }))
+                  }
+                />
+
+                <PremiumSlider
+                  label="Risk Recompute Cadence"
+                  value={policy.risk_recompute_interval_seconds}
+                  min={60}
+                  max={3600}
+                  step={15}
+                  suffix=" seconds"
+                  onChange={(val) =>
+                    updatePolicy((draft) => ({
+                      ...draft,
+                      risk_recompute_interval_seconds: val,
+                    }))
+                  }
+                />
+
+                <PremiumSlider
+                  label="Proposal Expiry Window"
+                  value={policy.proposal_expiry_seconds}
+                  min={60}
+                  max={3600}
+                  step={15}
+                  suffix=" seconds"
+                  onChange={(val) =>
+                    updatePolicy((draft) => ({
+                      ...draft,
+                      proposal_expiry_seconds: val,
+                    }))
+                  }
+                />
+              </div>
+
+              <div className="flex justify-end border-t border-[#3A2812]/50 pt-4">
+                <Button
+                  onClick={onUpdateScheduler}
+                  disabled={schedulerMutation.isPending}
+                  className="rounded-none bg-[#D4962A] hover:bg-[#b0781e] text-[#0E0B06] text-xs uppercase tracking-wider font-bold h-9"
+                >
+                  {schedulerMutation.isPending ? "Saving Schedule..." : "Save Schedule Settings"}
+                </Button>
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* TAB 4: HISTORY */}
+          <TabsContent value="history" className="mt-0 outline-none space-y-6">
+            {/* Version History */}
+            <div className="border border-[#3A2812] bg-[#1E1509] p-5">
+              <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-[#A08858] mb-4">
+                VERSION HISTORY
+              </h2>
+              <div className="divide-y divide-[#3A2812]/40 font-sans">
+                {versions.length ? (
+                  versions.slice(0, 10).map((version) => (
+                    <HistoryRow
+                      key={version.id}
+                      version={version}
+                      onRevert={onRevert}
+                      disabled={revertMutation.isPending}
+                    />
+                  ))
+                ) : (
+                  <p className="py-4 text-xs text-[#A08858]">No strategy versions available.</p>
+                )}
+              </div>
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={onDraft} disabled={!isDirty || createDraftMutation.isPending}>
-                <Database className="mr-2 h-4 w-4" />
-                Save Draft
-              </Button>
-              <Button
-                variant="outline"
-                onClick={onValidate}
-                disabled={!strategyText.trim() || isDirty || validateMutation.isPending}
-              >
-                <CheckCircle2 className="mr-2 h-4 w-4" />
-                Validate
-              </Button>
-              <Button
-                variant="outline"
-                onClick={onSimulate}
-                disabled={!validationPassed || isDirty || simulateMutation.isPending}
-              >
-                <Workflow className="mr-2 h-4 w-4" />
-                Simulate
-              </Button>
-              <Button onClick={onActivate} disabled={!validationPassed || isDirty || activateMutation.isPending}>
-                <Rocket className="mr-2 h-4 w-4" />
-                Activate
-              </Button>
+            {/* Audit Trail */}
+            <div className="border border-[#3A2812] bg-[#1E1509] p-5">
+              <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-[#A08858] mb-4">
+                AUDIT LOGS
+              </h2>
+              <div className="divide-y divide-[#3A2812]/40 font-sans">
+                {auditEvents.length ? (
+                  auditEvents.slice(0, 12).map((event) => <AuditRow key={event.id} event={event} />)
+                ) : (
+                  <p className="py-4 text-xs text-[#A08858]">No audit events logged.</p>
+                )}
+              </div>
             </div>
-          </div>
-        </section>
+          </TabsContent>
+        </Tabs>
       </div>
+
+      {/* Sticky Bottom Action Footer */}
+      <section className="fixed inset-x-0 bottom-0 z-30 border-t border-[#3A2812] bg-[#0E0B06]/95 px-6 shadow-2xl backdrop-blur-md">
+        <div className="mx-auto flex min-h-16 w-full max-w-[1440px] flex-col gap-3 py-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-2 text-xs font-mono">
+            {isDirty ? (
+              <div className="flex items-center gap-2 text-amber-400">
+                <AlertTriangle className="h-4 w-4 shrink-0 animate-pulse" />
+                <span className="font-sans">Unsaved modifications present. Discard changes or save to update active strategy.</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-[#A08858]">
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+                <span className="font-sans">Active strategy aligned with persistent configuration state.</span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={onDiscardChanges}
+              disabled={!isDirty}
+              className="rounded-none border-[#3A2812] text-[#F4EDD6] hover:bg-[#1E1509] hover:text-[#D4962A] h-9 text-xs uppercase tracking-wider font-semibold"
+            >
+              <RotateCcw className="mr-2 h-3.5 w-3.5" />
+              Discard Changes
+            </Button>
+
+            <Button
+              variant="outline"
+              onClick={onSimulate}
+              disabled={!strategyText.trim() || simulateMutation.isPending}
+              className="rounded-none border-[#3A2812] text-[#F4EDD6] hover:bg-[#1E1509] hover:text-[#D4962A] h-9 text-xs uppercase tracking-wider font-semibold"
+            >
+              {simulateMutation.isPending ? "Simulating..." : "Simulate Changes"}
+            </Button>
+
+            <Button
+              onClick={onSaveStrategy}
+              disabled={!strategyText.trim() || updateActiveMutation.isPending || Math.abs(riskWeightTotal - 1.0) > 0.001}
+              className="rounded-none bg-[#D4962A] hover:bg-[#b0781e] text-[#0E0B06] h-9 text-xs uppercase tracking-wider font-bold"
+            >
+              <Save className="mr-2 h-3.5 w-3.5" />
+              {updateActiveMutation.isPending ? "Saving..." : "Save Strategy"}
+            </Button>
+          </div>
+        </div>
+      </section>
     </PageScaffold>
   );
 }

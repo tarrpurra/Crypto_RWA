@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 
 from services.agent.modules.oracle.freshness import utc_now
 from services.agent.modules.strategy_policy.policy_extractor import DEFAULT_POLICY, TEMPLATE_PRESETS
+from services.agent.modules.strategy_policy.schemas import DEFAULT_AI_RUN_INTERVAL_SECONDS
 from services.agent.modules.strategy_policy.schemas import (
     StrategyAuditEventResponse,
     StrategyDraftResponse,
@@ -56,12 +57,6 @@ class StrategyPolicyRepository:
                             created_at=utc_now(),
                         )
                     )
-                else:
-                    existing.description = normalized_policy.notes[0] if normalized_policy.notes else name
-                    existing.category = "policy_template"
-                    existing.prompt_text = normalized_prompt
-                    existing.policy_json = normalized_policy.model_dump(mode="json")
-                    existing.is_system_template = True
 
             if session.scalar(select(func.count(StrategyVersionRecord.id))) == 0:
                 normalized_default_policy = self._normalize_policy_config(DEFAULT_POLICY)
@@ -105,14 +100,6 @@ class StrategyPolicyRepository:
                         created_at=utc_now(),
                     )
                 )
-            else:
-                for record in session.scalars(select(StrategyVersionRecord)).all():
-                    record.active_policy_json = self._normalize_policy_payload(record.active_policy_json)
-                    record.raw_prompt_snapshot = self._normalize_strategy_text(record.raw_prompt_snapshot)
-
-            for record in session.scalars(select(StrategyDraftRecord)).all():
-                record.raw_prompt = self._normalize_strategy_text(record.raw_prompt)
-                record.extracted_policy_json = self._normalize_policy_payload(record.extracted_policy_json)
             session.commit()
 
     def list_templates(self) -> list[StrategyTemplateSummary]:
@@ -363,9 +350,23 @@ class StrategyPolicyRepository:
 
     @staticmethod
     def _template_prompt_text(name: str, policy: StrategyPolicyConfig) -> str:
+        assets = ", ".join(policy.allowed_assets) if policy.allowed_assets else "approved assets"
+        reserve = f"{policy.hard_limits.min_stable_reserve_pct}%"
+        slippage = f"{(policy.hard_limits.max_slippage_bps / 100):.1f}% ({policy.hard_limits.max_slippage_bps} bps)"
+        market_check = f"every {policy.market_check_interval_seconds}s"
+        human_approval = "Requires human approval" if policy.human_approval_required else "Allows execution without human approval"
+        circuit_breaker = "Global circuit breaker enabled" if policy.hard_limits.global_circuit_breaker else "Global circuit breaker disabled"
+        objective = policy.objective.replace("_", " ").title()
+
         return (
-            f"{name}: focus on {policy.objective.replace('_', ' ')} with {', '.join(policy.allowed_assets)}; "
-            f"market checks every {policy.market_check_interval_seconds}s."
+            f"- TEMPLATE: {name}\n"
+            f"- OBJECTIVE: {objective}\n"
+            f"- ALLOWED ASSETS: {assets}\n"
+            f"- MINIMUM STABLE RESERVE: {reserve}\n"
+            f"- MAX SLIPPAGE THRESHOLD: {slippage}\n"
+            f"- MONITORING CADENCE: {market_check}\n"
+            f"- APPROVAL MODE: {human_approval}\n"
+            f"- SAFETY GATEWAY: {circuit_breaker}"
         )
 
     @staticmethod
@@ -405,6 +406,14 @@ class StrategyPolicyRepository:
         return StrategyPolicyConfig.model_validate(normalized).model_dump(mode="json")
 
     @staticmethod
+    def _apply_default_scheduler_cadence(payload: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(payload)
+        normalized["market_check_interval_seconds"] = DEFAULT_AI_RUN_INTERVAL_SECONDS
+        normalized["quote_refresh_interval_seconds"] = DEFAULT_AI_RUN_INTERVAL_SECONDS
+        normalized["risk_recompute_interval_seconds"] = DEFAULT_AI_RUN_INTERVAL_SECONDS
+        return normalized
+
+    @staticmethod
     def _template_from_record(record: StrategyTemplateRecord | None) -> StrategyTemplateSummary | None:
         if record is None:
             return None
@@ -429,6 +438,10 @@ class StrategyPolicyRepository:
                 template_record = session.get(StrategyTemplateRecord, record.template_id)
             template = StrategyPolicyRepository._template_from_record(template_record)
         return StrategyDraftResponse(
+            status="ok",
+            status_code="DRAFT_OK",
+            status_label="DRAFT_OK",
+            status_reason="Strategy draft record loaded.",
             draft_id=record.id,
             user_address=record.user_address,
             raw_prompt=record.raw_prompt,

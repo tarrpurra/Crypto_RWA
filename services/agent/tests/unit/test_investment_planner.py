@@ -567,7 +567,7 @@ class InvestmentPlannerTests(unittest.TestCase):
         )
 
         self.assertTrue(response.approval_enabled)
-        self.assertIn("Human approval is required", response.status_reason)
+        self.assertIn("AI auto-approved", response.status_reason)
         self.assertTrue(proposal_pairs)
         self.assertTrue(response.transaction_steps)
         self.assertTrue(all(not step.requires_user_action for step in response.transaction_steps))

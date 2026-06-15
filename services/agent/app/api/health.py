@@ -275,5 +275,7 @@ async def hermes_probe() -> HermesConnectivityProbe:
     client = HermesClient(
         base_url=settings.pyth_hermes_url,
         latest_price_path=settings.pyth_hermes_latest_price_path,
+        connect_timeout=settings.pyth_hermes_connect_timeout_seconds,
+        timeout=settings.pyth_hermes_read_timeout_seconds,
     )
     return await client.probe_connectivity()
