@@ -5,7 +5,6 @@ const items = [
   ["MNT/USD", "$0.6041", "-2.56%", false],
   ["Aave USDY APY", "5.82%", "+0.11%", true],
   ["Risk Level", "GREEN", "", null],
-  ["ERC-8004 Agent", "#0x0042", "", null],
   ["Vault APY (Testnet)", "7.24%", "+2.59% vs bench", true],
 ];
 

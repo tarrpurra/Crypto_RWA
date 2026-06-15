@@ -1,8 +1,8 @@
 export function Footer() {
   const links = [
     ["GitHub", "https://github.com/tarrpurra/Crypto_RWA"],
-    ["Contract", "https://explorer.sepolia.mantle.xyz"],
-    ["DoraHacks", "https://dorahacks.io/hackathon/mantleturingtesthackathon2026"],
+    ["DoraHacks", "https://dorahacks.io/buidl/44982"],
+    ["Email", "mailto:yieldmind1@gmail.com"],
   ];
 
   return (
@@ -29,7 +29,7 @@ export function Footer() {
             ))}
           </div>
           <div className="font-mono text-[10px]">
-            Mantle Sepolia #5003 · ERC-8004 · AI × RWA
+            Mantle Sepolia #5003 · AI × RWA
           </div>
         </div>
       </div>

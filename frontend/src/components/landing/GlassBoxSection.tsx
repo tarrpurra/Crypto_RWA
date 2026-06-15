@@ -20,7 +20,7 @@ export function GlassBoxSection() {
             <span className="text-lp-gold">on-chain. Forever.</span>
           </h2>
           <p className="mt-5 font-sans text-[15px] leading-relaxed text-lp-fg-secondary">
-            Every decision the AI makes is permanently written to Mantle via ERC-8004.
+            Every decision the AI makes is permanently written to Mantle on-chain.
           </p>
           <p className="mt-3 font-sans text-[15px] leading-relaxed text-lp-fg-secondary">
             You do not have to trust us. You can verify it. The agent cannot edit history.
@@ -44,7 +44,7 @@ export function GlassBoxSection() {
               <span className="relative inline-flex h-2 w-2 rounded-full bg-lp-gold" />
             </span>
             <span className="font-mono text-[11px] text-lp-fg-secondary">
-              ERC-8004 · DECISION LOG
+              DECISION LOG
             </span>
             <span className="ml-auto rounded-full border border-lp-gold/20 bg-lp-gold/10 px-2 py-0.5 font-sans text-[10px] text-lp-gold">
               TESTNET

@@ -11,7 +11,6 @@ import { HowItWorksSection } from "@/components/landing/HowItWorksSection";
 import { BuiltOnSection } from "@/components/landing/BuiltOnSection";
 import { GlassBoxSection } from "@/components/landing/GlassBoxSection";
 import { HumanVsAISection } from "@/components/landing/HumanVsAISection";
-import { FinalCta } from "@/components/landing/FinalCta";
 import { Footer } from "@/components/landing/Footer";
 
 type LandingPhase = "intro" | "launching" | "entered";
@@ -28,7 +27,6 @@ const revealItems = [
   { key: "built-on", node: <BuiltOnSection /> },
   { key: "glass-box", node: <GlassBoxSection /> },
   { key: "human-vs-ai", node: <HumanVsAISection /> },
-  { key: "cta", node: <FinalCta /> },
   { key: "footer", node: <Footer /> },
 ] as const;
 

@@ -61,8 +61,8 @@ export function HeroSection() {
               className="mt-5 max-w-[480px] text-[16px] leading-relaxed text-stone-950 md:text-[16px]"
             >
               Autonomous USDY + mETH optimisation on Mantle L2.
-              Every decision logged on-chain via ERC-8004.
-              Human vs AI benchmarked. Permanently verifiable.
+              Every decision logged on-chain. Permanently verifiable.
+              Human vs AI benchmarked.
             </motion.p>
 
             <motion.div
@@ -77,14 +77,6 @@ export function HeroSection() {
               >
                 <span>Start Trading &rarr;</span>
               </Link>
-              <a
-                href="https://explorer.sepolia.mantle.xyz"
-                target="_blank"
-                rel="noreferrer"
-                className="flex h-[50px] items-center gap-1.5 rounded-lg border border-lp-border bg-transparent px-[22px] font-sans text-[14px] font-medium text-lp-fg-secondary transition-all duration-200 hover:border-lp-gold/40 hover:text-lp-fg"
-              >
-                View on Mantlescan &uarr;
-              </a>
             </motion.div>
 
             <motion.div
@@ -94,8 +86,8 @@ export function HeroSection() {
               className="mt-6 flex gap-6 border-t border-lp-border pt-5"
             >
               {[
-                ["ERC-8004", "On-chain identity"],
                 ["Pyth + Ondo", "Live oracles"],
+                ["On-chain", "Permanent log"],
                 ["~$0.01", "Per rebalance"],
               ].map(([v, l]) => (
                 <div key={v}>

@@ -20,6 +20,7 @@ export function TopBar() {
           to="/"
           className="flex items-center gap-2 border-r border-border px-4 text-foreground transition-colors hover:text-primary"
         >
+          <img src="/master_logo.png" alt="" aria-hidden="true" draggable={false} className="h-6 w-6 object-contain shrink-0" />
           <span className="terminal-wordmark text-[18px] font-semibold leading-none">
             YieldMind
           </span>
