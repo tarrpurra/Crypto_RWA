@@ -6,6 +6,20 @@ from services.agent.app.schemas.risk import RiskSnapshot
 from services.agent.app.schemas.allocation import AllocationDecision, RebalanceAction
 
 
+def _format_percent_map(values: dict[str, float]) -> dict[str, float]:
+    return {asset: round(weight * 100.0, 4) for asset, weight in values.items()}
+
+
+def _build_current_drift_pct(portfolio: PortfolioSnapshot, decision: AllocationDecision) -> dict[str, float]:
+    current_weights = dict(portfolio.weights)
+    target_weights = dict(decision.target_weights)
+    all_assets = sorted(set(current_weights.keys()) | set(target_weights.keys()))
+    return {
+        asset: round((current_weights.get(asset, 0.0) - target_weights.get(asset, 0.0)) * 100.0, 4)
+        for asset in all_assets
+    }
+
+
 def build_allocation_prompt(
     portfolio_value_usd: float,
     deposit_asset_symbol: str,
@@ -88,6 +102,7 @@ def build_reasoning_prompt(
     risk: RiskSnapshot,
     decision: AllocationDecision,
     rebalance_actions: list[RebalanceAction],
+    drift_tolerance_pct: float = 0.03,
     ai_decision_maker: bool = False,
 ) -> str:
     """
@@ -99,6 +114,9 @@ def build_reasoning_prompt(
     """
     portfolio_data = {
         "total_value_usd": portfolio.total_value_usd,
+        "target_weights": _format_percent_map(decision.target_weights),
+        "current_drift_pct": _build_current_drift_pct(portfolio, decision),
+        "drift_tolerance_pct": round(drift_tolerance_pct * 100.0, 4),
         "balances": [
             {
                 "asset": b.asset_symbol,
@@ -155,6 +173,7 @@ Decision rules:
 - Consider all risk factors including oracle freshness, depeg risk, liquidity/slippage, concentration limits, and execution readiness.
 - Treat hard risk states as non-negotiable guard rails, not as a license to override the deterministic plan.
 - Prioritize trade efficiency: do not recommend swaps on minor deviations or if market trends indicate that waiting would yield a better execution price. Only suggest alternate actions if they provide a clear net-benefit or safety improvement.
+- Confidence should reflect how directly the provided data supports the conclusion. Lower confidence if target weights, current drifts, or drift tolerance are missing or ambiguous.
 
 
 Please generate a JSON object matching this schema:
@@ -188,6 +207,8 @@ Please generate a JSON object matching this schema:
     "Note 3: e.g., target weight alignments achieved"
   ]
 }}
+
+Confidence should reflect how directly the provided data supports the conclusion. Lower it if target weights, current drifts, or drift tolerance are missing or ambiguous.
 
 Make sure to respond with ONLY a valid, parseable JSON object, and no other conversational text.
 """

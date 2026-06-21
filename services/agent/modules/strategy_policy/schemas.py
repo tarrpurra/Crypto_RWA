@@ -201,6 +201,7 @@ class StrategyAuditListResponse(StrategyStatusEnvelope):
 
 class StrategyRevertRequest(BaseModel):
     version: str
+    user_address: str | None = None
     actor: str | None = None
 
 
@@ -210,12 +211,6 @@ class StrategySchedulerUpdateRequest(BaseModel):
     quote_refresh_interval_seconds: int
     risk_recompute_interval_seconds: int
     execution_window_seconds: int
-    actor: str | None = None
-
-
-class StrategyActiveVersionUpdateRequest(BaseModel):
-    strategy_text: str
-    policy_json: dict[str, Any] | None = None
-    template_id: int | None = None
     user_address: str | None = None
     actor: str | None = None
+

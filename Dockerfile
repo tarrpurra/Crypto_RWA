@@ -17,11 +17,10 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -L https://foundry.paradigm.xyz | bash \
-    && source /root/.bashrc \
     && foundryup \
     && forge --version \
     && cast --version \
-    && ANVIL --version \
+    && anvil --version \
     && chisel --version
 
 WORKDIR /workspace/contracts

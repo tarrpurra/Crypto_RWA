@@ -15,7 +15,6 @@ from services.agent.modules.strategy_policy.schemas import (
     StrategyVersionListResponse,
     StrategyRevertRequest,
     StrategySchedulerUpdateRequest,
-    StrategyActiveVersionUpdateRequest,
 )
 
 
@@ -62,8 +61,8 @@ def active_strategy(user_address: str | None = None) -> StrategyActiveResponse:
 
 
 @router.post("/active", response_model=StrategyActiveResponse)
-def update_active_strategy(request: StrategyActiveVersionUpdateRequest) -> StrategyActiveResponse:
-    return get_service().update_active(request)
+def update_active_strategy(request: StrategyPolicyDraftRequest) -> StrategyActiveResponse:
+    return get_service().activate(request)
 
 
 @router.get("/versions", response_model=StrategyVersionListResponse)
@@ -73,7 +72,7 @@ def strategy_versions(user_address: str | None = None) -> StrategyVersionListRes
 
 @router.post("/revert", response_model=StrategyActiveResponse)
 def revert_strategy(request: StrategyRevertRequest) -> StrategyActiveResponse:
-    return get_service().revert(request.version, actor=request.actor)
+    return get_service().revert(request.version, actor=request.actor, user_address=request.user_address)
 
 
 @router.post("/scheduler", response_model=StrategySchedulerSettingsResponse)
@@ -85,9 +84,10 @@ def update_scheduler(request: StrategySchedulerUpdateRequest) -> StrategySchedul
         request.risk_recompute_interval_seconds,
         request.execution_window_seconds,
         actor=request.actor,
+        user_address=request.user_address,
     )
 
 
 @router.get("/audit", response_model=StrategyAuditListResponse)
-def audit_trail(version: str | None = None) -> StrategyAuditListResponse:
-    return get_service().audit(version=version)
+def audit_trail(version: str | None = None, user_address: str | None = None) -> StrategyAuditListResponse:
+    return get_service().audit(version=version, user_address=user_address)

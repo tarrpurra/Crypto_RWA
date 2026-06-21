@@ -1,17 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import YieldMindIntro from "@/components/intro/YieldMindIntro";
 import { LandingNav } from "@/components/landing/LandingNav";
-import { HeroSection } from "@/components/landing/HeroSection";
-import { Ticker } from "@/components/landing/Ticker";
-import { ProblemSection } from "@/components/landing/ProblemSection";
-import { HowItWorksSection } from "@/components/landing/HowItWorksSection";
-import { BuiltOnSection } from "@/components/landing/BuiltOnSection";
-import { GlassBoxSection } from "@/components/landing/GlassBoxSection";
-import { HumanVsAISection } from "@/components/landing/HumanVsAISection";
-import { Footer } from "@/components/landing/Footer";
+const HeroSection = lazy(() => import("@/components/landing/HeroSection").then((module) => ({ default: module.HeroSection })));
+
+const Ticker = lazy(() => import("@/components/landing/Ticker").then((module) => ({ default: module.Ticker })));
+const ProblemSection = lazy(() => import("@/components/landing/ProblemSection").then((module) => ({ default: module.ProblemSection })));
+const HowItWorksSection = lazy(() => import("@/components/landing/HowItWorksSection").then((module) => ({ default: module.HowItWorksSection })));
+const BuiltOnSection = lazy(() => import("@/components/landing/BuiltOnSection").then((module) => ({ default: module.BuiltOnSection })));
+const GlassBoxSection = lazy(() => import("@/components/landing/GlassBoxSection").then((module) => ({ default: module.GlassBoxSection })));
+const Footer = lazy(() => import("@/components/landing/Footer").then((module) => ({ default: module.Footer })));
 
 type LandingPhase = "intro" | "launching" | "entered";
 
@@ -26,7 +26,6 @@ const revealItems = [
   { key: "how-it-works", node: <HowItWorksSection /> },
   { key: "built-on", node: <BuiltOnSection /> },
   { key: "glass-box", node: <GlassBoxSection /> },
-  { key: "human-vs-ai", node: <HumanVsAISection /> },
   { key: "footer", node: <Footer /> },
 ] as const;
 
@@ -130,34 +129,36 @@ const Landing = () => {
             transformOrigin: "50% 42%",
           }}
         >
-          {revealItems.map((item, index) => (
-            <motion.div
-              key={item.key}
-              initial={
-                reduceMotion
-                  ? false
-                  : {
-                      opacity: 0,
-                      y: index === 0 ? 18 : 28,
-                      scale: 0.985,
-                      filter: "blur(12px)",
-                    }
-              }
-              animate={{
-                opacity: 1,
-                y: 0,
-                scale: 1,
-                filter: "blur(0px)",
-              }}
-              transition={{
-                duration: index === 0 ? 1.02 : 0.92,
-                delay: phase === "launching" ? 0.88 + index * 0.18 : 0,
-                ease: easeOut,
-              }}
-            >
-              {item.node}
-            </motion.div>
-          ))}
+          <Suspense fallback={null}>
+            {revealItems.map((item, index) => (
+              <motion.div
+                key={item.key}
+                initial={
+                  reduceMotion
+                    ? false
+                    : {
+                        opacity: 0,
+                        y: index === 0 ? 18 : 28,
+                        scale: 0.985,
+                        filter: "blur(12px)",
+                      }
+                }
+                animate={{
+                  opacity: 1,
+                  y: 0,
+                  scale: 1,
+                  filter: "blur(0px)",
+                }}
+                transition={{
+                  duration: index === 0 ? 1.02 : 0.92,
+                  delay: phase === "launching" ? 0.88 + index * 0.18 : 0,
+                  ease: easeOut,
+                }}
+              >
+                {item.node}
+              </motion.div>
+            ))}
+          </Suspense>
         </motion.div>
       ) : null}
       </div>

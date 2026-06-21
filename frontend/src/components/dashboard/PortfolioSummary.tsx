@@ -44,7 +44,8 @@ function toPercent(value: number | undefined) {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return "--";
   }
-  return `${Math.round(value * 100)}%`;
+  const normalized = value <= 1 ? value * 100 : value;
+  return `${Math.round(normalized)}%`;
 }
 
 function toneClass(riskBand: string | undefined, hardVetoStatus: string | undefined) {

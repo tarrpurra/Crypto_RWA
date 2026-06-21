@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { CapitalChart } from "@/components/dashboard/CapitalChart";
+import { CapitalChart, formatCapitalAxisDate } from "@/components/dashboard/CapitalChart";
 import type { PriceHistoryPoint } from "@/lib/api/types";
 
 vi.mock("recharts", async () => {
@@ -71,5 +71,16 @@ describe("CapitalChart", () => {
     render(<CapitalChart {...defaultProps} isDemo={true} />);
 
     expect(screen.getByText(/demo/)).toBeInTheDocument();
+  });
+
+  it("formats intraday axis labels as time for hourly charts", () => {
+    expect(formatCapitalAxisDate(Date.parse("2026-06-14T13:30:00Z"), "24h")).toMatch(/1:30\s*PM|13:30/);
+    expect(formatCapitalAxisDate(Date.parse("2026-06-14T13:30:00Z"), "1h")).toMatch(/1:30\s*PM|13:30/);
+  });
+
+  it("includes the date when the range spans multiple days", () => {
+    const label = formatCapitalAxisDate(Date.parse("2026-06-15T13:30:00Z"), "7d");
+    expect(label).toMatch(/Jun\s+15/i);
+    expect(label).toMatch(/1:30\s*PM|13:30/);
   });
 });

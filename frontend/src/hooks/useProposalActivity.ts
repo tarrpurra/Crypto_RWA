@@ -2,13 +2,15 @@ import { useMemo } from "react";
 
 import { usePersistentState } from "@/hooks/use-persistent-state";
 
-export type ProposalActivityType = "created" | "approved" | "rejected" | "submitted";
+export type ProposalActivityType = "created" | "approved" | "rejected" | "submitted" | "executed";
+export type ProposalActivityActor = "ai" | "user" | "system";
 
 export interface ProposalActivityEntry {
   proposalId: string;
   type: ProposalActivityType;
   message: string;
   timestamp: string;
+  actor?: ProposalActivityActor;
   hash?: string;
   chainId?: number;
 }

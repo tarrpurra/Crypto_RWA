@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Archivo+Black&family=Black+Ops+One&family=Bebas+Neue&family=Inter:wght@400;500;600;700&family=Literata:wght@300&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -237,7 +237,7 @@ body {
 
 @layer utilities {
   .font-code {
-    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+    font-family: var(--font-mono);
   }
   .text-up {
     color: hsl(var(--chart-up));
@@ -309,6 +309,9 @@ body {
     background: hsl(var(--background));
   }
   .landing-page {
+    --lp-font-brand: "Black Ops One", system-ui, sans-serif;
+    --lp-font-heading: "Archivo Black", system-ui, sans-serif;
+    --lp-font-body: "Literata", Georgia, serif;
     --background: 34 50% 5%;
     --foreground: 46 58% 90%;
     --lp-bg: 34 50% 5%;
@@ -326,6 +329,27 @@ body {
     --landing-overlay: radial-gradient(circle at top, hsl(var(--primary) / 0.08), transparent 40%), linear-gradient(to bottom, hsl(0 0% 2% / 0.04), hsl(0 0% 2% / 0.34));
     --hero-vignette: radial-gradient(circle_at_50%_30%, transparent_0%, rgb(0 0 0 / 0.14)_56%, rgb(0 0 0 / 0.66)_100%);
     color-scheme: dark;
+  }
+  .landing-page .font-display {
+    font-family: var(--lp-font-heading);
+  }
+  .landing-page .font-sans {
+    font-family: var(--lp-font-body);
+  }
+  .landing-page .font-brand {
+    font-family: var(--lp-font-brand);
+  }
+  .landing-page h1,
+  .landing-page h2,
+  .landing-page h3,
+  .landing-page h4,
+  .landing-page h5,
+  .landing-page h6 {
+    font-family: var(--lp-font-heading);
+  }
+  .landing-page p {
+    font-family: var(--lp-font-body);
+    font-weight: 300;
   }
   .landing-ambient {
     background: var(--landing-ambient);
@@ -456,6 +480,44 @@ body {
   .to-lp-surface { --tw-gradient-to: hsl(var(--lp-surface)); }
   .shadow-hard { box-shadow: 0 18px 40px -26px hsl(var(--lp-gold) / 0.65), 0 0 0 1px hsl(var(--lp-gold) / 0.08); }
   .hover\:shadow-hard:hover { box-shadow: 0 20px 46px -28px hsl(var(--lp-gold) / 0.72), 0 0 0 1px hsl(var(--lp-gold) / 0.1); }
+
+  .strategy-studio-theme [class*="bg-[#0E0B06]/95"] { background-color: hsl(var(--background) / 0.95) !important; }
+  .strategy-studio-theme [class*="bg-[#150F07]/70"] { background-color: hsl(var(--surface-2) / 0.7) !important; }
+  .strategy-studio-theme [class*="bg-[#150F07]/50"] { background-color: hsl(var(--surface-2) / 0.5) !important; }
+  .strategy-studio-theme [class*="bg-[#D4962A]/15"] { background-color: hsl(var(--primary) / 0.15) !important; }
+  .strategy-studio-theme [class*="bg-[#D4962A]/10"] { background-color: hsl(var(--primary) / 0.1) !important; }
+  .strategy-studio-theme [class*="bg-[#0E0B06]"] { background-color: hsl(var(--background)) !important; }
+  .strategy-studio-theme [class*="bg-[#1E1509]"] { background-color: hsl(var(--card)) !important; }
+  .strategy-studio-theme [class*="bg-[#150F07]"] { background-color: hsl(var(--surface-2)) !important; }
+  .strategy-studio-theme [class*="bg-[#1C150D]"] { background-color: hsl(var(--surface-3)) !important; }
+  .strategy-studio-theme [class*="bg-[#D4962A]"] { background-color: hsl(var(--primary)) !important; }
+  .strategy-studio-theme [class*="text-[#A08858]/70"] { color: hsl(var(--muted-foreground) / 0.7) !important; }
+  .strategy-studio-theme [class*="text-[#A08858]/60"] { color: hsl(var(--muted-foreground) / 0.6) !important; }
+  .strategy-studio-theme [class*="text-[#A08858]/40"] { color: hsl(var(--muted-foreground) / 0.4) !important; }
+  .strategy-studio-theme [class*="text-[#F4EDD6]/90"] { color: hsl(var(--foreground) / 0.9) !important; }
+  .strategy-studio-theme [class*="text-[#D4962A]/90"] { color: hsl(var(--primary) / 0.9) !important; }
+  .strategy-studio-theme [class*="text-[#F4EDD6]"] { color: hsl(var(--foreground)) !important; }
+  .strategy-studio-theme [class*="text-[#A08858]"] { color: hsl(var(--muted-foreground)) !important; }
+  .strategy-studio-theme [class*="text-[#D4962A]"] { color: hsl(var(--primary)) !important; }
+  .strategy-studio-theme [class*="text-[#0E0B06]"] { color: hsl(var(--primary-foreground)) !important; }
+  .strategy-studio-theme [class*="border-[#3A2812]/50"] { border-color: hsl(var(--border) / 0.5) !important; }
+  .strategy-studio-theme [class*="border-[#3A2812]/40"] { border-color: hsl(var(--border) / 0.4) !important; }
+  .strategy-studio-theme [class*="border-[#3A2812]/30"] { border-color: hsl(var(--border) / 0.3) !important; }
+  .strategy-studio-theme [class*="border-[#D4962A]/40"] { border-color: hsl(var(--primary) / 0.4) !important; }
+  .strategy-studio-theme [class*="border-[#D4962A]/30"] { border-color: hsl(var(--primary) / 0.3) !important; }
+  .strategy-studio-theme [class*="border-[#D4962A]/20"] { border-color: hsl(var(--primary) / 0.2) !important; }
+  .strategy-studio-theme [class*="border-[#D4962A]"] { border-color: hsl(var(--primary)) !important; }
+  .strategy-studio-theme [class*="border-[#3A2812]"] { border-color: hsl(var(--border)) !important; }
+  .strategy-studio-theme [class*="ring-[#D4962A]"] { --tw-ring-color: hsl(var(--primary)) !important; }
+  .strategy-studio-theme [class*="caret-[#F4EDD6]"] { caret-color: hsl(var(--foreground)) !important; }
+  .strategy-studio-theme [class*="placeholder:text-[#A08858]/30"]::placeholder { color: hsl(var(--muted-foreground) / 0.3) !important; }
+  .strategy-studio-theme [class*="hover:bg-[#1E1509]"]:hover { background-color: hsl(var(--surface-2)) !important; }
+  .strategy-studio-theme [class*="hover:bg-[#150F07]"]:hover { background-color: hsl(var(--surface-3)) !important; }
+  .strategy-studio-theme [class*="hover:bg-[#b0781e]"]:hover { background-color: hsl(var(--gold-hover)) !important; }
+  .strategy-studio-theme [class*="hover:text-[#D4962A]"]:hover { color: hsl(var(--primary)) !important; }
+  .strategy-studio-theme [class*="hover:text-[#F4EDD6]"]:hover { color: hsl(var(--foreground)) !important; }
+  .strategy-studio-theme [class*="focus:bg-[#1E1509]"]:focus { background-color: hsl(var(--surface-2)) !important; }
+  .strategy-studio-theme [class*="focus:text-[#D4962A]"]:focus { color: hsl(var(--primary)) !important; }
 }
 
 /* Landing page animations */

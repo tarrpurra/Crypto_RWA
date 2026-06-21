@@ -22,12 +22,12 @@ export function HeroSection() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
             >
-              <div className="mb-6 inline-flex items-center gap-1.5 rounded-full border border-lp-gold/20 bg-lp-gold/10 px-3.5 py-1">
+              <div className="mb-6 inline-flex items-center gap-1.5 rounded-full border border-lp-gold bg-white px-3.5 py-1">
                 <span className="relative flex h-2 w-2">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-lp-gold opacity-75" />
                   <span className="relative inline-flex h-2 w-2 rounded-full bg-lp-gold" />
                 </span>
-                <span className="font-sans text-[12px] font-medium text-lp-gold">
+                <span className="font-sans text-[12px] font-medium text-black">
                   Mantle Turing Test 2026 · AI × RWA Track · Live on Sepolia
                 </span>
               </div>
@@ -62,7 +62,7 @@ export function HeroSection() {
             >
               Autonomous USDY + mETH optimisation on Mantle L2.
               Every decision logged on-chain. Permanently verifiable.
-              Human vs AI benchmarked.
+              Built for continuous execution with full operator visibility.
             </motion.p>
 
             <motion.div
@@ -75,7 +75,7 @@ export function HeroSection() {
                 to="/dashboard"
                 className="group hover:bg-gold-hover flex h-[50px] items-center gap-2 rounded-lg bg-lp-gold px-[30px] font-display text-[14px] font-semibold text-lp-bg shadow-[0_0_28px_hsl(var(--lp-gold)/0.22)] transition-all duration-200 hover:-translate-y-0.5 active:scale-[0.98]"
               >
-                <span>Start Trading &rarr;</span>
+                <span>Start Allocating &rarr;</span>
               </Link>
             </motion.div>
 

@@ -9,7 +9,8 @@ def generate_deterministic_explanation(
     portfolio: PortfolioSnapshot,
     risk: RiskSnapshot,
     decision: AllocationDecision,
-    rebalance_actions: list[RebalanceAction]
+    rebalance_actions: list[RebalanceAction],
+    drift_tolerance_pct: float = 0.03,
 ) -> dict[str, object]:
     """
     Generates a high-quality, structured reasoning payload deterministically.
@@ -32,7 +33,7 @@ def generate_deterministic_explanation(
             f"No portfolio adjustments are recommended at this time. Current exposures "
             f"closely align with the {decision.profile_name} profile targets (USDY: {decision.target_weights.get('USDY', 0)*100:.1f}%, "
             f"mETH: {decision.target_weights.get('mETH', 0)*100:.1f}%). "
-            f"Drifts are within the active 1.5% tolerance threshold. Risk levels remain stable at {risk.total_score:.1f} ({risk.risk_band})."
+            f"Drifts are within the active {drift_tolerance_pct * 100:.1f}% tolerance threshold. Risk levels remain stable at {risk.total_score:.1f} ({risk.risk_band})."
         )
         notes.append("Exposures aligned within tolerance.")
         notes.append(f"Risk checks passed. Score: {risk.total_score:.1f}")
@@ -46,13 +47,13 @@ def generate_deterministic_explanation(
         summary = (
             f"A portfolio rebalance is recommended to realign exposures with the {decision.profile_name} profile targets. "
             f"The proposed rebalance includes: {', '.join(actions_desc)}. "
-            f"Drifts from target weights exceeded the 1.5% tolerance threshold. "
+            f"Drifts from target weights exceeded the {drift_tolerance_pct * 100:.1f}% tolerance threshold. "
             f"Active risk score is {risk.total_score:.1f} ({risk.risk_band}), permitting execution under current bounds. "
             f"All trade sizes have been paced and clipped to prevent excessive price slippage or DEX liquidity impact."
         )
         
         # Add specific notes
-        notes.append("Drifts exceeded active tolerance threshold of 1.5%.")
+        notes.append(f"Drifts exceeded active tolerance threshold of {drift_tolerance_pct * 100:.1f}%.")
         notes.append("Concentration constraints and minimum cash buffer policies applied.")
         notes.append("Trade amounts clipped in accordance with volume pacing rules.")
         confidence = 0.90

@@ -40,15 +40,30 @@ function formatTooltipDate(timestamp: number) {
   });
 }
 
-function formatAxisDate(timestamp: number, sameDayRange: boolean) {
+export function formatCapitalAxisDate(timestamp: number, range: string) {
   const date = new Date(timestamp);
-  if (sameDayRange) {
+  if (range === "7d") {
+    return date.toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
+
+  if (range === "1h" || range === "6h" || range === "24h") {
     return date.toLocaleTimeString("en-US", {
       hour: "numeric",
       minute: "2-digit",
     });
   }
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function formatCurrency(value: number) {
@@ -176,11 +191,6 @@ export function CapitalChart({
   const title = selectedSeries ? `${selectedSeries} price history` : "Token price history";
   const latestValue = chartData[chartData.length - 1]?.value ?? null;
 
-  const sameDayRange =
-    chartData.length > 1
-      ? new Date(chartData[0].timestamp).toDateString() === new Date(chartData[chartData.length - 1].timestamp).toDateString()
-      : false;
-
   const bucketLabel = BUCKET_OPTIONS.find((o) => o.value === bucket)?.label ?? "1H";
   const rangeLabel = RANGE_OPTIONS.find((o) => o.value === range)?.label ?? "24H";
 
@@ -295,7 +305,7 @@ export function CapitalChart({
                 tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10, fontFamily: "Space Grotesk" }}
                 dy={4}
                 interval="preserveStartEnd"
-                tickFormatter={(value: number) => formatAxisDate(value, sameDayRange)}
+                tickFormatter={(value: number) => formatCapitalAxisDate(value, range)}
                 scale="time"
               />
               <YAxis

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from web3 import Web3
 
 from services.agent.app.api import (
     allocation_router,
@@ -24,6 +25,17 @@ from services.agent.app.core.settings import get_settings
 
 settings = get_settings()
 configure_logging(settings)
+
+
+def _validate_executor_vault_configuration() -> None:
+    vault_address = (settings.executor_vault_address or "").strip()
+    if not vault_address:
+        return
+    if not Web3.is_address(vault_address):
+        raise RuntimeError(f"EXECUTOR_VAULT_ADDRESS is not a valid EVM address: {vault_address}")
+
+
+_validate_executor_vault_configuration()
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
 

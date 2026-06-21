@@ -21,7 +21,6 @@ from services.agent.modules.strategy_policy.schemas import (
     StrategyTemplateListResponse,
     StrategyValidationResponse,
     StrategyVersionListResponse,
-    StrategyActiveVersionUpdateRequest,
 )
 from services.agent.modules.strategy_policy.simulation_runner import SimulationContext, run_simulation
 from services.agent.repositories.db.market_repository import MarketDataRepository
@@ -55,16 +54,24 @@ class StrategyActivationService:
             status_code="DATA_FRESH",
             status_label="DATA_FRESH",
             status_reason="Strategy versions loaded.",
-            versions=self.repository.list_versions(),
+            versions=self.repository.list_versions(user_address=user_address),
         )
 
-    def audit(self, version: str | None = None) -> StrategyAuditListResponse:
+    def audit(self, version: str | None = None, user_address: str | None = None) -> StrategyAuditListResponse:
         strategy_version = None
         if version:
-            matched = next((item.id for item in self.repository.list_versions() if item.version == version), None)
+            matched_version = self.repository.get_version(version, user_address=user_address)
+            if matched_version is None and user_address:
+                fallback_version = self.repository.get_version(version)
+                if fallback_version is not None and fallback_version.user_address is None:
+                    matched_version = fallback_version
+            matched = matched_version.id if matched_version else None
             if matched is None:
                 raise HTTPException(status_code=404, detail={"status": "rejected", "message": f"Strategy version not found: {version}"})
             strategy_version = matched
+        elif user_address:
+            active_version = self.repository.get_active_version(user_address=user_address, include_fallback=True)
+            strategy_version = active_version.id if active_version else None
         return StrategyAuditListResponse(
             status="ok",
             status_code="DATA_FRESH",
@@ -74,11 +81,11 @@ class StrategyActivationService:
         )
 
     def active_state(self, user_address: str | None = None) -> StrategyActiveResponse:
-        active_version = self.repository.get_active_version()
+        active_version = self.repository.get_active_version(user_address=user_address, include_fallback=True)
         scheduler = None
         if active_version is not None:
             scheduler = self.repository.get_scheduler(strategy_version_id=active_version.id)
-        versions = self.repository.list_versions()
+        versions = self.repository.list_versions(user_address=user_address)
         audit_events = self.repository.list_audit_events(strategy_version_id=active_version.id if active_version else None)
         templates = self.repository.list_templates()
         last_validation = self.repository.latest_validation(user_address=user_address)
@@ -246,21 +253,12 @@ class StrategyActivationService:
         )
         return self.active_state(user_address=request.user_address)
 
-    def update_active(self, request: StrategyActiveVersionUpdateRequest) -> StrategyActiveResponse:
-        draft_request = StrategyPolicyDraftRequest(
-            user_address=request.user_address,
-            strategy_text=request.strategy_text,
-            policy_json=request.policy_json,
-            template_id=request.template_id,
-            actor=request.actor,
-        )
-        return self.activate(draft_request)
-
-    def revert(self, version: str, actor: str | None = None) -> StrategyActiveResponse:
-        reverted = self.repository.revert_version(version, actor=actor)
+    def revert(self, version: str, actor: str | None = None, user_address: str | None = None) -> StrategyActiveResponse:
+        scope_user = user_address or actor
+        reverted = self.repository.revert_version(version, actor=actor, user_address=scope_user)
         if reverted is None:
             raise HTTPException(status_code=404, detail={"status": "rejected", "message": f"Strategy version not found: {version}"})
-        record = self.repository.get_active_version_record()
+        record = self.repository.get_active_version_record(user_address=reverted.user_address)
         if record is not None:
             self.repository.save_audit_event(
                 strategy_version_id=record.id,
@@ -268,12 +266,14 @@ class StrategyActivationService:
                 actor=actor or "operator",
                 details_json={"version": version},
             )
-        return self.active_state()
+        return self.active_state(user_address=reverted.user_address)
 
-    def update_scheduler(self, version: str | None, market_check_interval_seconds: int, quote_refresh_interval_seconds: int, risk_recompute_interval_seconds: int, execution_window_seconds: int, actor: str | None = None) -> StrategySchedulerSettingsResponse:
-        active_version = self.repository.get_active_version_record()
+    def update_scheduler(self, version: str | None, market_check_interval_seconds: int, quote_refresh_interval_seconds: int, risk_recompute_interval_seconds: int, execution_window_seconds: int, actor: str | None = None, user_address: str | None = None) -> StrategySchedulerSettingsResponse:
+        scope_user = user_address or actor
+        active_version = self.repository.get_active_version_record(user_address=scope_user)
         if version:
-            active_version = next((record for record in self._version_records() if record.version == version), None)
+            scoped_version = self.repository.get_version(version, user_address=scope_user)
+            active_version = next((record for record in self._version_records() if scoped_version and record.id == scoped_version.id), None)
         if active_version is None:
             raise HTTPException(status_code=404, detail={"status": "rejected", "message": "No active strategy version is available."})
         scheduler = self.repository.save_scheduler(
@@ -299,7 +299,7 @@ class StrategyActivationService:
             template_name=template.name if template else None,
             policy_json=request.policy_json,
         )
-        active_version = self.repository.get_active_version()
+        active_version = self.repository.get_active_version(user_address=request.user_address, include_fallback=True)
         baseline = active_version.active_policy_json if active_version else None
         validation = validate_policy(policy, scan=scan, baseline=baseline)
         return StrategyEvaluation(scan=scan, validation=validation, policy_json=policy)

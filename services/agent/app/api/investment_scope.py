@@ -98,8 +98,16 @@ def _resolved_price_map(
 
 
 def _target_weights(scope: InvestmentScopeInput, settings: Settings) -> tuple[str, dict[str, float]]:
-    normalized_profile = resolve_requested_profile_name(scope.risk_profile, settings.target_chain.value)
-    profile_name, ai_weights, _ = resolve_target_weights(normalized_profile, settings.target_chain.value)
+    normalized_profile = resolve_requested_profile_name(
+        scope.risk_profile,
+        settings.target_chain.value,
+        user_address=scope.wallet_address,
+    )
+    profile_name, ai_weights, _ = resolve_target_weights(
+        normalized_profile,
+        settings.target_chain.value,
+        user_address=scope.wallet_address,
+    )
     return profile_name, dict(ai_weights)
 
 

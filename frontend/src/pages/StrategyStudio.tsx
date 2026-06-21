@@ -61,6 +61,7 @@ import type {
   StrategyVersionRecordResponse,
   StrategyValidationError,
 } from "@/lib/api/types";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 const FALLBACK_POLICY: StrategyPolicyConfig = {
@@ -110,6 +111,7 @@ Require multi-sig approval for transactions exceeding 500 ETH equivalent.
 // Fallback procedure
 If execution fails or slippage exceeds threshold, revert to stablecoin baseline strategy.`;
 const SEEDED_DEFAULT_STRATEGY_TEXT = "Seeded default strategy policy.";
+const SUPPORTED_STRATEGY_ASSETS = ["USDY", "mETH", "WMNT"] as const;
 
 function highlightPrompt(text: string): string {
   if (!text) return "";
@@ -457,8 +459,6 @@ export default function StrategyStudio() {
   const templatesQuery = useStrategyTemplates();
   const activeQuery = useStrategyActive(operatorAddress);
   const versionsQuery = useStrategyVersions(operatorAddress);
-  const auditQuery = useStrategyAudit(activeQuery.data?.active_version?.version ?? null);
-
   const createDraftMutation = useCreateStrategyDraft();
   const validateMutation = useValidateStrategy();
   const simulateMutation = useSimulateStrategy();
@@ -472,6 +472,13 @@ export default function StrategyStudio() {
   const activeScheduler = activeData?.scheduler ?? null;
   const templates = useMemo(() => templatesQuery.data?.templates ?? [], [templatesQuery.data?.templates]);
   const versions = useMemo(() => versionsQuery.data?.versions ?? activeData?.versions ?? [], [versionsQuery.data?.versions, activeData?.versions]);
+  const scopedActiveVersion = useMemo(
+    () => versions.find((version) => version.status === "active") ?? null,
+    [versions],
+  );
+  const auditVersion = scopedActiveVersion?.version ?? activeVersion?.version ?? null;
+  const auditUserAddress = scopedActiveVersion?.user_address ? operatorAddress : null;
+  const auditQuery = useStrategyAudit(auditVersion, auditUserAddress);
   const auditEvents = useMemo(() => auditQuery.data?.events ?? activeData?.audit_events ?? [], [auditQuery.data?.events, activeData?.audit_events]);
 
   const [strategyText, setStrategyText] = useState(DEFAULT_STRATEGY_TEXT);
@@ -490,7 +497,6 @@ export default function StrategyStudio() {
   } | null>(null);
 
   // Local UI States
-  const [assetsInputText, setAssetsInputText] = useState("");
   const [minProtocolTier, setMinProtocolTier] = useState("Tier 2");
   const [kellyAggressiveness, setKellyAggressiveness] = useState(0.45);
   const [riskEngineSensitivity, setRiskEngineSensitivity] = useState(65);
@@ -519,21 +525,22 @@ export default function StrategyStudio() {
   const runtimeMode = healthQuery.data?.runtime_mode ?? serviceQuery.data?.runtime_mode ?? "Loading";
   const aiAccessEnabled = settingsQuery.data?.ai_decision_maker_enabled ?? serviceQuery.data?.ai_decision_maker_enabled ?? false;
 
+  const resolveTemplateId = (policyConfig: StrategyPolicyConfig) =>
+    String(
+      templates.find((template) => template.policy_json.objective === policyConfig.objective)?.id ??
+        "",
+    );
+
   useEffect(() => {
     if (initializedRef.current || !activeData) {
       return;
     }
     if (activeVersion) {
-      const templateId = String(
-        templates.find((template) => template.policy_json.objective === activeVersion.active_policy_json.objective)?.id ??
-          templates[0]?.id ??
-          "",
-      );
+      const templateId = resolveTemplateId(activeVersion.active_policy_json);
       const resolvedText = resolveStrategyText(activeVersion.raw_prompt_snapshot, activeVersion.active_policy_json);
       setPolicy(clonePolicy(activeVersion.active_policy_json));
       setStrategyText(resolvedText);
       setSelectedTemplateId(templateId);
-      setAssetsInputText(activeVersion.active_policy_json.allowed_assets.join(", "));
       baselineSignatureRef.current = snapshotSignature(
         resolvedText,
         activeVersion.active_policy_json,
@@ -544,11 +551,20 @@ export default function StrategyStudio() {
       setPolicy(clonePolicy(templates[0].policy_json));
       setStrategyText(templates[0].prompt_text);
       setSelectedTemplateId(templateId);
-      setAssetsInputText(templates[0].policy_json.allowed_assets.join(", "));
       baselineSignatureRef.current = snapshotSignature(templates[0].prompt_text, templates[0].policy_json, templateId);
     }
     initializedRef.current = true;
   }, [activeData, activeVersion, templates]);
+
+  useEffect(() => {
+    if (!templates.length) {
+      return;
+    }
+    const resolvedTemplateId = resolveTemplateId(policy);
+    if (resolvedTemplateId && resolvedTemplateId !== selectedTemplateId) {
+      setSelectedTemplateId(resolvedTemplateId);
+    }
+  }, [policy, selectedTemplateId, templates]);
 
   const selectedTemplate = useMemo<StrategyTemplateSummary | null>(() => {
     const numericId = Number.parseInt(selectedTemplateId, 10);
@@ -629,6 +645,25 @@ export default function StrategyStudio() {
     baselineSignatureRef.current = snapshotSignature(nextText, nextPolicy, nextTemplateId);
   };
 
+  const syncAllowedAssets = (nextAssets: string[]) => {
+    const normalizedAssets = nextAssets
+      .map((asset) => asset.trim())
+      .filter(Boolean)
+      .filter((asset, index, values) => values.findIndex((value) => value.toLowerCase() === asset.toLowerCase()) === index);
+    updatePolicy((draft) => ({
+      ...draft,
+      allowed_assets: normalizedAssets,
+    }));
+  };
+
+  const addSupportedAsset = (asset: (typeof SUPPORTED_STRATEGY_ASSETS)[number]) => {
+    syncAllowedAssets([...policy.allowed_assets, asset]);
+  };
+
+  const removeAllowedAsset = (asset: string) => {
+    syncAllowedAssets(policy.allowed_assets.filter((allowedAsset) => allowedAsset !== asset));
+  };
+
   const applyTemplate = (template: StrategyTemplateSummary | null) => {
     if (!template) {
       return;
@@ -636,7 +671,6 @@ export default function StrategyStudio() {
     setPolicy(clonePolicy(template.policy_json));
     setStrategyText(template.prompt_text);
     setSelectedTemplateId(String(template.id));
-    setAssetsInputText(template.policy_json.allowed_assets.join(", "));
     setValidationError(null);
     setLastActionMessage(`Applied ${template.name}.`);
   };
@@ -652,7 +686,6 @@ export default function StrategyStudio() {
       setPolicy(clonePolicy(activeVersion.active_policy_json));
       setStrategyText(resolvedText);
       setSelectedTemplateId(templateId);
-      setAssetsInputText(activeVersion.active_policy_json.allowed_assets.join(", "));
       setLastActionMessage("Loaded active strategy into the editor.");
       return;
     }
@@ -660,7 +693,6 @@ export default function StrategyStudio() {
       setPolicy(clonePolicy(templates[0].policy_json));
       setStrategyText(templates[0].prompt_text);
       setSelectedTemplateId(String(templates[0].id));
-      setAssetsInputText(templates[0].policy_json.allowed_assets.join(", "));
       setLastActionMessage(`Loaded ${templates[0].name}.`);
     }
   };
@@ -696,16 +728,27 @@ export default function StrategyStudio() {
         const details = error.details;
         if (details && typeof details === "object" && details.detail) {
           const det = details.detail;
+          const errors = det.errors || [];
           setValidationError({
             status: det.status || "rejected",
             safety_score: det.safety_score,
-            errors: det.errors || [],
+            errors,
             safe_suggestion: det.safe_suggestion,
             message: det.message || "Strategy simulation failed validation checks.",
+          });
+          const specificTips = errors.slice(0, 2).map((e: any) => e.message).filter(Boolean);
+          const tipText = specificTips.length ? ` ${specificTips.join(" ")}` : "";
+          toast.error("Strategy simulation failed", {
+            description: `Fix the issues below${tipText}. Adjust the prompt text, risk weights, or hard limits and try again.`,
+            duration: 6000,
           });
         } else {
           setValidationError({
             message: error.message || "An unexpected error occurred during simulation.",
+          });
+          toast.error("Simulation failed", {
+            description: error.message || "An unexpected error occurred. Please try again.",
+            duration: 5000,
           });
         }
         setLastActionMessage("Simulation failed due to policy validation exceptions.");
@@ -723,7 +766,6 @@ export default function StrategyStudio() {
           : strategyText;
         setPolicy(clonePolicy(nextPolicy));
         setStrategyText(nextText);
-        setAssetsInputText(nextPolicy.allowed_assets.join(", "));
         setValidationResult(response.last_validation ?? null);
         setSimulationResult(response.latest_simulation ?? null);
         syncBaseline(nextText, nextPolicy, selectedTemplateId);
@@ -733,16 +775,27 @@ export default function StrategyStudio() {
         const details = error.details;
         if (details && typeof details === "object" && details.detail) {
           const det = details.detail;
+          const errors = det.errors || [];
           setValidationError({
             status: det.status || "rejected",
             safety_score: det.safety_score,
-            errors: det.errors || [],
+            errors,
             safe_suggestion: det.safe_suggestion,
             message: det.message || "Strategy activation failed validation checks.",
+          });
+          const specificTips = errors.slice(0, 2).map((e: any) => e.message).filter(Boolean);
+          const tipText = specificTips.length ? ` ${specificTips.join(" ")}` : "";
+          toast.error("Strategy validation failed", {
+            description: `Fix the errors below${tipText}. Adjust the prompt text, risk weights, or hard limits and try again.`,
+            duration: 6000,
           });
         } else {
           setValidationError({
             message: error.message || "An unexpected error occurred while saving the strategy.",
+          });
+          toast.error("Failed to save strategy", {
+            description: error.message || "An unexpected error occurred. Please try again.",
+            duration: 5000,
           });
         }
         setLastActionMessage("Save failed due to policy validation exceptions.");
@@ -754,6 +807,7 @@ export default function StrategyStudio() {
     revertMutation.mutate(
       {
         version,
+        user_address: operatorAddress,
         actor: operatorAddress,
       },
       {
@@ -763,7 +817,6 @@ export default function StrategyStudio() {
             const nextText = resolveStrategyText(response.active_version.raw_prompt_snapshot, nextPolicy);
             setPolicy(clonePolicy(nextPolicy));
             setStrategyText(nextText);
-            setAssetsInputText(nextPolicy.allowed_assets.join(", "));
             syncBaseline(nextText, nextPolicy, selectedTemplateId);
           }
           setLastActionMessage(`Reverted to ${version}.`);
@@ -780,6 +833,7 @@ export default function StrategyStudio() {
         quote_refresh_interval_seconds: policy.quote_refresh_interval_seconds,
         risk_recompute_interval_seconds: policy.risk_recompute_interval_seconds,
         execution_window_seconds: policy.proposal_expiry_seconds,
+        user_address: operatorAddress,
         actor: operatorAddress,
       },
       {
@@ -817,7 +871,8 @@ export default function StrategyStudio() {
       title="Strategic Studio"
       description="Bounded strategy policy controls, simulation, versioning, and audit history backed by the strategy policy service."
     >
-      <div className="font-sans select-none space-y-8 rounded-xl border border-[#3A2812] bg-[#0E0B06] p-6 text-[#F4EDD6] sm:p-8 pb-28">
+      <div className="strategy-studio-theme">
+      <div className="font-sans select-none space-y-8 rounded-xl border border-[#3A2812] bg-[#0E0B06] p-6 pb-28 text-[#F4EDD6] sm:p-8">
         {/* Header Block */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -908,6 +963,11 @@ export default function StrategyStudio() {
                       <Select
                         value={selectedTemplateId}
                         onValueChange={(val) => {
+                          const nextTemplate = templates.find((template) => String(template.id) === val) ?? null;
+                          if (nextTemplate) {
+                            applyTemplate(nextTemplate);
+                            return;
+                          }
                           setSelectedTemplateId(val);
                           setValidationError(null);
                         }}
@@ -924,14 +984,6 @@ export default function StrategyStudio() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <Button
-                      variant="outline"
-                      className="rounded-none border-[#3A2812] hover:bg-[#150F07] hover:text-[#D4962A] h-9 text-xs uppercase font-semibold text-[#F4EDD6]"
-                      onClick={() => applyTemplate(selectedTemplate)}
-                      disabled={!selectedTemplate}
-                    >
-                      Apply Template
-                    </Button>
                   </div>
 
                   {/* Custom Code Editor */}
@@ -1088,22 +1140,30 @@ export default function StrategyStudio() {
                   <div className="space-y-2.5">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#A08858]">Allowed Assets</span>
-                      <span className="text-[10px] text-[#A08858]/70 font-mono">Comma-separated</span>
+                      <span className="text-[10px] text-[#A08858]/70 font-mono">Supported assets only</span>
                     </div>
-                    <Input
-                      value={assetsInputText}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setAssetsInputText(val);
-                        const parsed = val.split(",").map(a => a.trim()).filter(Boolean);
-                        updatePolicy((draft) => ({
-                          ...draft,
-                          allowed_assets: parsed,
-                        }));
-                      }}
-                      placeholder="USDY, mETH, WMNT"
-                      className="rounded-none border-[#3A2812] bg-[#150F07] text-[#F4EDD6] text-xs h-9 focus-visible:ring-[#D4962A]"
-                    />
+                    <div className="flex flex-wrap gap-2">
+                      {SUPPORTED_STRATEGY_ASSETS.map((asset) => {
+                        const alreadySelected = policy.allowed_assets.includes(asset);
+                        return (
+                          <Button
+                            key={asset}
+                            type="button"
+                            variant="outline"
+                            className={cn(
+                              "rounded-none border-[#3A2812] bg-[#150F07] px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em]",
+                              alreadySelected
+                                ? "text-[#D4962A] hover:bg-[#150F07] hover:text-[#D4962A]"
+                                : "text-[#F4EDD6] hover:bg-[#150F07] hover:text-[#D4962A]",
+                            )}
+                            onClick={() => addSupportedAsset(asset)}
+                            disabled={alreadySelected}
+                          >
+                            + {asset}
+                          </Button>
+                        );
+                      })}
+                    </div>
                     <div className="flex flex-wrap gap-1 mt-1">
                       {policy.allowed_assets.map((asset) => (
                         <Badge
@@ -1111,7 +1171,15 @@ export default function StrategyStudio() {
                           variant="outline"
                           className="rounded-none border-[#3A2812] bg-[#150F07] text-[#F4EDD6] font-mono text-[10px] px-2 py-0.5"
                         >
-                          {asset}
+                          <button
+                            type="button"
+                            onClick={() => removeAllowedAsset(asset)}
+                            className="inline-flex items-center gap-1"
+                            aria-label={`Remove ${asset}`}
+                          >
+                            <span>{asset}</span>
+                            <span className="text-[#A08858]">x</span>
+                          </button>
                         </Badge>
                       ))}
                     </div>
@@ -1571,13 +1639,15 @@ export default function StrategyStudio() {
               onClick={onSaveStrategy}
               disabled={!strategyText.trim() || updateActiveMutation.isPending || Math.abs(riskWeightTotal - 1.0) > 0.001}
               className="rounded-none bg-[#D4962A] hover:bg-[#b0781e] text-[#0E0B06] h-9 text-xs uppercase tracking-wider font-bold"
+              title="Save changes and activate this strategy for the connected wallet"
             >
               <Save className="mr-2 h-3.5 w-3.5" />
-              {updateActiveMutation.isPending ? "Saving..." : "Save Strategy"}
+              {updateActiveMutation.isPending ? "Saving..." : "Save and Activate"}
             </Button>
           </div>
         </div>
       </section>
+      </div>
     </PageScaffold>
   );
 }

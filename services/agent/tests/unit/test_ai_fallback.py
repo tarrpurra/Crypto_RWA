@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 import json
 from datetime import datetime
+from unittest.mock import patch
 from services.agent.app.core.settings import get_settings
 from services.agent.app.schemas.portfolio import PortfolioSnapshot, AssetBalance
 from services.agent.app.schemas.risk import RiskSnapshot
@@ -11,6 +12,32 @@ from services.agent.strategies.decision_templates.fallback_rules import generate
 from services.agent.strategies.decision_templates.prompt_builder import build_allocation_prompt, build_reasoning_prompt
 from services.agent.strategies.decision_templates.parser import generate_recommendation_reasoning, _override_with_ai_decision
 from services.agent.modules.oracle.freshness import utc_now
+
+
+class _FakeGeminiResponse:
+    def __init__(self, status_code: int, payload: dict) -> None:
+        self.status_code = status_code
+        self._payload = payload
+        self.text = json.dumps(payload)
+
+    def json(self) -> dict:
+        return self._payload
+
+
+class _FakeGeminiClient:
+    def __init__(self, response: _FakeGeminiResponse) -> None:
+        self._response = response
+        self.requests: list[dict] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def post(self, url, params=None, json=None):
+        self.requests.append({"url": url, "params": params, "json": json})
+        return self._response
 
 
 class AiFallbackTests(unittest.TestCase):
@@ -67,6 +94,16 @@ class AiFallbackTests(unittest.TestCase):
         self.assertEqual(explanation["confidence"], 0.95)
         self.assertGreater(len(explanation["notes"]), 0)
 
+    def test_deterministic_explanation_uses_supplied_drift_tolerance(self) -> None:
+        explanation = generate_deterministic_explanation(
+            self.portfolio,
+            self.risk,
+            self.decision,
+            [],
+            drift_tolerance_pct=0.015,
+        )
+        self.assertIn("1.5% tolerance threshold", explanation["reasoning_summary"])
+
     def test_deterministic_explanation_pause(self) -> None:
         self.decision.recommended_action = "PAUSE"
         self.risk.risk_band = "RISK_VETO"
@@ -113,6 +150,10 @@ class AiFallbackTests(unittest.TestCase):
         prompt = build_reasoning_prompt(self.portfolio, self.risk, self.decision, [], ai_decision_maker=False)
         self.assertIn("AI Reasoning Layer", prompt)
         self.assertNotIn("recommended_action", prompt)
+        self.assertIn('"target_weights"', prompt)
+        self.assertIn('"current_drift_pct"', prompt)
+        self.assertIn('"drift_tolerance_pct"', prompt)
+        self.assertIn("Confidence should reflect how directly the provided data supports the conclusion", prompt)
 
     def test_prompt_builder_includes_wallet_holdings_and_swap_routes(self) -> None:
         allocation_prompt = build_allocation_prompt(
@@ -186,6 +227,51 @@ class AiFallbackTests(unittest.TestCase):
         }
         overridden = _override_with_ai_decision(self.decision, ai_output)
         self.assertEqual(overridden.recommended_action, self.decision.recommended_action)
+
+    @patch("services.agent.strategies.decision_templates.parser.get_settings")
+    @patch("services.agent.strategies.decision_templates.parser.httpx.AsyncClient")
+    def test_recommendation_parser_uses_gemini_when_configured(self, mock_async_client, mock_get_settings) -> None:
+        from services.agent.strategies.decision_templates.parser import generate_recommendation_reasoning
+
+        mock_get_settings.return_value = type(self.settings)(
+            _env_file=None,
+            ai_reasoning_enabled=True,
+            ai_reasoning_provider="gemini",
+            gemini_api_key="test-key",
+            gemini_model="gemini-2.0-flash",
+            gemini_timeout_seconds=5.0,
+        )
+
+        gemini_json = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": json.dumps(
+                                    {
+                                        "reasoning_summary": "Gemini reasoned about the portfolio.",
+                                        "confidence": 0.91,
+                                        "notes": ["gemini"],
+                                    }
+                                )
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        fake_client = _FakeGeminiClient(_FakeGeminiResponse(200, gemini_json))
+        mock_async_client.return_value.__aenter__.return_value = fake_client
+
+        import asyncio
+
+        response = asyncio.run(generate_recommendation_reasoning(self.portfolio, self.risk, self.decision, []))
+
+        self.assertEqual(response.reasoning_summary, "Gemini reasoned about the portfolio.")
+        self.assertEqual(response.confidence, 0.91)
+        self.assertEqual(response.ai_debug.mode, "gemini:gemini-2.0-flash")
+        self.assertEqual(response.metadata["ai_model"], "gemini:gemini-2.0-flash")
 
 
 if __name__ == "__main__":

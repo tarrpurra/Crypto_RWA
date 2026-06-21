@@ -10,7 +10,6 @@ import { cn } from "@/lib/utils";
 const navLinks = [
   { label: "How It Works", href: "#how-it-works" },
   { label: "Glass Box", href: "#glass-box" },
-  { label: "Human vs AI", href: "#human-vs-ai" },
 ];
 
 const easeOut = [0.23, 1, 0.32, 1] as const;
@@ -89,7 +88,7 @@ export function LandingNav({ isVisible, isSettled, isLaunching }: LandingNavProp
                     delay: isLaunching ? 0.92 : 0.16,
                     ease: easeOut,
                   }}
-                  className="block font-display text-xl font-semibold tracking-tight text-lp-fg"
+                  className="block font-brand text-xl tracking-tight text-lp-fg"
                 >
                   YieldMind
                 </motion.span>
@@ -141,19 +140,11 @@ export function LandingNav({ isVisible, isSettled, isLaunching }: LandingNavProp
               }}
               className="hidden items-center gap-4 md:flex"
             >
-              <a
-                href="https://explorer.sepolia.mantle.xyz"
-                target="_blank"
-                rel="noreferrer"
-                className="border border-lp-border bg-transparent px-5 py-2 text-sm font-medium text-lp-fg-secondary transition-all duration-200 hover:border-lp-gold/40 hover:text-lp-fg"
-              >
-                Mantlescan &uarr;
-              </a>
               <Link
                 to="/dashboard"
                 className="border-2 border-lp-gold bg-lp-gold px-6 py-2.5 text-sm font-semibold text-lp-bg transition-opacity duration-200 hover:opacity-90 active:scale-[0.98]"
               >
-                Start Trading &rarr;
+                Start Allocating &rarr;
               </Link>
             </motion.div>
           </div>
@@ -178,7 +169,7 @@ export function LandingNav({ isVisible, isSettled, isLaunching }: LandingNavProp
               onClick={() => setMobileOpen(false)}
               className="mt-2 inline-block border-2 border-lp-gold bg-lp-gold px-6 py-2.5 text-sm font-semibold text-lp-bg"
             >
-              Start Trading &rarr;
+              Start Allocating &rarr;
             </Link>
           </div>
         </div>

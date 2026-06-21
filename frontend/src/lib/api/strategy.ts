@@ -35,6 +35,6 @@ export const strategyApi = {
   versions: (userAddress?: string | null) => request<StrategyVersionListResponse>(`/api/strategy/versions${queryString({ user_address: userAddress })}`),
   revert: (body: StrategyRevertRequest) => request<StrategyActiveResponse>("/api/strategy/revert", "POST", body),
   scheduler: (body: StrategySchedulerUpdateRequest) => request<StrategySchedulerSettingsResponse>("/api/strategy/scheduler", "POST", body),
-  audit: (version?: string | null) => request<StrategyAuditListResponse>(`/api/strategy/audit${queryString({ version })}`),
+  audit: (version?: string | null, userAddress?: string | null) =>
+    request<StrategyAuditListResponse>(`/api/strategy/audit${queryString({ version, user_address: userAddress })}`),
 };
-

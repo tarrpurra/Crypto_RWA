@@ -5,7 +5,7 @@ const steps = [
     n: "01",
     tag: "Live Data",
     title: "Multi-source market feeds",
-    body: "Real-time USDY, mETH, ETH, and MNT prices streamed from Pyth Network Hermes and the Ondo on-chain oracle. Aave APY tracking and swap quotes from AGNI Finance V3 and Merchant Moe pools — all in one live dashboard.",
+    body: "Real-time USDY, mETH, ETH, and MNT prices streamed from Pyth Network Hermes and the Ondo on-chain oracle. Aave APY tracking and swap quotes from AGNI Finance V3 and Merchant Moe pools, all in one live dashboard.",
     chips: ["Pyth", "Ondo", "Aave"],
   },
   {
@@ -19,10 +19,10 @@ const steps = [
     n: "03",
     tag: "Simulation",
     title: "Transparent decision preview",
-    body: "The Glass Box shows every stage of the AI pipeline — Oracle, LLM Reason, Kelly, Risk Gate, Execution — as a live simulation. A Human vs AI slider lets you compare your own allocation against the agent's recommendation side by side.",
-    chips: ["Pipeline", "Simulation", "Side-by-side"],
+    body: "The Glass Box shows every stage of the AI pipeline, Oracle, LLM Reason, Kelly, Risk Gate, and Execution, as a live simulation so every allocation decision can be reviewed before execution.",
+    chips: ["Pipeline", "Simulation", "Reviewable"],
   },
-];
+] as const;
 
 function StepCard({ s }: { s: (typeof steps)[number] }) {
   return (

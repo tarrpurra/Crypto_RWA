@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="docs/assets/logo.svg" alt="YieldMind logo" width="80" height="80" />
-
 # YieldMind
 
 **Autonomous AI yield optimisation on Mantle L2**
@@ -118,105 +116,27 @@ If the composite score exceeds 70 out of 100, the cycle is vetoed. The veto is l
 
 ## Getting started
 
-### Prerequisites
-
 ```bash
-node >= 20.0.0
+node >= 20
 python >= 3.11
 foundry (forge, cast, anvil)
 ```
 
-### Clone and install
-
 ```bash
 git clone https://github.com/YOUR_ORG/yieldmind
 cd yieldmind
-
-# Install contract dependencies
-cd contracts && forge install
-
-# Install AI agent dependencies
-cd ../agent && pip install -r requirements.txt
-
-# Install frontend dependencies
-cd ../frontend && npm install
+cp services/agent/.env.example services/agent/.env
 ```
 
-### Configure environment
+For local development, update `services/agent/.env` with the values you actually use, then start the stack with `docker compose up --build`.
+
+If you want to work on a subsystem directly:
 
 ```bash
-cp agent/.env.example agent/.env
+cd contracts && forge test
+cd services/agent && python -m unittest discover tests -v
+cd frontend && npm install && npm run dev
 ```
-
-Open `agent/.env` and fill in:
-
-```env
-# Chain
-TARGET_CHAIN=mantle_sepolia
-MANTLE_SEPOLIA_RPC_URL=https://rpc.sepolia.mantle.xyz
-CHAIN_ID=5003
-
-# Agent wallet (create a dedicated wallet — never use a personal wallet)
-AGENT_PRIVATE_KEY=0x_YOUR_DEDICATED_AGENT_WALLET_PRIVATE_KEY
-
-# Oracle
-ONDO_USDY_ORACLE_METHOD_SELECTOR=0x98d5fdca
-METH_USD_PYTH_FEED_ID=0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace
-
-# Testnet mock mode (set true for Sepolia testing)
-SEPOLIA_MOCK_PRICES_ENABLED=true
-SEPOLIA_MOCK_ROUTES_ENABLED=true
-
-# AI model
-AI_REASONING_ENABLED=false
-```
-
-*The Pyth feed ID above is for ETH/USD — mETH/USD is derived by multiplying by the on-chain mETH/ETH exchange rate. I am reasonably confident this feed ID is correct but recommend verifying at pyth.network/price-feeds.*
-
-### Deploy contracts
-
-```bash
-cd contracts
-
-# Run local tests first
-forge test
-
-# Deploy to Mantle Sepolia
-forge script script/Deploy.s.sol \
-  --rpc-url https://rpc.sepolia.mantle.xyz \
-  --broadcast \
-  --verify
-```
-
-Get testnet MNT for gas from [faucet.testnet.mantle.xyz](https://faucet.testnet.mantle.xyz).
-
-### Train the model
-
-```bash
-cd agent
-python scripts/collect_data.py    # fetches 90 days of historical data
-python scripts/train_model.py     # trains yield scorer, outputs model.pkl
-python scripts/run_backtest.py    # generates simulations/results/backtest_90d.json
-```
-
-### Start the agent
-
-```bash
-cd agent
-uvicorn api.main:app --reload &   # start FastAPI server
-python agent/main.py              # start the decision loop
-```
-
-The agent will begin running 2-hour cycles. Check Mantlescan for `DecisionLogged` events.
-
-### Start the frontend
-
-```bash
-cd frontend
-npm run dev
-```
-
-Dashboard available at `http://localhost:3000`.
 
 ---
 

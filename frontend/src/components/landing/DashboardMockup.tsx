@@ -16,7 +16,7 @@ export function DashboardMockup() {
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-lp-gold opacity-75" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-lp-gold" />
         </span>
-        <span className="font-mono text-[10px] text-lp-fg-secondary">YieldMind · Mantle Sepolia</span>
+        <span className="font-mono text-[10px] text-lp-fg-secondary"><span className="font-brand">YieldMind</span> · Mantle Sepolia</span>
         <span className="ml-auto font-mono text-[10px] text-lp-fg-muted">
           Block <span className="text-lp-gold">#9,241,847</span>
         </span>

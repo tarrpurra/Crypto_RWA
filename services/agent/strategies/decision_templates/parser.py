@@ -41,12 +41,105 @@ def _extract_json_payload(text: str) -> dict:
         candidate = candidate[start : end + 1]
     parsed = json.loads(candidate)
     if not isinstance(parsed, dict):
-        raise ValueError("Ollama response JSON was not an object.")
+        raise ValueError("AI response JSON was not an object.")
     return parsed
 
 
 def _log_ai_prompt(prompt_kind: str, prompt: str) -> None:
     logger.info("%s system prompt (%d chars):\n%s", prompt_kind, len(prompt), prompt)
+
+
+def _normalized_provider_name(provider: str | None) -> str:
+    return (provider or "").strip().lower() or "gemini"
+
+
+def _extract_gemini_text(payload: dict) -> str:
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list):
+        return ""
+
+    parts: list[str] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        content = candidate.get("content")
+        if not isinstance(content, dict):
+            continue
+        content_parts = content.get("parts")
+        if not isinstance(content_parts, list):
+            continue
+        for part in content_parts:
+            if isinstance(part, dict):
+                text = part.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+    return "\n".join(parts).strip()
+
+
+async def _call_ollama_json(prompt: str, settings, prompt_kind: str) -> tuple[dict, str, str]:
+    ollama_url = settings.ollama_url.rstrip("/")
+    model = settings.effective_ai_reasoning_model
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "format": "json",
+    }
+    _log_ai_prompt(prompt_kind, prompt)
+    logger.info("Sending prompt to Ollama at %s/api/generate", ollama_url)
+    async with httpx.AsyncClient(timeout=settings.effective_ai_reasoning_timeout_seconds) as client:
+        res = await client.post(f"{ollama_url}/api/generate", json=payload)
+    if res.status_code != 200:
+        raise RuntimeError(f"Ollama returned HTTP {res.status_code}.")
+    result_json = res.json()
+    raw_response_text = result_json.get("response", "").strip()
+    if not raw_response_text:
+        raise RuntimeError("Ollama returned an empty response.")
+    parsed = _extract_json_payload(raw_response_text)
+    return parsed, raw_response_text, f"ollama:{model}"
+
+
+async def _call_gemini_json(prompt: str, settings, prompt_kind: str) -> tuple[dict, str, str]:
+    api_key = settings.effective_ai_reasoning_api_key
+    if not api_key:
+        raise RuntimeError("Gemini API key is not configured.")
+
+    base_url = settings.effective_ai_reasoning_base_url
+    model = settings.effective_ai_reasoning_model
+    url = f"{base_url}/models/{model}:generateContent"
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": prompt}],
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.2,
+            "responseMimeType": "application/json",
+        },
+    }
+    _log_ai_prompt(prompt_kind, prompt)
+    logger.info("Sending prompt to Gemini at %s", url)
+    async with httpx.AsyncClient(timeout=settings.effective_ai_reasoning_timeout_seconds) as client:
+        res = await client.post(url, params={"key": api_key}, json=payload)
+    if res.status_code != 200:
+        raise RuntimeError(f"Gemini returned HTTP {res.status_code}.")
+    result_json = res.json()
+    raw_response_text = _extract_gemini_text(result_json)
+    if not raw_response_text:
+        raise RuntimeError("Gemini returned an empty response.")
+    parsed = _extract_json_payload(raw_response_text)
+    return parsed, raw_response_text, f"gemini:{model}"
+
+
+async def _call_ai_json(prompt: str, settings, prompt_kind: str) -> tuple[dict, str, str]:
+    provider = _normalized_provider_name(settings.ai_reasoning_provider)
+    if provider == "gemini":
+        return await _call_gemini_json(prompt, settings, prompt_kind)
+    if provider == "ollama":
+        return await _call_ollama_json(prompt, settings, prompt_kind)
+    raise RuntimeError(f"Unsupported AI reasoning provider: {settings.ai_reasoning_provider}")
 
 
 def _override_with_ai_decision(
@@ -201,57 +294,18 @@ async def generate_ai_allocation(
     ai_response_text: str | None = None
     parsed: dict = {}
     fallback_reason: str | None = None
+    provider_label = settings.ai_reasoning_model_label
 
-    ollama_url = settings.ollama_url
-    ai_available = False
-
-    try:
-        if not settings.ai_reasoning_enabled:
-            fallback_reason = "AI reasoning is disabled by settings."
-        elif settings.ai_reasoning_provider != "ollama":
-            fallback_reason = f"AI reasoning provider is {settings.ai_reasoning_provider}, not ollama."
-        else:
-            async with httpx.AsyncClient(timeout=3.0) as client:
-                response = await client.get(f"{ollama_url}/api/tags")
-                if response.status_code == 200:
-                    ai_available = True
-                    logger.info("Ollama allocation probe succeeded at %s/api/tags", ollama_url)
-                else:
-                    fallback_reason = f"Ollama probe returned HTTP {response.status_code}"
-                    logger.warning(
-                        "Ollama allocation probe failed: url=%s/api/tags status=%s body=%s",
-                        ollama_url,
-                        response.status_code,
-                        response.text[:300],
-                    )
-    except Exception as exc:
-        fallback_reason = f"Ollama not reachable at {ollama_url}: {type(exc).__name__}: {exc}"
-        logger.warning("Ollama allocation probe failed: %s", fallback_reason)
-
-    if ai_available:
+    if not settings.ai_reasoning_enabled:
+        fallback_reason = "AI reasoning is disabled by settings."
+    else:
         try:
-            payload = {
-                "model": settings.ai_reasoning_model,
-                "prompt": prompt,
-                "stream": False,
-                "format": "json",
-            }
-            _log_ai_prompt("Allocation AI", prompt)
-            logger.info("Sending allocation prompt to Ollama at %s/api/generate", ollama_url)
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                res = await client.post(f"{ollama_url}/api/generate", json=payload)
-                if res.status_code == 200:
-                    result_json = res.json()
-                    ai_response_text = result_json.get("response", "").strip()
-                    logger.info("Ollama allocation raw response: %s", ai_response_text)
-                    parsed = _extract_json_payload(ai_response_text)
-                    logger.info("Ollama allocation parsed response: %s", parsed)
-                else:
-                    fallback_reason = f"Ollama returned HTTP {res.status_code}"
-                    logger.warning("Ollama returned HTTP %s for allocation prompt.", res.status_code)
+            parsed, ai_response_text, provider_label = await _call_ai_json(prompt, settings, "Allocation AI")
+            logger.info("%s allocation raw response: %s", settings.normalized_ai_reasoning_provider.capitalize(), ai_response_text)
+            logger.info("%s allocation parsed response: %s", settings.normalized_ai_reasoning_provider.capitalize(), parsed)
         except Exception as exc:
+            fallback_reason = f"{settings.normalized_ai_reasoning_provider.capitalize()} allocation query failed: {exc}"
             logger.warning("AI allocation query failed: %s. Using deterministic fallback.", exc)
-            fallback_reason = str(exc)
 
     if not parsed:
         logger.info("AI allocation unavailable or failed; using deterministic allocation. reason=%s", fallback_reason)
@@ -380,92 +434,56 @@ async def generate_recommendation_reasoning(
 ) -> RecommendationResponse:
     settings = get_settings()
     ai_decision_maker = runtime_config.get_ai_decision_maker_enabled()
-    prompt = build_reasoning_prompt(portfolio, risk, decision, rebalance_actions, ai_decision_maker=ai_decision_maker)
+    prompt = build_reasoning_prompt(
+        portfolio,
+        risk,
+        decision,
+        rebalance_actions,
+        drift_tolerance_pct=settings.rebalance_drift_tolerance,
+        ai_decision_maker=ai_decision_maker,
+    )
 
     explanation = None
-    ai_disabled = True
     effective_decision = decision
     raw_response_text: str | None = None
     parsed_response: dict = {}
     fallback_reason: str | None = None
+    provider_label = settings.ai_reasoning_model_label
 
-    ollama_url = settings.ollama_url
-
-    try:
-        if not settings.ai_reasoning_enabled:
-            fallback_reason = "AI reasoning is disabled by settings."
-        elif settings.ai_reasoning_provider != "ollama":
-            fallback_reason = f"AI reasoning provider is {settings.ai_reasoning_provider}, not ollama."
-        else:
-            async with httpx.AsyncClient(timeout=3.0) as client:
-                response = await client.get(f"{ollama_url}/api/tags")
-                if response.status_code == 200:
-                    ai_disabled = False
-                    logger.info("Ollama reasoning probe succeeded at %s/api/tags", ollama_url)
-                else:
-                    fallback_reason = f"Ollama probe returned HTTP {response.status_code}"
-                    logger.warning(
-                        "Ollama reasoning probe failed: url=%s/api/tags status=%s body=%s",
-                        ollama_url,
-                        response.status_code,
-                        response.text[:300],
-                    )
-    except Exception as exc:
-        fallback_reason = f"Ollama not reachable at {ollama_url}: {type(exc).__name__}: {exc}"
-        logger.warning("Ollama reasoning probe failed: %s", fallback_reason)
-
-    if not ai_disabled:
+    if settings.ai_reasoning_enabled:
         try:
-            payload = {
-                "model": settings.ai_reasoning_model,
-                "prompt": prompt,
-                "stream": False,
-                "format": "json",
-            }
-            _log_ai_prompt("Reasoning AI", prompt)
-            logger.info("Sending prompt to Ollama at %s/api/generate", ollama_url)
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                res = await client.post(f"{ollama_url}/api/generate", json=payload)
-                if res.status_code == 200:
-                    result_json = res.json()
-                    raw_response_text = result_json.get("response", "").strip()
-                    logger.info("Ollama raw response: %s", raw_response_text)
-
-                    parsed = _extract_json_payload(raw_response_text)
-                    parsed_response = parsed
-                    logger.info("Ollama reasoning parsed response: %s", parsed_response)
-                    if ai_decision_maker:
-                        if "recommended_action" in parsed:
-                            explanation = {
-                                "reasoning_summary": parsed.get("reasoning_summary", effective_decision.reasoning),
-                                "confidence": float(parsed.get("confidence", 0.90)),
-                                "notes": list(parsed.get("notes", [])),
-                            }
-                    else:
-                        if "reasoning_summary" in parsed:
-                            explanation = {
-                                "reasoning_summary": parsed["reasoning_summary"],
-                                "confidence": float(parsed.get("confidence", 0.90)),
-                                "notes": list(parsed.get("notes", [])),
-                            }
-                    if explanation is None:
-                        fallback_reason = "AI response did not contain the expected reasoning fields."
-                else:
-                    raw_response_text = res.text.strip() or None
-                    fallback_reason = f"Ollama returned HTTP {res.status_code}."
-                    logger.warning(
-                        "Ollama generate returned non-200 response at %s/api/generate: status=%s body=%s",
-                        ollama_url,
-                        res.status_code,
-                        raw_response_text,
-                    )
+            parsed, raw_response_text, provider_label = await _call_ai_json(prompt, settings, "Reasoning AI")
+            parsed_response = parsed
+            logger.info("%s reasoning parsed response: %s", settings.normalized_ai_reasoning_provider.capitalize(), parsed_response)
+            if ai_decision_maker:
+                if "recommended_action" in parsed:
+                    explanation = {
+                        "reasoning_summary": parsed.get("reasoning_summary", effective_decision.reasoning),
+                        "confidence": float(parsed.get("confidence", 0.90)),
+                        "notes": list(parsed.get("notes", [])),
+                    }
+            else:
+                if "reasoning_summary" in parsed:
+                    explanation = {
+                        "reasoning_summary": parsed["reasoning_summary"],
+                        "confidence": float(parsed.get("confidence", 0.90)),
+                        "notes": list(parsed.get("notes", [])),
+                    }
+            if explanation is None:
+                fallback_reason = "AI response did not contain the expected reasoning fields."
         except Exception as exc:
             logger.warning("AI model query failed or output was invalid: %s. Falling back.", exc)
-            fallback_reason = str(exc)
+            fallback_reason = f"{settings.normalized_ai_reasoning_provider.capitalize()} reasoning query failed: {exc}"
             raw_response_text = raw_response_text or None
 
     if explanation is None:
-        explanation = generate_deterministic_explanation(portfolio, risk, decision, rebalance_actions)
+        explanation = generate_deterministic_explanation(
+            portfolio,
+            risk,
+            decision,
+            rebalance_actions,
+            drift_tolerance_pct=settings.rebalance_drift_tolerance,
+        )
         parsed_response = explanation if not parsed_response else parsed_response
         metadata = {"ai_reasoning_enabled": False, "mode": "fallback_deterministic"}
         ai_debug_mode = "fallback_deterministic"
@@ -474,12 +492,12 @@ async def generate_recommendation_reasoning(
         metadata = {
             "ai_reasoning_enabled": True,
             "mode": "ai_decision_maker" if ai_decision_maker else "ai_recommender",
-            "ai_model": f"ollama:{settings.ai_reasoning_model}",
+            "ai_model": provider_label,
             "ai_decision_maker": ai_decision_maker,
             "ai_overrode_deterministic": False,
             "ai_suggested_action": parsed_response.get("recommended_action") if isinstance(parsed_response, dict) else None,
         }
-        ai_debug_mode = f"ollama:{settings.ai_reasoning_model}"
+        ai_debug_mode = provider_label
         used_fallback = False
 
     asset_focus = "PORTFOLIO"

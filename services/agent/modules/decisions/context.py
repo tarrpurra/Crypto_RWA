@@ -64,9 +64,17 @@ def risk_assessment_to_snapshot(assessment: RiskAssessmentResponse) -> RiskSnaps
     )
 
 
-def _active_profile_name(settings: Settings, requested_profile_name: str | None = None) -> str:
+def _active_profile_name(
+    settings: Settings,
+    requested_profile_name: str | None = None,
+    wallet_address: str | None = None,
+) -> str:
     configured_name = requested_profile_name or profiles.ACTIVE_PROFILE_NAME or settings.allocation_profile_name
-    return resolve_requested_profile_name(configured_name, settings.target_chain.value)
+    return resolve_requested_profile_name(
+        configured_name,
+        settings.target_chain.value,
+        user_address=wallet_address,
+    )
 
 
 def _latest_market_context_best_effort() -> tuple[list[NormalizedPriceSnapshot] | None, list[NormalizedQuoteSnapshot] | None]:
@@ -172,8 +180,16 @@ def _build_scoped_portfolio(
     settings: Settings | None = None,
 ) -> tuple[PortfolioSnapshotResponse, dict[str, float], str]:
     settings = settings or get_settings()
-    requested_profile = resolve_requested_profile_name(risk_profile, settings.target_chain.value)
-    profile_name, target_weights, strategy_policy = resolve_target_weights(requested_profile, settings.target_chain.value)
+    requested_profile = resolve_requested_profile_name(
+        risk_profile,
+        settings.target_chain.value,
+        user_address=wallet_address,
+    )
+    profile_name, target_weights, strategy_policy = resolve_target_weights(
+        requested_profile,
+        settings.target_chain.value,
+        user_address=wallet_address,
+    )
     canonical_profile = profile_name
     prices = _latest_price_map()
     deposit_price = _resolve_price(deposit_asset_symbol, prices, settings)
@@ -301,7 +317,11 @@ async def build_decision_context(
             else None
         )
         effective_profile = canonical_profile
-        _, _, strategy_policy = resolve_target_weights(canonical_profile, settings.target_chain.value)
+        _, _, strategy_policy = resolve_target_weights(
+            canonical_profile,
+            settings.target_chain.value,
+            user_address=wallet_address,
+        )
     else:
         portfolio_task = current_portfolio(
             wallet_address=wallet_address,
@@ -315,8 +335,12 @@ async def build_decision_context(
         portfolio = internal_snapshot_from_response(portfolio_response)
         actual_portfolio_response = portfolio_response
         actual_portfolio = _portfolio_snapshot_from_response(portfolio_response)
-        requested_profile = _active_profile_name(settings, profile_name)
-        effective_profile, target_weights, strategy_policy = resolve_target_weights(requested_profile, settings.target_chain.value)
+        requested_profile = _active_profile_name(settings, profile_name, wallet_address)
+        effective_profile, target_weights, strategy_policy = resolve_target_weights(
+            requested_profile,
+            settings.target_chain.value,
+            user_address=wallet_address,
+        )
 
     prices, quotes = market_context
     risk_assessment = RiskEngine().evaluate(

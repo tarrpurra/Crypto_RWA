@@ -29,11 +29,14 @@ export function ProposalNotification() {
       return;
     }
 
-    // In AI mode proposals skip PENDING_APPROVAL and land in PROPOSAL_APPROVED/EXECUTING.
-    // Track newly-approved proposals so the notification fires when the AI acts.
+    // In AI mode proposals skip PENDING_APPROVAL and land in PROPOSAL_APPROVED/EXECUTING/EXECUTED.
+    // Track newly-processed proposals so the notification fires when the AI acts.
     const trackedProposals =
       proposalsResponse?.proposals?.filter(
-        (p) => p.status_code === "PROPOSAL_APPROVED" || p.status_code === "PROPOSAL_EXECUTING",
+        (p) =>
+          p.status_code === "PROPOSAL_APPROVED" ||
+          p.status_code === "PROPOSAL_EXECUTING" ||
+          p.status_code === "PROPOSAL_EXECUTED",
       ) ?? [];
 
     if (!initializedRef.current) {
@@ -64,7 +67,7 @@ export function ProposalNotification() {
           </span>
         </div>
         <p className="text-sm text-foreground">AI created and auto-approved a trade proposal</p>
-        <p className="mt-1 text-xs text-muted-foreground">Plan {planTo} is queued for vault execution.</p>
+        <p className="mt-1 text-xs text-muted-foreground">Plan {planTo} is submitted to vault execution.</p>
         <div className="mt-3 flex gap-2">
           <button
             type="button"
