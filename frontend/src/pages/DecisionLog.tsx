@@ -622,7 +622,10 @@ export default function DecisionLog() {
             });
           }
           setPlan(response);
-          const firstProposalId = response.linked_proposals[0]?.proposal_id;
+          const winnerProposal = aiDecisionMakerEnabled
+            ? [...response.linked_proposals].sort((left, right) => right.amount - left.amount)[0] ?? null
+            : null;
+          const firstProposalId = (winnerProposal ?? response.linked_proposals[0])?.proposal_id;
           if (firstProposalId) {
             setActiveProposalId(firstProposalId);
             if (aiDecisionMakerEnabled) {
@@ -633,6 +636,16 @@ export default function DecisionLog() {
           }
           for (const proposal of response.linked_proposals) {
             if (aiDecisionMakerEnabled) {
+              if (winnerProposal && proposal.proposal_id !== winnerProposal.proposal_id) {
+                appendEntry({
+                  proposalId: proposal.proposal_id,
+                  type: "rejected",
+                  actor: "ai",
+                  message: `AI rejected competing proposal in favor of ${winnerProposal.token_in_symbol} -> ${winnerProposal.token_out_symbol}.`,
+                  timestamp: new Date().toISOString(),
+                });
+                continue;
+              }
               try {
                 const execution = await executeProposal.mutateAsync(proposal.proposal_id);
                 appendEntry({
@@ -736,13 +749,10 @@ export default function DecisionLog() {
     });
     const autoCreateEligible =
       Boolean(effectiveScope) &&
-      (aiDecisionMakerEnabled || reviewModeRequested || routeHasInvestmentParams);
+      (aiDecisionMakerEnabled || reviewModeRequested || routeHasInvestmentParams || scopedRecommendationReady);
     if (!autoCreateEligible || plan?.plan_id || createPlan.isPending) {
       if (!autoCreateEligible || plan?.plan_id) {
         autoCreatePlanRef.current = null;
-      }
-      if (scopedRecommendationReady && effectiveScope && !aiDecisionMakerEnabled && !reviewModeRequested && !routeHasInvestmentParams) {
-        console.info("[frontend][trade] scoped recommendation ready, proposal creation deferred until explicit review");
       }
       return;
     }
@@ -760,7 +770,7 @@ export default function DecisionLog() {
     toast.info(
       aiDecisionMakerEnabled
         ? "Full access AI is creating a guarded proposal from the current recommendation."
-        : "Review mode is creating an approval-ready proposal from the current scoped recommendation.",
+        : "Recommendation mode is creating an approval-ready proposal from the current scoped recommendation.",
     );
     void handleCreatePlan();
   }, [
