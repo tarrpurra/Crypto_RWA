@@ -298,6 +298,13 @@ async def create_investment_plan(request: InvestmentPlanRequest) -> InvestmentPl
         plan_response.approval_enabled,
         settings.ai_decision_maker_enabled,
     )
+    if plan_response.linked_proposals:
+        logger.info(
+            "Investment plan approval mode: %s",
+            "AI auto-approval enabled"
+            if settings.ai_decision_maker_enabled
+            else "Human approval required",
+        )
     for proposal, calldata in proposal_pairs:
         _save_proposal_record(proposal, calldata)
     if plan_response.linked_proposals:
@@ -391,7 +398,9 @@ async def approve_proposal(proposal_id: str) -> ProposalMutationResponse:
                 f"current status is {record.status_code} which is a terminal state."
             ),
         )
+    logger.info("Human approval requested for proposal %s", proposal_id)
     _update_proposal_status(proposal_id, "PROPOSAL_APPROVED")
+    logger.info("Human approval recorded for proposal %s", proposal_id)
     return ProposalMutationResponse(
         status="ok",
         status_code="PROPOSAL_APPROVED",

@@ -427,9 +427,7 @@ describe("DecisionLog", () => {
   it("creates an approval-ready proposal from the recommendation flow", async () => {
     renderPage();
 
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalled();
-    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     const createCall = fetchMock.mock.calls.find(
       ([input, init]) => String(input).includes("/proposals/create") && init?.method === "POST",
@@ -447,7 +445,7 @@ describe("DecisionLog", () => {
     });
   });
 
-  it("creates a proposal from a scoped rebalance recommendation without review query params", async () => {
+  it("does not create a proposal from a scoped rebalance recommendation without review query params", async () => {
     allocationState.response = {
       status: "ok",
       status_code: "RISK_NORMAL",
@@ -480,23 +478,12 @@ describe("DecisionLog", () => {
 
     renderPageAt("/decision-log");
 
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalled();
-    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     const createCall = fetchMock.mock.calls.find(
       ([input, init]) => String(input).includes("/proposals/create") && init?.method === "POST",
     );
 
-    expect(createCall).toBeDefined();
-    const [, init] = createCall as [RequestInfo | URL, RequestInit];
-    const body = JSON.parse(String(init.body));
-    expect(body).toMatchObject({
-      wallet_address: walletState.walletAddress,
-      deposit_asset_symbol: "MNT",
-      deposit_amount: 49,
-      risk_profile: "Balanced",
-      allocation_mode: "AI Suggested",
-    });
+    expect(createCall).toBeUndefined();
   });
 });

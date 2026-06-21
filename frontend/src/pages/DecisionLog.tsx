@@ -736,10 +736,13 @@ export default function DecisionLog() {
     });
     const autoCreateEligible =
       Boolean(effectiveScope) &&
-      (aiDecisionMakerEnabled || reviewModeRequested || routeHasInvestmentParams || scopedRecommendationReady);
+      (aiDecisionMakerEnabled || reviewModeRequested || routeHasInvestmentParams);
     if (!autoCreateEligible || plan?.plan_id || createPlan.isPending) {
       if (!autoCreateEligible || plan?.plan_id) {
         autoCreatePlanRef.current = null;
+      }
+      if (scopedRecommendationReady && effectiveScope && !aiDecisionMakerEnabled && !reviewModeRequested && !routeHasInvestmentParams) {
+        console.info("[frontend][trade] scoped recommendation ready, proposal creation deferred until explicit review");
       }
       return;
     }
@@ -757,7 +760,7 @@ export default function DecisionLog() {
     toast.info(
       aiDecisionMakerEnabled
         ? "Full access AI is creating a guarded proposal from the current recommendation."
-        : "Recommendation mode is creating an approval-ready proposal from the current scoped recommendation.",
+        : "Review mode is creating an approval-ready proposal from the current scoped recommendation.",
     );
     void handleCreatePlan();
   }, [
@@ -779,6 +782,10 @@ export default function DecisionLog() {
   const handleApprove = async () => {
     if (!activeProposalId || !selectedSessionPlan) {
       toast.error("Select a linked proposal before approving.");
+      return;
+    }
+    if (selectedProposalStatusCode && selectedProposalStatusCode !== "PROPOSAL_PENDING_APPROVAL") {
+      toast.error("This proposal is already finalized and cannot be approved again.");
       return;
     }
     const proposalIds = aiDecisionMakerEnabled
@@ -964,11 +971,17 @@ export default function DecisionLog() {
   const selectedStatusText = selectedProposalLog?.status_code
     ? formatDecisionStatus(selectedProposalLog.status_code)
     : selectedSessionPlan?.status_label ?? "Draft";
-  const selectedProposalPendingApproval = selectedProposalLog?.status_code === "PROPOSAL_PENDING_APPROVAL";
-  const selectedGuardBlocked = selectedProposalLog?.status_code === "PROPOSAL_REJECTED" || selectedSessionPlan?.approval_enabled === false;
+  const selectedProposalStatusCode = selectedProposalLog?.status_code ?? selectedPlanProposal?.status_code ?? null;
+  const selectedProposalPendingApproval = selectedProposalStatusCode === "PROPOSAL_PENDING_APPROVAL";
+  const selectedProposalFinalized = selectedProposalStatusCode
+    ? ["PROPOSAL_APPROVED", "PROPOSAL_EXECUTING", "PROPOSAL_EXECUTED", "PROPOSAL_REJECTED"].includes(selectedProposalStatusCode)
+    : false;
+  const selectedGuardBlocked = selectedProposalStatusCode === "PROPOSAL_REJECTED" || selectedSessionPlan?.approval_enabled === false;
   const selectedGuardState = selectedSessionPlan
     ? selectedGuardBlocked
       ? "Guardrail hold"
+      : selectedProposalFinalized
+        ? formatCompactLabel(selectedProposalStatusCode)
       : selectedProposalPendingApproval
         ? "Pending approval"
         : "Approval ready"
@@ -995,6 +1008,8 @@ export default function DecisionLog() {
       "Create a decision draft to review the AI recommendation.";
   const selectedCurrentBlocker = selectedProposalLog?.status_code === "PROPOSAL_REJECTED"
     ? "Execution cannot continue until a new approved proposal is created."
+    : selectedProposalFinalized && !selectedProposalPendingApproval
+      ? "This proposal is already finalized and cannot be approved again."
     : selectedProposalPendingApproval
       ? "Waiting for user approval before execution can continue."
     : hasBlockers[0] ??
@@ -1014,11 +1029,11 @@ export default function DecisionLog() {
   );
   const selectedExecutionLabel = hasBlockers.length > 0 || selectedProposalLog?.status_code === "PROPOSAL_REJECTED"
     ? "Execution blocked"
-    : selectedPlanProposal?.status_code === "PROPOSAL_EXECUTED"
+    : selectedProposalStatusCode === "PROPOSAL_EXECUTED"
       ? "Executed"
-      : selectedPlanProposal?.status_code === "PROPOSAL_APPROVED"
+      : selectedProposalStatusCode === "PROPOSAL_APPROVED"
         ? "Ready to execute"
-        : selectedPlanProposal?.status_code === "PROPOSAL_PENDING_APPROVAL"
+        : selectedProposalStatusCode === "PROPOSAL_PENDING_APPROVAL"
           ? "Pending approval"
           : "Review pending";
   const selectedSessionId = selectedProposalLog?.proposal_id
@@ -1323,7 +1338,7 @@ export default function DecisionLog() {
       </section>
 
       <Dialog open={proposalModalOpen && Boolean(activeProposalId || selectedSessionPlan)} onOpenChange={setProposalModalOpen}>
-        <DialogContent className="max-h-[88vh] max-w-5xl overflow-hidden border-border bg-background p-0">
+        <DialogContent className="flex h-[88vh] max-h-[88vh] max-w-5xl flex-col overflow-hidden border-border bg-background p-0">
           <DialogHeader className="border-b border-border/70 px-5 py-5 text-left">
             <DialogTitle className="text-2xl font-semibold uppercase tracking-[0.06em] text-foreground">
               {selectedStatusText}
@@ -1333,7 +1348,7 @@ export default function DecisionLog() {
             </DialogDescription>
           </DialogHeader>
 
-          <section className="terminal-panel flex min-h-0 flex-col overflow-hidden border-0 shadow-none">
+          <section className="terminal-panel flex min-h-0 flex-1 flex-col overflow-hidden border-0 shadow-none">
           <header className="border-b border-border/70 px-5 py-5">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -1403,25 +1418,18 @@ export default function DecisionLog() {
                   />
                 )}
 
-                <div className="flex flex-wrap gap-2 border-t border-border/70 pt-4">
-                  <Button onClick={handleCreatePlan} disabled={working || localWarnings.length > 0}>
-                    {createPlan.isPending ? "Creating..." : aiDecisionMakerEnabled ? "Create AI proposal" : "Create proposal"}
-                  </Button>
-                  <Button variant="outline" onClick={handleRefreshChecks}>
-                    Re-run checks
-                  </Button>
-                  <Button variant="outline" onClick={() => setActiveSessionTab("evidence")}>
-                    View evidence
-                  </Button>
-                  <Button variant="outline" onClick={() => setShowRiskDialog(true)} disabled={!selectedSessionPlan?.risk_assessment && !risk}>
-                    View risk details
-                  </Button>
-                </div>
-
                 <div className="flex flex-wrap gap-2">
                   {!aiDecisionMakerEnabled && (
                     <>
-                      <Button onClick={() => void handleApprove()} disabled={!activeProposalId || working || !selectedSessionPlan?.approval_enabled}>
+                      <Button
+                        onClick={() => void handleApprove()}
+                        disabled={
+                          !activeProposalId ||
+                          working ||
+                          !selectedSessionPlan?.approval_enabled ||
+                          !selectedProposalPendingApproval
+                        }
+                      >
                         {approveProposal.isPending ? "Approving..." : "Approve plan"}
                       </Button>
                       <Button variant="outline" onClick={handleReject} disabled={!activeProposalId || working}>
