@@ -20,7 +20,7 @@ export function ProblemSection() {
             No one is routing capital automatically based on that spread.
           </p>
           <p className="mt-3 font-sans text-[15px] leading-relaxed text-lp-fg-secondary">
-            Every cycle it sits static is yield left uncaptured. YieldMind closes that gap.
+            Every cycle it sits static is yield left uncaptured. <span className="font-brand">YieldMind</span> closes that gap.
           </p>
         </div>
         {/* Yield spread visual */}

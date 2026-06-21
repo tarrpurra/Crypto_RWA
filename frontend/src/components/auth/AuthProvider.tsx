@@ -77,6 +77,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(AUTH_TOKEN_KEY);
       window.localStorage.removeItem(PORTFOLIO_WALLET_KEY);
+      window.sessionStorage.removeItem(PORTFOLIO_WALLET_KEY);
       window.dispatchEvent(new Event(PORTFOLIO_WALLET_EVENT));
     }
     disconnect();

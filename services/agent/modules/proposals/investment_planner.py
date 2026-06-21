@@ -86,8 +86,16 @@ def _guard_thresholds(settings: Settings) -> tuple[Decimal, Decimal, Decimal, De
 
 def _normalize_weights(request: InvestmentPlanRequest, settings: Settings) -> tuple[dict[str, float], dict[str, float], list[str]]:
     requested_profile_name = str(request.risk_profile or "").strip()
-    profile_name = resolve_requested_profile_name(requested_profile_name, settings.target_chain.value)
-    profile_name, ai_weights, _ = resolve_target_weights(profile_name, settings.target_chain.value)
+    profile_name = resolve_requested_profile_name(
+        requested_profile_name,
+        settings.target_chain.value,
+        user_address=request.wallet_address,
+    )
+    profile_name, ai_weights, _ = resolve_target_weights(
+        profile_name,
+        settings.target_chain.value,
+        user_address=request.wallet_address,
+    )
     warnings: list[str] = []
     original_profile_name = profile_name
     if not profile_name.startswith("Custom Strategy"):
@@ -756,7 +764,11 @@ def build_investment_plan(
     risk: RiskAssessmentResponse,
     actual_portfolio: PortfolioSnapshotResponse | None = None,
 ) -> tuple[InvestmentPlanResponse, list[tuple[TradeProposal, str]]]:
-    normalized_profile = resolve_requested_profile_name(request.risk_profile, settings.target_chain.value)
+    normalized_profile = resolve_requested_profile_name(
+        request.risk_profile,
+        settings.target_chain.value,
+        user_address=request.wallet_address,
+    )
     deposit_amount = Decimal(str(request.deposit_amount))
     if deposit_amount <= 0:
         raise HTTPException(status_code=400, detail="Deposit amount must be greater than zero.")

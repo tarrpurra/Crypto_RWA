@@ -401,6 +401,7 @@ export interface StrategyAuditListResponse extends StatusEnvelope {
 
 export interface StrategyRevertRequest {
   version: string;
+  user_address?: string | null;
   actor?: string | null;
 }
 
@@ -410,6 +411,7 @@ export interface StrategySchedulerUpdateRequest {
   quote_refresh_interval_seconds: number;
   risk_recompute_interval_seconds: number;
   execution_window_seconds: number;
+  user_address?: string | null;
   actor?: string | null;
 }
 
@@ -611,7 +613,7 @@ export interface ProposalExecuteResponse extends StatusEnvelope {
   deadline: number
   nonce: number
   chain_id: number
-  hash?: string
+  tx_hash?: string | null
 }
 
 export interface AllocationTargetItem {

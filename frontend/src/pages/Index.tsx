@@ -5,6 +5,7 @@ import { useAuth } from "@/components/auth/AuthProvider";
 
 import { AIReasoningPanel } from "@/components/ai-reasoning/AIReasoningPanel";
 import { CapitalChart } from "@/components/dashboard/CapitalChart";
+import { DashboardGhostShell } from "@/components/dashboard/DashboardGhostShell";
 import { PortfolioAllocationChart } from "@/components/dashboard/PortfolioAllocationChart";
 import { PortfolioSummary } from "@/components/dashboard/PortfolioSummary";
 import { DepositModal } from "@/components/dashboard/DepositModal";
@@ -34,6 +35,8 @@ import type { PortfolioPosition, PortfolioSnapshotResponse } from "@/lib/api/typ
 
 const assetOptions = ["USDY", "mETH", "MNT"] as const;
 const riskProfiles = ["Defensive", "Balanced", "Yield-Seeking"];
+const REVIEW_TOAST_ID = "dashboard-review-recommendation";
+const READY_TOAST_ID = "dashboard-ready-recommendation";
 
 function toNumeric(value: string | number | null | undefined): number {
   if (typeof value === "number") {
@@ -208,7 +211,28 @@ const Index = () => {
   const chartDemo = methHistory.data?.demo ?? usdyHistory.data?.demo ?? false;
   const chartLoading = methHistory.isLoading || usdyHistory.isLoading || wmntHistory.isLoading || mntHistory.isLoading;
   const decisions = decisionsQuery.data;
+  const hasConnectedSupportedWallet = Boolean(
+    connectedWalletAddress && isSupportedChain,
+  );
   const availableRouteCount = routesQuery.data?.routes?.length ?? 0;
+  const backendWarmupLoading =
+    settingsQuery.isLoading ||
+    chainStatusQuery.isLoading ||
+    dashboardSummaryQuery.isLoading ||
+    allocationQuery.isLoading ||
+    decisionsQuery.isLoading ||
+    marketIngestionQuery.isLoading ||
+    latestPricesQuery.isLoading ||
+    latestQuotesQuery.isLoading ||
+    routesQuery.isLoading ||
+    vaultBalanceQuery.isLoading ||
+    walletBalanceQuery.isLoading ||
+    strategyActiveQuery.isLoading ||
+    methHistory.isLoading ||
+    usdyHistory.isLoading ||
+    wmntHistory.isLoading ||
+    mntHistory.isLoading;
+  const showDashboardGhostShell = hasConnectedSupportedWallet && backendWarmupLoading;
   const aiReasoningData = useMemo<AIReasoningData | undefined>(() => {
     if (!displayPortfolio || !risk || !decisions) {
       return undefined;
@@ -387,9 +411,6 @@ const Index = () => {
     settings?.ai_decision_maker_enabled,
   ]);
   const pendingProposal = dashboardSummary?.pending_proposal ?? null;
-  const hasConnectedSupportedWallet = Boolean(
-    connectedWalletAddress && isSupportedChain,
-  );
   const aiDecisionMakerEnabled = settings?.ai_decision_maker_enabled ?? false;
   const recommendationAction = (aiReasoningData?.summary.action ??
     allocation?.decision.recommended_action ??
@@ -490,6 +511,7 @@ const Index = () => {
       hasActivePlan
     ) {
       lastRecommendationToastRef.current = null;
+      toast.dismiss(REVIEW_TOAST_ID);
       return;
     }
 
@@ -506,6 +528,7 @@ const Index = () => {
     lastRecommendationToastRef.current = recommendationKey;
     toast.info(
       `Review ${swapRecommendations.length > 1 ? `${swapRecommendations.length} swap legs` : `${swapPairLabel ?? primarySwapRecommendation.asset_symbol} ${primarySwapRecommendation.action} ${primarySwapRecommendation.amount.toFixed(4)}`} on the trade page.`,
+      { id: REVIEW_TOAST_ID },
     );
   }, [
     aiDecisionMakerEnabled,
@@ -520,6 +543,7 @@ const Index = () => {
     if (proposalsQuery.isLoading || !primarySwapRecommendation) {
       autoCreateProposalRef.current = null;
       sessionStorage.removeItem("lastAutoCreateProposalKey");
+      toast.dismiss(READY_TOAST_ID);
       return;
     }
     const effectiveAmount =
@@ -553,6 +577,7 @@ const Index = () => {
     sessionStorage.setItem("lastAutoCreateProposalKey", autoCreateKey);
     toast.info(
       `Recommendation is ready for ${launchAssetSymbol}. Open Decision Log when you're ready to review the proposal.`,
+      { id: READY_TOAST_ID },
     );
   }, [
     connectedWalletAddress,
@@ -607,6 +632,9 @@ const Index = () => {
       >
         {/* Portfolio Section */}
         {hasConnectedSupportedWallet ? (
+          showDashboardGhostShell ? (
+            <DashboardGhostShell />
+          ) : (
           <>
             <PortfolioSummary
               portfolio={displayPortfolio}
@@ -658,6 +686,7 @@ const Index = () => {
               availableRouteCount={availableRouteCount}
             />
           </>
+          )
         ) : (
           <section className="terminal-panel border-primary/20 p-6">
             <div className="flex flex-col items-center gap-4 py-6">

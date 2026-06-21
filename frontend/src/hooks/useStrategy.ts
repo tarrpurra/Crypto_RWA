@@ -37,10 +37,10 @@ export function useStrategyVersions(userAddress?: string | null) {
   });
 }
 
-export function useStrategyAudit(version?: string | null) {
+export function useStrategyAudit(version?: string | null, userAddress?: string | null) {
   return useQuery({
-    queryKey: ["strategy", "audit", version ?? null],
-    queryFn: () => strategyApi.audit(version),
+    queryKey: ["strategy", "audit", version ?? null, userAddress ?? null],
+    queryFn: () => strategyApi.audit(version, userAddress),
     staleTime: 15_000,
     refetchInterval: 30_000,
   });
@@ -101,4 +101,3 @@ export function useUpdateStrategyScheduler() {
     onSuccess: () => invalidateStrategy(queryClient),
   });
 }
-

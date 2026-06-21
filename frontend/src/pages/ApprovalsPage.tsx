@@ -361,7 +361,7 @@ export default function ApprovalsPage() {
       </section>
 
       <Dialog open={Boolean(selectedProposal)} onOpenChange={(open) => !open && setSelectedProposalId(null)}>
-        <DialogContent className="max-w-2xl border-border bg-background">
+        <DialogContent className="max-w-2xl border-border bg-background max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Proposal review</DialogTitle>
             <DialogDescription>

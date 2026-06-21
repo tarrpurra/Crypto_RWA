@@ -155,30 +155,84 @@ class StrategyPolicyRepository:
             record = session.scalars(query).first()
         return self._draft_from_record(record) if record else None
 
+    @staticmethod
+    def _normalized_user_address(value: str | None) -> str | None:
+        normalized = str(value or "").strip().lower()
+        return normalized or None
+
+    @classmethod
+    def _matches_user_scope(cls, record_user_address: str | None, user_address: str | None) -> bool:
+        return cls._normalized_user_address(record_user_address) == cls._normalized_user_address(user_address)
+
     def list_versions(self, user_address: str | None = None) -> list[StrategyVersionRecordResponse]:
         with create_session() as session:
             query = select(StrategyVersionRecord).order_by(StrategyVersionRecord.activated_at.desc())
-            if user_address:
-                query = query.where(StrategyVersionRecord.user_address == user_address)
             records = session.scalars(query).all()
+        if user_address:
+            records = [record for record in records if self._matches_user_scope(record.user_address, user_address)]
         return [self._version_from_record(record) for record in records]
 
-    def get_active_version(self) -> StrategyVersionRecordResponse | None:
+    def get_active_version(
+        self,
+        user_address: str | None = None,
+        *,
+        include_fallback: bool = False,
+    ) -> StrategyVersionRecordResponse | None:
         with create_session() as session:
-            record = session.scalars(
+            records = session.scalars(
                 select(StrategyVersionRecord)
                 .where(StrategyVersionRecord.status == "active")
                 .order_by(StrategyVersionRecord.activated_at.desc())
-            ).first()
-        return self._version_from_record(record) if record else None
+            ).all()
+        if user_address:
+            user_record = next(
+                (record for record in records if self._matches_user_scope(record.user_address, user_address)),
+                None,
+            )
+            if user_record is not None:
+                return self._version_from_record(user_record)
+            if include_fallback:
+                fallback_record = next(
+                    (record for record in records if self._normalized_user_address(record.user_address) is None),
+                    None,
+                )
+                return self._version_from_record(fallback_record) if fallback_record else None
+            return None
+        fallback_record = next(
+            (record for record in records if self._normalized_user_address(record.user_address) is None),
+            None,
+        )
+        return self._version_from_record(fallback_record) if fallback_record else None
 
-    def get_active_version_record(self) -> StrategyVersionRecord | None:
+    def get_active_version_record(
+        self,
+        user_address: str | None = None,
+        *,
+        include_fallback: bool = False,
+    ) -> StrategyVersionRecord | None:
         with create_session() as session:
-            return session.scalars(
+            records = session.scalars(
                 select(StrategyVersionRecord)
                 .where(StrategyVersionRecord.status == "active")
                 .order_by(StrategyVersionRecord.activated_at.desc())
-            ).first()
+            ).all()
+        if user_address:
+            user_record = next(
+                (record for record in records if self._matches_user_scope(record.user_address, user_address)),
+                None,
+            )
+            if user_record is not None:
+                return user_record
+            if include_fallback:
+                return next(
+                    (record for record in records if self._normalized_user_address(record.user_address) is None),
+                    None,
+                )
+            return None
+        return next(
+            (record for record in records if self._normalized_user_address(record.user_address) is None),
+            None,
+        )
 
     def save_version(
         self,
@@ -194,7 +248,8 @@ class StrategyPolicyRepository:
         with create_session() as session:
             if status == "active":
                 for active in session.scalars(select(StrategyVersionRecord).where(StrategyVersionRecord.status == "active")).all():
-                    active.status = "archived"
+                    if self._matches_user_scope(active.user_address, user_address):
+                        active.status = "archived"
             record = session.scalars(select(StrategyVersionRecord).where(StrategyVersionRecord.version == version)).first()
             if record is None:
                 record = StrategyVersionRecord(
@@ -220,18 +275,36 @@ class StrategyPolicyRepository:
             session.refresh(record)
         return self._version_from_record(record)
 
-    def revert_version(self, version: str, actor: str | None = None) -> StrategyVersionRecordResponse | None:
+    def revert_version(
+        self,
+        version: str,
+        actor: str | None = None,
+        *,
+        user_address: str | None = None,
+    ) -> StrategyVersionRecordResponse | None:
         with create_session() as session:
             record = session.scalars(select(StrategyVersionRecord).where(StrategyVersionRecord.version == version)).first()
-            if record is None:
+            if record is None or (
+                user_address is not None and not self._matches_user_scope(record.user_address, user_address)
+            ):
                 return None
             for active in session.scalars(select(StrategyVersionRecord).where(StrategyVersionRecord.status == "active")).all():
-                active.status = "archived"
+                if self._matches_user_scope(active.user_address, record.user_address):
+                    active.status = "archived"
             record.status = "active"
             record.activated_by = actor or "operator"
             record.activated_at = utc_now()
             session.commit()
             session.refresh(record)
+        return self._version_from_record(record)
+
+    def get_version(self, version: str, user_address: str | None = None) -> StrategyVersionRecordResponse | None:
+        with create_session() as session:
+            record = session.scalars(select(StrategyVersionRecord).where(StrategyVersionRecord.version == version)).first()
+        if record is None:
+            return None
+        if user_address is not None and not self._matches_user_scope(record.user_address, user_address):
+            return None
         return self._version_from_record(record)
 
     def save_scheduler(

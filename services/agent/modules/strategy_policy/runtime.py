@@ -65,8 +65,13 @@ def derive_target_weights(policy: StrategyPolicyConfig) -> dict[str, float]:
     return {asset: round(weight / total, 6) for asset, weight in weights.items() if weight > 0}
 
 
-def resolve_active_strategy_target_weights() -> tuple[str | None, dict[str, float] | None, StrategyPolicyConfig | None]:
-    active_version: StrategyVersionRecordResponse | None = StrategyPolicyRepository().get_active_version()
+def resolve_active_strategy_target_weights(
+    user_address: str | None = None,
+) -> tuple[str | None, dict[str, float] | None, StrategyPolicyConfig | None]:
+    active_version: StrategyVersionRecordResponse | None = StrategyPolicyRepository().get_active_version(
+        user_address=user_address,
+        include_fallback=True,
+    )
     if active_version is None:
         return None, None, None
     policy = active_version.active_policy_json
@@ -77,9 +82,10 @@ def resolve_active_strategy_target_weights() -> tuple[str | None, dict[str, floa
 def resolve_requested_profile_name(
     profile_name: str,
     target_chain: str | None = None,
+    user_address: str | None = None,
 ) -> str:
     candidate = str(profile_name or "").strip()
-    active_profile_name, active_target_weights, _ = resolve_active_strategy_target_weights()
+    active_profile_name, active_target_weights, _ = resolve_active_strategy_target_weights(user_address=user_address)
     custom_aliases = {"custom strategy", "active strategy", "strategy policy"}
     if active_target_weights and active_profile_name:
         lowered = candidate.lower()
@@ -91,8 +97,11 @@ def resolve_requested_profile_name(
 def resolve_target_weights(
     profile_name: str,
     target_chain: str | None = None,
+    user_address: str | None = None,
 ) -> tuple[str, dict[str, float], StrategyPolicyConfig | None]:
-    active_profile_name, active_target_weights, active_policy = resolve_active_strategy_target_weights()
+    active_profile_name, active_target_weights, active_policy = resolve_active_strategy_target_weights(
+        user_address=user_address,
+    )
     if active_target_weights:
         return active_profile_name or "Strategy Policy", active_target_weights, active_policy
 

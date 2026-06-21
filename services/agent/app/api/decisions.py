@@ -9,7 +9,6 @@ from fastapi import APIRouter, HTTPException
 from services.agent.app.api.investment_scope import InvestmentScopeInput, build_scoped_decision_response
 from services.agent.app.api.vault import get_vault_balance_snapshot
 from services.agent.app.core.settings import get_settings
-from services.agent.app.core.status_codes import ExecutionStatusCode
 from services.agent.app.schemas.proposals import (
     InvestmentPlanRequest,
     InvestmentPlanResponse,
@@ -21,11 +20,10 @@ from services.agent.app.schemas.proposals import (
 )
 from services.agent.app.schemas.recommendations import RecommendationResponse
 from services.agent.modules.oracle.freshness import utc_now
-# circular-safe: lazy import inside endpoint function
-# from services.agent.modules.decisions import build_decision_context
+from services.agent.modules.execution.vault_executor import submit_executor_vault_trade
 from services.agent.modules.proposals.investment_planner import build_investment_plan, get_cached_plan_for_proposal
 from services.agent.repositories.db.investment_plan_repository import InvestmentPlanRepository
-from services.agent.repositories.db.models import InvestmentPlanRecord, TradeProposalRecord
+from services.agent.repositories.db.models import InvestmentPlanRecord, TradeExecutionRecord, TradeProposalRecord
 from services.agent.repositories.db.session import create_session, init_db
 from services.agent.strategies.allocation.rebalance import compute_rebalance
 from services.agent.strategies.decision_templates.parser import generate_recommendation_reasoning
@@ -41,17 +39,6 @@ def _ai_debug_value(payload: Any, field: str) -> Any:
     if isinstance(payload, dict):
         return payload.get(field)
     return getattr(payload, field, None)
-
-
-def _address_to_symbol_map(settings) -> dict[str, str]:
-    mapping: dict[str, str] = {}
-    for asset in settings.asset_registry.values():
-        address = asset.get("address")
-        symbol = asset.get("symbol")
-        if not address or not symbol:
-            continue
-        mapping[str(address).lower()] = str(symbol)
-    return mapping
 
 
 def _safe_decimal(value: str | None) -> Decimal:
@@ -134,6 +121,59 @@ def _save_proposal_record(proposal: TradeProposal, calldata: str) -> None:
         logger.warning("Failed to persist proposal snapshot: %s", exc)
 
 
+def _proposal_execute_response(
+    *,
+    status_code: str,
+    status_reason: str,
+    proposal_id: str,
+    tx_hash: str | None,
+    record: TradeProposalRecord,
+) -> ProposalExecuteResponse:
+    settings = get_settings()
+    return ProposalExecuteResponse(
+        status="ok",
+        status_code=status_code,
+        status_label=status_code,
+        status_reason=status_reason,
+        proposal_id=proposal_id,
+        tx_hash=tx_hash,
+        router=record.router,
+        selector=record.selector,
+        calldata=record.calldata,
+        calldata_hash=record.calldata_hash,
+        token_in=record.token_in,
+        token_out=record.token_out,
+        recipient=record.recipient,
+        max_amount_in=record.max_amount_in,
+        min_amount_out=record.min_amount_out,
+        native_value=record.native_value,
+        deadline=record.deadline,
+        nonce=record.nonce,
+        chain_id=settings.effective_chain_id,
+    )
+
+
+def _fetch_proposal_record(proposal_id: str) -> TradeProposalRecord | None:
+    with create_session() as session:
+        from sqlalchemy import select
+
+        return session.scalar(select(TradeProposalRecord).where(TradeProposalRecord.proposal_id == proposal_id))
+
+
+def _update_proposal_status(proposal_id: str, status_code: str) -> TradeProposalRecord:
+    with create_session() as session:
+        from sqlalchemy import select
+
+        record = session.scalar(select(TradeProposalRecord).where(TradeProposalRecord.proposal_id == proposal_id))
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"Proposal not found: {proposal_id}")
+        record.status_code = status_code
+        record.updated_at = utc_now()
+        session.commit()
+        session.refresh(record)
+        return record
+
+
 @router.get("/decisions", response_model=RecommendationResponse)
 async def get_latest_decisions(
     wallet_address: str | None = None,
@@ -142,6 +182,8 @@ async def get_latest_decisions(
     risk_profile: str | None = None,
     allocation_mode: str | None = None,
 ) -> RecommendationResponse:
+    from services.agent.modules.decisions import build_decision_context
+
     logger.info(
         "Decision recommendation requested: wallet=%s deposit_asset=%s deposit_amount=%s risk_profile=%s allocation_mode=%s",
         wallet_address,
@@ -170,7 +212,6 @@ async def get_latest_decisions(
             _ai_debug_value(response.ai_debug, "used_fallback"),
         )
         return response
-    from services.agent.modules.decisions import build_decision_context
     context = await build_decision_context(wallet_address=wallet_address)
     try:
         decision, actions = compute_rebalance(
@@ -257,6 +298,13 @@ async def create_investment_plan(request: InvestmentPlanRequest) -> InvestmentPl
         plan_response.approval_enabled,
         settings.ai_decision_maker_enabled,
     )
+    if plan_response.linked_proposals:
+        logger.info(
+            "Investment plan approval mode: %s",
+            "AI auto-approval enabled"
+            if settings.ai_decision_maker_enabled
+            else "Human approval required",
+        )
     for proposal, calldata in proposal_pairs:
         _save_proposal_record(proposal, calldata)
     if plan_response.linked_proposals:
@@ -339,23 +387,20 @@ async def approve_proposal(proposal_id: str) -> ProposalMutationResponse:
             detail=f"Cannot approve: {'; '.join(blockers)}",
         )
     # Bug 1 & 2: single session — fetch, validate state, then update atomically.
-    with create_session() as session:
-        from sqlalchemy import select
-
-        record = session.scalar(select(TradeProposalRecord).where(TradeProposalRecord.proposal_id == proposal_id))
-        if not record:
-            raise HTTPException(status_code=404, detail=f"Proposal not found: {proposal_id}")
-        if record.status_code in _APPROVE_TERMINAL_STATES:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Cannot approve proposal {proposal_id}: "
-                    f"current status is {record.status_code} which is a terminal state."
-                ),
-            )
-        record.status_code = "PROPOSAL_APPROVED"
-        record.updated_at = utc_now()
-        session.commit()
+    record = _fetch_proposal_record(proposal_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"Proposal not found: {proposal_id}")
+    if record.status_code in _APPROVE_TERMINAL_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot approve proposal {proposal_id}: "
+                f"current status is {record.status_code} which is a terminal state."
+            ),
+        )
+    logger.info("Human approval requested for proposal %s", proposal_id)
+    _update_proposal_status(proposal_id, "PROPOSAL_APPROVED")
+    logger.info("Human approval recorded for proposal %s", proposal_id)
     return ProposalMutationResponse(
         status="ok",
         status_code="PROPOSAL_APPROVED",
@@ -385,23 +430,18 @@ async def reject_proposal(proposal_id: str) -> ProposalMutationResponse:
     """
     init_db()
     # Bug 1 & 2: single session — fetch, validate state, then update atomically.
-    with create_session() as session:
-        from sqlalchemy import select
-
-        record = session.scalar(select(TradeProposalRecord).where(TradeProposalRecord.proposal_id == proposal_id))
-        if not record:
-            raise HTTPException(status_code=404, detail=f"Proposal not found: {proposal_id}")
-        if record.status_code in _REJECT_TERMINAL_STATES:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Cannot reject proposal {proposal_id}: "
-                    f"current status is {record.status_code} which is a terminal state."
-                ),
-            )
-        record.status_code = "PROPOSAL_REJECTED"
-        record.updated_at = utc_now()
-        session.commit()
+    record = _fetch_proposal_record(proposal_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"Proposal not found: {proposal_id}")
+    if record.status_code in _REJECT_TERMINAL_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot reject proposal {proposal_id}: "
+                f"current status is {record.status_code} which is a terminal state."
+            ),
+        )
+    _update_proposal_status(proposal_id, "PROPOSAL_REJECTED")
     return ProposalMutationResponse(
         status="ok",
         status_code="PROPOSAL_REJECTED",
@@ -424,7 +464,7 @@ async def list_proposals(status: str | None = None, wallet_address: str | None =
     """
     init_db()
     with create_session() as session:
-        from sqlalchemy import func, select, outerjoin
+        from sqlalchemy import func, outerjoin, select
 
         # Bug 4: single joined query instead of two separate queries +
         # in-Python merge.
@@ -444,40 +484,43 @@ async def list_proposals(status: str | None = None, wallet_address: str | None =
             query = query.where(func.lower(TradeProposalRecord.wallet_or_vault) == wallet_address.lower())
         rows = session.execute(query).all()
 
-    items = [
-        ProposalListItem(
-            proposal_id=record.proposal_id,
-            plan_hash=record.plan_hash,
-            wallet_or_vault=record.wallet_or_vault,
-            router=record.router,
-            selector=record.selector,
-            token_in=record.token_in,
-            token_out=record.token_out,
-            token_in_symbol=_linked_summary_for_proposal(plan_json, record.proposal_id).get("token_in_symbol"),
-            token_out_symbol=_linked_summary_for_proposal(plan_json, record.proposal_id).get("token_out_symbol"),
-            recipient=record.recipient,
-            max_amount_in=record.max_amount_in,
-            min_amount_out=record.min_amount_out,
-            native_value=record.native_value,
-            deadline=record.deadline,
-            proposal_expiry=record.proposal_expiry,
-            nonce=record.nonce,
-            status_code=record.status_code,
-            risk_snapshot_id=record.risk_snapshot_id,
-            deposit_asset_symbol=(plan_json or {}).get("deposit_asset_symbol"),
-            deposit_amount=(plan_json or {}).get("deposit_amount"),
-            risk_profile=(plan_json or {}).get("risk_profile"),
-            allocation_mode=(plan_json or {}).get("allocation_mode"),
-            recommended_action=_risk_summary_for_proposal(plan_json).get("recommended_action"),
-            confidence=_risk_summary_for_proposal(plan_json).get("confidence"),
-            reasoning_summary=_risk_summary_for_proposal(plan_json).get("reasoning_summary"),
-            approval_enabled=(plan_json or {}).get("approval_enabled"),
-            approval_blockers=list((plan_json or {}).get("approval_blockers") or []),
-            created_at=record.created_at,
-            updated_at=record.updated_at,
+    items: list[ProposalListItem] = []
+    for record, plan_json in rows:
+        linked_summary = _linked_summary_for_proposal(plan_json, record.proposal_id)
+        risk_summary = _risk_summary_for_proposal(plan_json)
+        items.append(
+            ProposalListItem(
+                proposal_id=record.proposal_id,
+                plan_hash=record.plan_hash,
+                wallet_or_vault=record.wallet_or_vault,
+                router=record.router,
+                selector=record.selector,
+                token_in=record.token_in,
+                token_out=record.token_out,
+                token_in_symbol=linked_summary.get("token_in_symbol"),
+                token_out_symbol=linked_summary.get("token_out_symbol"),
+                recipient=record.recipient,
+                max_amount_in=record.max_amount_in,
+                min_amount_out=record.min_amount_out,
+                native_value=record.native_value,
+                deadline=record.deadline,
+                proposal_expiry=record.proposal_expiry,
+                nonce=record.nonce,
+                status_code=record.status_code,
+                risk_snapshot_id=record.risk_snapshot_id,
+                deposit_asset_symbol=(plan_json or {}).get("deposit_asset_symbol"),
+                deposit_amount=(plan_json or {}).get("deposit_amount"),
+                risk_profile=(plan_json or {}).get("risk_profile"),
+                allocation_mode=(plan_json or {}).get("allocation_mode"),
+                recommended_action=risk_summary.get("recommended_action"),
+                confidence=risk_summary.get("confidence"),
+                reasoning_summary=risk_summary.get("reasoning_summary"),
+                approval_enabled=(plan_json or {}).get("approval_enabled"),
+                approval_blockers=list((plan_json or {}).get("approval_blockers") or []),
+                created_at=record.created_at,
+                updated_at=record.updated_at,
+            )
         )
-        for record, plan_json in rows
-    ]
     return ProposalListResponse(
         status="ok",
         status_code="DATA_FRESH",
@@ -489,49 +532,136 @@ async def list_proposals(status: str | None = None, wallet_address: str | None =
 
 @router.post("/proposals/{proposal_id}/execute", response_model=ProposalExecuteResponse)
 async def execute_proposal(proposal_id: str) -> ProposalExecuteResponse:
-    """Acknowledge an execution request for an approved proposal.
+    """Submit an approved proposal to the ExecutorVault execution path.
 
-    Direct connected-wallet execution is not available — approved trades execute
-    through the ExecutorVault on-chain path.  This endpoint records the intent and
-    returns a vault-pending status so the frontend can surface a consistent log
-    entry without receiving a hard error.
+    The endpoint submits the on-chain transaction, then records whether receipt
+    polling resolved to submitted, confirmed, or reverted before returning.
     """
     logger.info(
-        "Execution intent recorded for proposal_id=%s — awaiting ExecutorVault on-chain path.",
+        "Submitting proposal_id=%s through the ExecutorVault execution path.",
         proposal_id,
     )
-    # Transition the proposal to PROPOSAL_EXECUTING so the UI can reflect vault-pending state.
+    settings = get_settings()
     init_db()
-    _EXECUTE_TERMINAL_STATES = frozenset({"PROPOSAL_EXECUTED", "PROPOSAL_REJECTED"})
     with create_session() as session:
         from sqlalchemy import select as _select
 
-        record = session.scalar(
+        proposal_record = session.scalar(
             _select(TradeProposalRecord).where(TradeProposalRecord.proposal_id == proposal_id)
         )
-        if not record:
+        if proposal_record is None:
             raise HTTPException(status_code=404, detail=f"Proposal not found: {proposal_id}")
-        if record.status_code in _EXECUTE_TERMINAL_STATES:
+        if proposal_record.status_code == "PROPOSAL_REJECTED":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Proposal {proposal_id} cannot be executed because it was rejected.",
+            )
+        if proposal_record.status_code not in {"PROPOSAL_APPROVED", "PROPOSAL_EXECUTING", "PROPOSAL_EXECUTED"}:
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    f"Cannot mark proposal {proposal_id} as executing: "
-                    f"current status {record.status_code} is terminal."
+                    f"Proposal {proposal_id} must be approved before execution. "
+                    f"Current status is {proposal_record.status_code}."
                 ),
             )
-        if record.status_code == "PROPOSAL_APPROVED":
-            record.status_code = "PROPOSAL_EXECUTING"
-            record.updated_at = utc_now()
-            session.commit()
-            logger.info("Proposal %s transitioned to PROPOSAL_EXECUTING.", proposal_id)
-    return ProposalExecuteResponse(
-        status="ok",
-        status_code="EXECUTION_VAULT_PENDING",
-        status_label="EXECUTION_VAULT_PENDING",
-        status_reason=(
-            "Execution intent recorded. Approved trades execute through the ExecutorVault "
-            "on-chain path and are not submitted directly from this endpoint."
-        ),
+
+        existing_execution = session.scalar(
+            _select(TradeExecutionRecord).where(TradeExecutionRecord.proposal_id == proposal_id)
+        )
+        if existing_execution is not None:
+            return _proposal_execute_response(
+                status_code=existing_execution.status_code,
+                status_reason="Execution already recorded for this proposal.",
+                proposal_id=proposal_id,
+                tx_hash=existing_execution.tx_hash,
+                record=proposal_record,
+            )
+        if proposal_record.status_code == "PROPOSAL_EXECUTED":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Proposal {proposal_id} has already been executed and has no recorded execution row.",
+            )
+
+    try:
+        submission = submit_executor_vault_trade(
+            settings=settings,
+            foundry_out_dir=settings.foundry_out_dir,
+            proposal=proposal_record,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Execution submission failed for proposal %s", proposal_id)
+        init_db()
+        with create_session() as session:
+            from sqlalchemy import select as _select
+
+            proposal_record = session.scalar(
+                _select(TradeProposalRecord).where(TradeProposalRecord.proposal_id == proposal_id)
+            )
+            if proposal_record is not None:
+                proposal_record.status_code = "PROPOSAL_FAILED"
+                proposal_record.updated_at = utc_now()
+                session.add(
+                    TradeExecutionRecord(
+                        proposal_id=proposal_id,
+                        tx_hash=f"failed:{proposal_id}",
+                        quoted_amount_out=None,
+                        actual_amount_out=None,
+                        gas_used=None,
+                        realized_slippage_bps=None,
+                        status_code="EXECUTION_FAILED",
+                        failure_reason=str(exc),
+                    )
+                )
+                session.commit()
+        raise HTTPException(status_code=502, detail=f"ExecutorVault submission failed: {exc}") from exc
+
+    init_db()
+    with create_session() as session:
+        from sqlalchemy import select as _select
+
+        proposal_record = session.scalar(
+            _select(TradeProposalRecord).where(TradeProposalRecord.proposal_id == proposal_id)
+        )
+        if proposal_record is None:
+            raise HTTPException(status_code=404, detail=f"Proposal not found: {proposal_id}")
+
+        if submission.receipt_status == 1:
+            execution_status = "EXECUTION_CONFIRMED"
+            execution_reason = "Execution transaction was mined and confirmed on-chain."
+            proposal_status = "PROPOSAL_EXECUTED"
+        elif submission.receipt_status == 0:
+            execution_status = "EXECUTION_REVERTED"
+            execution_reason = "Execution transaction was mined but reverted on-chain."
+            proposal_status = "PROPOSAL_FAILED"
+        else:
+            execution_status = "EXECUTION_SUBMITTED"
+            execution_reason = "Execution transaction submitted to the ExecutorVault on-chain path."
+            proposal_status = "PROPOSAL_EXECUTING"
+
+        proposal_record.status_code = proposal_status
+        proposal_record.updated_at = utc_now()
+        session.add(
+            TradeExecutionRecord(
+                proposal_id=proposal_id,
+                tx_hash=submission.tx_hash,
+                quoted_amount_out=None,
+                actual_amount_out=None,
+                gas_used=None,
+                realized_slippage_bps=None,
+                status_code=execution_status,
+                failure_reason=execution_reason if submission.receipt_status == 0 else None,
+            )
+        )
+        session.commit()
+
+    return _proposal_execute_response(
+        status_code=execution_status,
+        status_reason=execution_reason,
         proposal_id=proposal_id,
-        tx_hash=None,
+        tx_hash=submission.tx_hash,
+        record=proposal_record,
     )
+
+

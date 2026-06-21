@@ -71,11 +71,16 @@ class StrategyPolicyRuntimeTests(unittest.TestCase):
         )
         mock_active_strategy.return_value = ("Custom Strategy v-active", {"USDY": 0.6, "mETH": 0.4}, policy)
 
-        profile_name, weights, resolved_policy = resolve_target_weights("Balanced", "mantle_sepolia")
+        profile_name, weights, resolved_policy = resolve_target_weights(
+            "Balanced",
+            "mantle_sepolia",
+            user_address="0xabc",
+        )
 
         self.assertEqual(profile_name, "Custom Strategy v-active")
         self.assertEqual(weights, {"USDY": 0.6, "mETH": 0.4})
         self.assertIs(resolved_policy, policy)
+        mock_active_strategy.assert_called_once_with(user_address="0xabc")
 
     @patch("services.agent.modules.strategy_policy.runtime.resolve_active_strategy_target_weights")
     def test_resolve_requested_profile_name_accepts_custom_strategy_alias(self, mock_active_strategy) -> None:
@@ -92,9 +97,14 @@ class StrategyPolicyRuntimeTests(unittest.TestCase):
         )
         mock_active_strategy.return_value = ("Custom Strategy v-active", {"USDY": 0.6, "mETH": 0.4}, policy)
 
-        resolved = resolve_requested_profile_name("Custom Strategy", "mantle_sepolia")
+        resolved = resolve_requested_profile_name(
+            "Custom Strategy",
+            "mantle_sepolia",
+            user_address="0xabc",
+        )
 
         self.assertEqual(resolved, "Custom Strategy v-active")
+        mock_active_strategy.assert_called_once_with(user_address="0xabc")
 
 
 if __name__ == "__main__":

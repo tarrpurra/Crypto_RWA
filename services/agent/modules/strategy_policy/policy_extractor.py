@@ -137,6 +137,8 @@ def extract_policy(
     if policy_json:
         policy_data = _merge_nested_dicts(policy_data, policy_json)
 
+    explicit_overrides = deepcopy(policy_json) if policy_json else None
+
     normalized_text = strategy_text.lower()
     for phrase, objective in SAFE_OBJECTIVES.items():
         if phrase in normalized_text:
@@ -156,6 +158,13 @@ def extract_policy(
 
     if "usdy" in normalized_text:
         policy_data.setdefault("allowed_assets", ["USDY", "mETH"])
+
+    if explicit_overrides:
+        for key in ("objective", "simulation_only_mode"):
+            if key in explicit_overrides:
+                policy_data[key] = explicit_overrides[key]
+        if "hard_limits" in explicit_overrides and isinstance(explicit_overrides["hard_limits"], dict) and "global_circuit_breaker" in explicit_overrides["hard_limits"]:
+            policy_data.setdefault("hard_limits", {})["global_circuit_breaker"] = explicit_overrides["hard_limits"]["global_circuit_breaker"]
 
     objective = _normalize_objective(str(policy_data.get("objective") or "")) or "capital_preservation_first"
     policy_data["objective"] = objective

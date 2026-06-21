@@ -7,6 +7,28 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import DecisionLog from "@/pages/DecisionLog";
 import { createTestQueryClient } from "@/test/queryClient";
 
+const allocationState = vi.hoisted(() => ({
+  response: {
+    status: "ok",
+    status_code: "RISK_NORMAL",
+    generated_at: "2026-06-15T00:00:00Z",
+    decision: {
+      decision_id: "decision-001",
+      wallet_or_vault: "0xvault",
+      profile_name: "Balanced",
+      current_weights: { WMNT: 1 },
+      target_weights: { USDY: 0.7, mETH: 0.15, WMNT: 0.15 },
+      recommended_action: "HOLD",
+      confidence: 0.95,
+      reasoning: "No rebalance needed.",
+      risk_snapshot_id: "risk-001",
+      status_code: "DATA_FRESH",
+      created_at: "2026-06-15T00:00:00Z",
+    },
+    rebalance_actions: [],
+  },
+}));
+
 const walletState = vi.hoisted(() => ({
   connectedWalletAddress: "",
   get walletAddress() {
@@ -113,6 +135,13 @@ vi.mock("@/hooks/usePortfolio", () => ({
       status_reason: "Portfolio loaded.",
       metadata: {},
     },
+    isLoading: false,
+  }),
+}));
+
+vi.mock("@/hooks/useAllocation", () => ({
+  useAllocationRecommendation: () => ({
+    data: allocationState.response,
     isLoading: false,
   }),
 }));
@@ -289,9 +318,39 @@ function renderPage() {
   );
 }
 
+function renderPageAt(route: string) {
+  const client = createTestQueryClient();
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[route]}>
+        <DecisionLog />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
 beforeEach(() => {
   swapState.appendEntry.mockReset();
   walletState.connectedWalletAddress = "0x1234567890abcdef1234567890abcdef12345678";
+  allocationState.response = {
+    status: "ok",
+    status_code: "RISK_NORMAL",
+    generated_at: "2026-06-15T00:00:00Z",
+    decision: {
+      decision_id: "decision-001",
+      wallet_or_vault: "0xvault",
+      profile_name: "Balanced",
+      current_weights: { WMNT: 1 },
+      target_weights: { USDY: 0.7, mETH: 0.15, WMNT: 0.15 },
+      recommended_action: "HOLD",
+      confidence: 0.95,
+      reasoning: "No rebalance needed.",
+      risk_snapshot_id: "risk-001",
+      status_code: "DATA_FRESH",
+      created_at: "2026-06-15T00:00:00Z",
+    },
+    rebalance_actions: [],
+  };
   fetchMock.mockReset();
   fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -368,9 +427,7 @@ describe("DecisionLog", () => {
   it("creates an approval-ready proposal from the recommendation flow", async () => {
     renderPage();
 
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalled();
-    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     const createCall = fetchMock.mock.calls.find(
       ([input, init]) => String(input).includes("/proposals/create") && init?.method === "POST",
@@ -386,5 +443,47 @@ describe("DecisionLog", () => {
       risk_profile: "Balanced",
       allocation_mode: "AI Suggested",
     });
+  });
+
+  it("does not create a proposal from a scoped rebalance recommendation without review query params", async () => {
+    allocationState.response = {
+      status: "ok",
+      status_code: "RISK_NORMAL",
+      generated_at: "2026-06-15T00:00:00Z",
+      decision: {
+        decision_id: "decision-002",
+        wallet_or_vault: "0xvault",
+        profile_name: "Balanced",
+        current_weights: { WMNT: 1 },
+        target_weights: { USDY: 0.7, mETH: 0.15, WMNT: 0.15 },
+        recommended_action: "REBALANCE",
+        confidence: 0.92,
+        reasoning: "Reduce WMNT concentration.",
+        risk_snapshot_id: "risk-002",
+        status_code: "DATA_FRESH",
+        created_at: "2026-06-15T00:00:00Z",
+      },
+      rebalance_actions: [
+        {
+          asset_symbol: "WMNT",
+          action: "SELL",
+          amount: 49,
+          route_id: "route-001",
+          token_in_symbol: "WMNT",
+          token_out_symbol: "USDY",
+          swap_pair_label: "WMNT -> USDY",
+        },
+      ],
+    };
+
+    renderPageAt("/decision-log");
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const createCall = fetchMock.mock.calls.find(
+      ([input, init]) => String(input).includes("/proposals/create") && init?.method === "POST",
+    );
+
+    expect(createCall).toBeUndefined();
   });
 });

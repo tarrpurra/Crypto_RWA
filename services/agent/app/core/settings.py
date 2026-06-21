@@ -153,14 +153,21 @@ class Settings(BaseSettings):
     risk_snapshot_hard_block_seconds: int = 120
     trade_approval_expiry_seconds: int = 120
     pending_transaction_manual_review_seconds: int = 180
+    execution_receipt_timeout_seconds: int = 120
+    execution_receipt_poll_latency_seconds: float = 2.0
     rpc_health_sample_fresh_limit_seconds: int = 60
     rpc_health_sample_warn_seconds: int = 60
 
     simulation_fallback_enabled: bool = True
     ai_reasoning_enabled: bool = True
     ai_decision_maker_enabled: bool = False
-    ai_reasoning_provider: str = "ollama"
-    ai_reasoning_model: str = "qwen2.5:3b"
+    ai_reasoning_provider: str = "gemini"
+    ai_reasoning_model: str = "gemini-2.0-flash"
+    gemini_api_key: str | None = None
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    gemini_model: str = "gemini-2.0-flash"
+    gemini_timeout_seconds: float = 60.0
+    ollama_model: str = "qwen2.5:3b"
     ollama_url: str = "http://host.docker.internal:11434"
 
     rebalance_drift_tolerance: float = 0.03
@@ -214,6 +221,40 @@ class Settings(BaseSettings):
         if self.target_chain == TargetChain.MANTLE_MAINNET:
             return None
         return self.aiyield_sepolia_swap_router_address
+
+    @property
+    def normalized_ai_reasoning_provider(self) -> str:
+        return self.ai_reasoning_provider.strip().lower()
+
+    @property
+    def effective_ai_reasoning_model(self) -> str:
+        if self.normalized_ai_reasoning_provider == "gemini":
+            return self.gemini_model or self.ai_reasoning_model
+        if self.normalized_ai_reasoning_provider == "ollama":
+            return self.ollama_model or self.ai_reasoning_model
+        return self.ai_reasoning_model
+
+    @property
+    def ai_reasoning_model_label(self) -> str:
+        return f"{self.normalized_ai_reasoning_provider}:{self.effective_ai_reasoning_model}"
+
+    @property
+    def effective_ai_reasoning_base_url(self) -> str:
+        if self.normalized_ai_reasoning_provider == "gemini":
+            return self.gemini_base_url.rstrip("/")
+        return self.ollama_url.rstrip("/")
+
+    @property
+    def effective_ai_reasoning_api_key(self) -> str | None:
+        if self.normalized_ai_reasoning_provider == "gemini":
+            return self.gemini_api_key
+        return None
+
+    @property
+    def effective_ai_reasoning_timeout_seconds(self) -> float:
+        if self.normalized_ai_reasoning_provider == "gemini":
+            return self.gemini_timeout_seconds
+        return 120.0
 
     @property
     def subsystem_log_levels(self) -> dict[str, str]:

@@ -20,13 +20,15 @@ import { useCurrentPortfolio } from "@/hooks/usePortfolio";
 import { useInvestmentScope } from "@/hooks/useInvestmentScope";
 import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 import { useProposalActivity } from "@/hooks/useProposalActivity";
+import { useAllocationRecommendation } from "@/hooks/useAllocation";
 import { useDecisions } from "@/hooks/useDecisions";
 import { useCurrentRisk } from "@/hooks/useRisk";
 import { useStrategyActive } from "@/hooks/useStrategy";
 import { useApproveProposal, useCreateProposal, useExecuteProposal, useProposalDetail, useProposals, useRejectProposal } from "@/hooks/useSwap";
 import { useSettings } from "@/hooks/useSystem";
 import { useVaultBalance } from "@/hooks/useVault";
-import type { InvestmentPlanResponse } from "@/lib/api/types";
+import type { ProposalActivityEntry } from "@/hooks/useProposalActivity";
+import type { InvestmentPlanResponse, ProposalListItem } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
 const assetOptions = ["USDY", "mETH", "MNT"] as const;
@@ -105,6 +107,13 @@ function formatCompactLabel(value: string | null | undefined) {
     .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
+function normalizeConfidenceToPercent(value: number | null | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return value <= 1 ? value * 100 : value;
+}
+
 function resolveTokenLabel(token: string, tokenLabelsByAddress: Map<string, string>) {
   if (/^0x[a-fA-F0-9]{40}$/.test(token)) {
     return tokenLabelsByAddress.get(token.toLowerCase()) ?? `${token.slice(0, 6)}...${token.slice(-4)}`;
@@ -166,6 +175,26 @@ function decisionTypeSubtitle(type: string) {
   }
 }
 
+function deriveProposalActorLabel(
+  proposal: ProposalListItem,
+  activityEntries: ProposalActivityEntry[],
+  aiDecisionMakerEnabled: boolean,
+) {
+  if (activityEntries.some((entry) => entry.actor === "ai" || entry.message.toLowerCase().includes("ai "))) {
+    return "AI";
+  }
+  if (activityEntries.some((entry) => entry.actor === "user")) {
+    return "User";
+  }
+  if (
+    aiDecisionMakerEnabled &&
+    ["PROPOSAL_APPROVED", "PROPOSAL_EXECUTING", "PROPOSAL_EXECUTED"].includes(proposal.status_code)
+  ) {
+    return "AI";
+  }
+  return "User";
+}
+
 export default function DecisionLog() {
   const [searchParams] = useSearchParams();
   const routeHasInvestmentParams = searchParams.has("asset") || searchParams.has("amount") || searchParams.has("risk");
@@ -176,6 +205,7 @@ export default function DecisionLog() {
   const { scope, setScope, clearScope } = useInvestmentScope();
   const portfolioQuery = useCurrentPortfolio();
   const riskQuery = useCurrentRisk();
+  const allocationQuery = useAllocationRecommendation();
   const decisionsQuery = useDecisions({ requireScope: true });
   const marketQuery = useMarketIngestionStatus();
   const pricesQuery = useLatestPrices();
@@ -193,6 +223,7 @@ export default function DecisionLog() {
 
   const portfolio = portfolioQuery.data;
   const risk = riskQuery.data;
+  const allocation = allocationQuery.data;
   const decisions = decisionsQuery.data;
   const market = marketQuery.data;
   const prices = pricesQuery.data;
@@ -232,6 +263,16 @@ export default function DecisionLog() {
   const [rangeFilter, setRangeFilter] = useState("all");
   const [currentPage, setCurrentPage] = useState(1);
   const proposalDetailQuery = useProposalDetail(activeProposalId);
+  const allocationRecommendedAction =
+    allocation?.decision?.recommended_action ??
+    ((allocation as unknown as { recommended_action?: string | null })?.recommended_action ?? null);
+  const actionableRecommendation = useMemo(
+    () =>
+      allocationRecommendedAction === "REBALANCE"
+        ? allocation?.rebalance_actions.find((action) => action.action !== "HOLD") ?? null
+        : null,
+    [allocation?.rebalance_actions, allocationRecommendedAction],
+  );
   const selectedAssetIngestion = useMemo(
     () => market?.assets?.find((item) => item.asset_symbol === assetSymbol) ?? null,
     [assetSymbol, market?.assets],
@@ -264,6 +305,28 @@ export default function DecisionLog() {
     const parsed = Number.parseFloat(walletBalanceAmount);
     return Number.isFinite(parsed) ? parsed : null;
   }, [walletBalanceAmount]);
+  const derivedRecommendationDraft = useMemo(() => {
+    if (!actionableRecommendation) {
+      return null;
+    }
+    const tokenInSymbol = actionableRecommendation.token_in_symbol ?? actionableRecommendation.asset_symbol;
+    const normalizedAssetSymbol = tokenInSymbol === "WMNT" ? "MNT" : tokenInSymbol;
+    if (!assetOptions.includes(normalizedAssetSymbol as (typeof assetOptions)[number])) {
+      return null;
+    }
+    return {
+      depositAssetSymbol: normalizedAssetSymbol as (typeof assetOptions)[number],
+      depositAmount:
+        typeof actionableRecommendation.amount === "number" && Number.isFinite(actionableRecommendation.amount) && actionableRecommendation.amount > 0
+          ? actionableRecommendation.amount
+          : (scope?.depositAmount && Number.isFinite(scope.depositAmount) && scope.depositAmount > 0
+            ? scope.depositAmount
+            : availableBalance ?? 0),
+      riskProfile: activeStrategyLabel ?? riskProfile,
+      allocationMode: "AI Suggested" as (typeof allocationModes)[number],
+      chainId: mantleSepoliaTestnet.id,
+    };
+  }, [actionableRecommendation, activeStrategyLabel, availableBalance, riskProfile, scope?.depositAmount]);
   const numericAmount = Number.parseFloat(amount.trim() || "0");
   const manualWeights = allocationMode === "Manual" ? parseManualWeights(manualAllocation) : null;
   const mntWrapConfigured = Boolean(settings?.native_mnt_enabled && settings?.sepolia_wmnt_address);
@@ -443,9 +506,18 @@ export default function DecisionLog() {
       if (allocationModes.includes(scope.allocationMode as (typeof allocationModes)[number])) {
         setAllocationMode(scope.allocationMode as (typeof allocationModes)[number]);
       }
+    } else if (!searchParams.has("asset") && !searchParams.has("amount") && !searchParams.has("risk") && derivedRecommendationDraft) {
+      if (!amount && derivedRecommendationDraft.depositAmount > 0) {
+        setAmount(String(derivedRecommendationDraft.depositAmount));
+      }
+      setAssetSymbol(derivedRecommendationDraft.depositAssetSymbol);
+      if (derivedRecommendationDraft.riskProfile.trim()) {
+        setRiskProfile(derivedRecommendationDraft.riskProfile);
+      }
+      setAllocationMode(derivedRecommendationDraft.allocationMode);
     }
     setDraftHydrated(true);
-  }, [amount, searchParams, scope]);
+  }, [amount, derivedRecommendationDraft, searchParams, scope]);
 
   useEffect(() => {
     if (!activeStrategyLabel || searchParams.has("risk")) {
@@ -473,6 +545,19 @@ export default function DecisionLog() {
       chainId: mantleSepoliaTestnet.id,
     });
   }, [allocationMode, assetSymbol, clearScope, isConnected, isSupportedChain, numericAmount, riskProfile, setScope, draftHydrated]);
+
+  useEffect(() => {
+    if (searchParams.has("asset") || searchParams.has("amount") || !actionableRecommendation) {
+      return;
+    }
+    if (availableBalance === null || !Number.isFinite(availableBalance) || availableBalance <= 0) {
+      return;
+    }
+    if (!Number.isFinite(numericAmount) || numericAmount <= availableBalance) {
+      return;
+    }
+    setAmount(String(availableBalance));
+  }, [actionableRecommendation, availableBalance, numericAmount, searchParams]);
 
   // Bug 5 fix: wrap handleCreatePlan in useCallback so its identity is stable
   // across renders. The previous plain arrow function was a new reference every
@@ -525,14 +610,60 @@ export default function DecisionLog() {
               action: proposal.action,
             })),
           });
+          for (const proposal of response.linked_proposals) {
+            appendEntry({
+              proposalId: proposal.proposal_id,
+              type: "created",
+              actor: aiDecisionMakerEnabled ? "ai" : "user",
+              message: aiDecisionMakerEnabled
+                ? "AI created a trade proposal from the scoped recommendation"
+                : "Proposal created from the current recommendation",
+              timestamp: new Date().toISOString(),
+            });
+          }
           setPlan(response);
           const firstProposalId = response.linked_proposals[0]?.proposal_id;
           if (firstProposalId) {
             setActiveProposalId(firstProposalId);
-            setProposalModalOpen(true);
+            if (aiDecisionMakerEnabled) {
+              setProposalModalOpen(true);
+            } else {
+              toast.info("Proposal created. Click the proposal row in Decision Log to review and approve the swap.");
+            }
           }
           for (const proposal of response.linked_proposals) {
             if (aiDecisionMakerEnabled) {
+              try {
+                const execution = await executeProposal.mutateAsync(proposal.proposal_id);
+                appendEntry({
+                  proposalId: proposal.proposal_id,
+                  type: "approved",
+                  actor: "ai",
+                  message: "AI auto-approved trade proposal and submitted vault execution",
+                  timestamp: new Date().toISOString(),
+                });
+                appendEntry({
+                  proposalId: proposal.proposal_id,
+                  type: "executed",
+                  actor: "ai",
+                  message: execution.tx_hash
+                    ? `AI submitted vault execution transaction ${execution.tx_hash.slice(0, 10)}...`
+                    : "AI submitted vault execution transaction to the on-chain path.",
+                  timestamp: new Date().toISOString(),
+                  hash: execution.tx_hash ?? undefined,
+                  chainId: execution.chain_id,
+                });
+              } catch (execError) {
+                console.warn("[frontend][trade] execute submission failed (non-fatal)", execError);
+                appendEntry({
+                  proposalId: proposal.proposal_id,
+                  type: "approved",
+                  actor: "ai",
+                  message: "AI auto-approved. Vault execution transaction could not be submitted.",
+                  timestamp: new Date().toISOString(),
+                });
+              }
+              continue;
               // Auto-approve + auto-execute: backend already auto-approved on create;
               // fire the execute endpoint to transition to PROPOSAL_EXECUTING and
               // record the vault-pending intent.  Errors are non-fatal — a log entry
@@ -561,12 +692,7 @@ export default function DecisionLog() {
                 });
               }
             } else {
-              appendEntry({
-                proposalId: proposal.proposal_id,
-                type: "created",
-                message: "Approval-ready proposal created from the vault-backed recommendation",
-                timestamp: new Date().toISOString(),
-              });
+              continue;
             }
           }
           toast.success(response.status_reason);
@@ -592,23 +718,31 @@ export default function DecisionLog() {
   ]);
 
   useEffect(() => {
+    const scopedRecommendationReady =
+      allocationRecommendedAction === "REBALANCE" &&
+      (allocation?.rebalance_actions?.some((action) => action.action !== "HOLD") ?? false);
+    const effectiveScope = scope ?? derivedRecommendationDraft;
     console.info("[frontend][trade] auto-create evaluation", {
       aiDecisionMakerEnabled,
+      scopedRecommendationReady,
       recommendationAction: decisions?.recommended_action ?? null,
       reviewModeRequested,
       routeHasInvestmentParams,
-      hasScope: Boolean(scope),
+      hasScope: Boolean(effectiveScope),
       hasPlan: Boolean(plan?.plan_id),
       createPending: createPlan.isPending,
       walletBalanceAmount,
       localWarnings,
     });
     const autoCreateEligible =
-      Boolean(scope) &&
+      Boolean(effectiveScope) &&
       (aiDecisionMakerEnabled || reviewModeRequested || routeHasInvestmentParams);
     if (!autoCreateEligible || plan?.plan_id || createPlan.isPending) {
       if (!autoCreateEligible || plan?.plan_id) {
         autoCreatePlanRef.current = null;
+      }
+      if (scopedRecommendationReady && effectiveScope && !aiDecisionMakerEnabled && !reviewModeRequested && !routeHasInvestmentParams) {
+        console.info("[frontend][trade] scoped recommendation ready, proposal creation deferred until explicit review");
       }
       return;
     }
@@ -616,22 +750,26 @@ export default function DecisionLog() {
       return;
     }
 
-    const scopeKey = `${scope.depositAssetSymbol}:${scope.depositAmount}:${scope.riskProfile}:${scope.allocationMode}`;
+    const scopeKey = `${effectiveScope.depositAssetSymbol}:${effectiveScope.depositAmount}:${effectiveScope.riskProfile}:${effectiveScope.allocationMode}`;
     if (autoCreatePlanRef.current === scopeKey) {
       return;
     }
 
     autoCreatePlanRef.current = scopeKey;
-    console.info("[frontend][trade] auto-create triggered", { scopeKey, scope });
+    console.info("[frontend][trade] auto-create triggered", { scopeKey, scope: effectiveScope });
     toast.info(
       aiDecisionMakerEnabled
         ? "Full access AI is creating a guarded proposal from the current recommendation."
-        : "Recommendation mode is creating an approval-ready proposal from the vault-backed recommendation.",
+        : "Review mode is creating an approval-ready proposal from the current scoped recommendation.",
     );
     void handleCreatePlan();
   }, [
+    allocation?.decision?.recommended_action,
+    allocation?.rebalance_actions,
+    allocationRecommendedAction,
     aiDecisionMakerEnabled,
     createPlan.isPending,
+    derivedRecommendationDraft,
     handleCreatePlan,
     localWarnings.length,
     plan?.plan_id,
@@ -646,6 +784,10 @@ export default function DecisionLog() {
       toast.error("Select a linked proposal before approving.");
       return;
     }
+    if (selectedProposalStatusCode && selectedProposalStatusCode !== "PROPOSAL_PENDING_APPROVAL") {
+      toast.error("This proposal is already finalized and cannot be approved again.");
+      return;
+    }
     const proposalIds = aiDecisionMakerEnabled
       ? selectedSessionPlan.linked_proposals.map((proposal) => proposal.proposal_id)
       : [activeProposalId];
@@ -656,6 +798,7 @@ export default function DecisionLog() {
         appendEntry({
           proposalId,
           type: "approved",
+          actor: "user",
           message: aiDecisionMakerEnabled ? "Human approval recorded for AI-created proposal" : "Investment plan approved",
           timestamp: new Date().toISOString(),
         });
@@ -680,6 +823,7 @@ export default function DecisionLog() {
         appendEntry({
           proposalId: activeProposalId,
           type: "rejected",
+          actor: "user",
           message: "Investment plan rejected",
           timestamp: new Date().toISOString(),
         });
@@ -827,11 +971,20 @@ export default function DecisionLog() {
   const selectedStatusText = selectedProposalLog?.status_code
     ? formatDecisionStatus(selectedProposalLog.status_code)
     : selectedSessionPlan?.status_label ?? "Draft";
-  const selectedGuardBlocked = selectedProposalLog?.status_code === "PROPOSAL_REJECTED" || !selectedSessionPlan?.approval_enabled;
+  const selectedProposalStatusCode = selectedProposalLog?.status_code ?? selectedPlanProposal?.status_code ?? null;
+  const selectedProposalPendingApproval = selectedProposalStatusCode === "PROPOSAL_PENDING_APPROVAL";
+  const selectedProposalFinalized = selectedProposalStatusCode
+    ? ["PROPOSAL_APPROVED", "PROPOSAL_EXECUTING", "PROPOSAL_EXECUTED", "PROPOSAL_REJECTED"].includes(selectedProposalStatusCode)
+    : false;
+  const selectedGuardBlocked = selectedProposalStatusCode === "PROPOSAL_REJECTED" || selectedSessionPlan?.approval_enabled === false;
   const selectedGuardState = selectedSessionPlan
     ? selectedGuardBlocked
       ? "Guardrail hold"
-      : "Approval ready"
+      : selectedProposalFinalized
+        ? formatCompactLabel(selectedProposalStatusCode)
+      : selectedProposalPendingApproval
+        ? "Pending approval"
+        : "Approval ready"
     : "No active draft";
   const selectedRouteLabel = selectedProposalLog
     ? `${selectedProposalLog.token_in_symbol ?? resolveTokenLabel(selectedProposalLog.token_in, tokenLabelsByAddress)} to ${selectedProposalLog.token_out_symbol ?? resolveTokenLabel(selectedProposalLog.token_out, tokenLabelsByAddress)}`
@@ -855,6 +1008,10 @@ export default function DecisionLog() {
       "Create a decision draft to review the AI recommendation.";
   const selectedCurrentBlocker = selectedProposalLog?.status_code === "PROPOSAL_REJECTED"
     ? "Execution cannot continue until a new approved proposal is created."
+    : selectedProposalFinalized && !selectedProposalPendingApproval
+      ? "This proposal is already finalized and cannot be approved again."
+    : selectedProposalPendingApproval
+      ? "Waiting for user approval before execution can continue."
     : hasBlockers[0] ??
       selectedApprovalBlockers[0] ??
       (selectedSessionPlan?.approval_enabled
@@ -872,11 +1029,13 @@ export default function DecisionLog() {
   );
   const selectedExecutionLabel = hasBlockers.length > 0 || selectedProposalLog?.status_code === "PROPOSAL_REJECTED"
     ? "Execution blocked"
-    : selectedPlanProposal?.status_code === "PROPOSAL_EXECUTED"
+    : selectedProposalStatusCode === "PROPOSAL_EXECUTED"
       ? "Executed"
-      : selectedPlanProposal?.status_code === "PROPOSAL_APPROVED"
+      : selectedProposalStatusCode === "PROPOSAL_APPROVED"
         ? "Ready to execute"
-        : "Review pending";
+        : selectedProposalStatusCode === "PROPOSAL_PENDING_APPROVAL"
+          ? "Pending approval"
+          : "Review pending";
   const selectedSessionId = selectedProposalLog?.proposal_id
     ? shortHash(selectedProposalLog.proposal_id)
     : selectedSessionPlan?.plan_id
@@ -905,17 +1064,22 @@ export default function DecisionLog() {
     { label: "Tx hash", value: latestProposalActivity?.hash ?? "Not submitted" },
   ];
   const selectedConfidenceRaw = selectedSessionPlan?.risk_assessment?.confidence ?? selectedProposalLog?.confidence ?? decisions?.confidence ?? risk?.confidence ?? null;
-  const selectedConfidence = typeof selectedConfidenceRaw === "number"
-    ? selectedConfidenceRaw
-    : Number.parseFloat(String(selectedConfidenceRaw ?? ""));
+  const selectedConfidence = normalizeConfidenceToPercent(
+    typeof selectedConfidenceRaw === "number"
+      ? selectedConfidenceRaw
+      : Number.parseFloat(String(selectedConfidenceRaw ?? "")),
+  );
   const totalDecisionCount = filteredProposals.length;
   const executedCount = filteredProposals.filter((proposal) => proposal.status_code === "PROPOSAL_EXECUTED").length;
   const executionRate = totalDecisionCount > 0 ? (executedCount / totalDecisionCount) * 100 : 0;
+  const selectedProposalActorLabel = selectedProposalLog
+    ? deriveProposalActorLabel(selectedProposalLog, proposalActivity, aiDecisionMakerEnabled)
+    : (aiDecisionMakerEnabled ? "AI" : "User");
   const confidenceValues = filteredProposals
     .map((proposal) => {
       const raw = proposal.confidence;
       const parsed = typeof raw === "number" ? raw : Number.parseFloat(String(raw ?? ""));
-      return Number.isFinite(parsed) ? parsed : null;
+      return normalizeConfidenceToPercent(parsed);
     })
     .filter((value): value is number => value !== null);
   const averageConfidence = confidenceValues.length > 0
@@ -946,7 +1110,7 @@ export default function DecisionLog() {
           <div className="space-y-3">
             <p className="terminal-label text-primary">Decision Audit</p>
             <div>
-              <h1 className="font-display text-4xl leading-none text-foreground sm:text-5xl">Decision Log</h1>
+              <h1 className="text-4xl font-semibold leading-none text-foreground sm:text-5xl">Decision Log</h1>
               <p className="mt-3 max-w-2xl text-base text-muted-foreground">
                 AI decision history, explainability, and operator approval now live in one review surface.
               </p>
@@ -992,11 +1156,11 @@ export default function DecisionLog() {
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
                 placeholder="Search decisions..."
-                className="h-12 border-primary/20 bg-[#2a1a0d] pl-11 text-base"
+                className="h-12 border-primary/20 bg-surface-2 pl-11 text-base"
               />
             </label>
             <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger className="h-12 border-primary/20 bg-[#2a1a0d] text-base">
+              <SelectTrigger className="h-12 border-primary/20 bg-surface-2 text-base">
                 <SelectValue placeholder="All Types" />
               </SelectTrigger>
               <SelectContent>
@@ -1008,7 +1172,7 @@ export default function DecisionLog() {
               </SelectContent>
             </Select>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="h-12 border-primary/20 bg-[#2a1a0d] text-base">
+              <SelectTrigger className="h-12 border-primary/20 bg-surface-2 text-base">
                 <SelectValue placeholder="All Status" />
               </SelectTrigger>
               <SelectContent>
@@ -1021,7 +1185,7 @@ export default function DecisionLog() {
               </SelectContent>
             </Select>
             <Select value={rangeFilter} onValueChange={setRangeFilter}>
-              <SelectTrigger className="h-12 border-primary/20 bg-[#2a1a0d] text-base">
+              <SelectTrigger className="h-12 border-primary/20 bg-surface-2 text-base">
                 <SelectValue placeholder="Date Range" />
               </SelectTrigger>
               <SelectContent>
@@ -1045,7 +1209,7 @@ export default function DecisionLog() {
           </div>
 
           <div className="overflow-hidden rounded-[22px] border border-border/70">
-            <div className="hidden grid-cols-[1.4fr_2fr_1fr_0.8fr_1fr] gap-4 border-b border-border/70 bg-[#211306] px-7 py-4 text-xs uppercase tracking-[0.28em] text-primary/80 md:grid">
+            <div className="hidden grid-cols-[1.4fr_2fr_1fr_0.8fr_1fr] gap-4 border-b border-border/70 bg-surface-3 px-7 py-4 text-xs uppercase tracking-[0.28em] text-primary/80 md:grid">
               <span>Timestamp</span>
               <span>Decision</span>
               <span>Status</span>
@@ -1057,19 +1221,24 @@ export default function DecisionLog() {
               {paginatedProposals.map((proposal) => {
                 const proposalActivityEntries = getEntriesForProposal(proposal.proposal_id);
                 const latestActivity = proposalActivityEntries[0];
+                const actorLabel = deriveProposalActorLabel(proposal, proposalActivityEntries, aiDecisionMakerEnabled);
                 const approvalBlocked = (proposal.approval_blockers?.length ?? 0) > 0 || proposal.approval_enabled === false;
                 const sessionAmount = Number.isFinite(proposal.deposit_amount ?? NaN)
                   ? proposal.deposit_amount
                   : Number.parseFloat(proposal.max_amount_in || "0");
                 const decisionType = deriveDecisionType(proposal, tokenLabelsByAddress);
                 const proposalStatusLabel = formatCompactLabel(proposal.status_code);
-                const confidenceLabel = typeof proposal.confidence === "number"
-                  ? proposal.confidence
-                  : Number.parseFloat(String(proposal.confidence ?? ""));
+                const confidenceLabel = normalizeConfidenceToPercent(
+                  typeof proposal.confidence === "number"
+                    ? proposal.confidence
+                    : Number.parseFloat(String(proposal.confidence ?? "")),
+                );
                 const approvalLabel = proposal.status_code === "PROPOSAL_EXECUTED"
                   ? "Executed"
                   : proposal.status_code === "PROPOSAL_REJECTED"
                     ? "Rejected"
+                    : proposal.status_code === "PROPOSAL_PENDING_APPROVAL"
+                      ? "Pending approval"
                     : approvalBlocked
                       ? "Review needed"
                       : proposal.status_code === "PROPOSAL_APPROVED"
@@ -1085,7 +1254,7 @@ export default function DecisionLog() {
                     }}
                     className={cn(
                       "grid w-full gap-4 border-b border-border/60 px-5 py-5 text-left transition-colors last:border-b-0 md:grid-cols-[1.4fr_2fr_1fr_0.8fr_1fr] md:px-7",
-                      activeProposalId === proposal.proposal_id ? "bg-primary/8" : "bg-transparent hover:bg-[#24170a]",
+                      activeProposalId === proposal.proposal_id ? "bg-primary/8" : "bg-transparent hover:bg-surface-2",
                     )}
                   >
                     <div>
@@ -1098,6 +1267,11 @@ export default function DecisionLog() {
                         {proposal.token_out_symbol ?? resolveTokenLabel(proposal.token_out, tokenLabelsByAddress)}
                       </p>
                       <p className="mt-2 terminal-label text-muted-foreground">{decisionTypeSubtitle(decisionType)}</p>
+                      <div className="mt-2">
+                        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">
+                          {actorLabel} managed
+                        </span>
+                      </div>
                       <p className="mt-2 line-clamp-1 text-sm text-muted-foreground">
                         {approvalBlocked
                           ? proposal.approval_blockers?.[0] ?? "Guard checks are still preventing approval."
@@ -1164,9 +1338,9 @@ export default function DecisionLog() {
       </section>
 
       <Dialog open={proposalModalOpen && Boolean(activeProposalId || selectedSessionPlan)} onOpenChange={setProposalModalOpen}>
-        <DialogContent className="max-h-[88vh] max-w-5xl overflow-hidden border-border bg-background p-0">
+        <DialogContent className="flex h-[88vh] max-h-[88vh] max-w-5xl flex-col overflow-hidden border-border bg-background p-0">
           <DialogHeader className="border-b border-border/70 px-5 py-5 text-left">
-            <DialogTitle className="font-display text-2xl uppercase tracking-[0.06em] text-foreground">
+            <DialogTitle className="text-2xl font-semibold uppercase tracking-[0.06em] text-foreground">
               {selectedStatusText}
             </DialogTitle>
             <DialogDescription className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
@@ -1174,7 +1348,7 @@ export default function DecisionLog() {
             </DialogDescription>
           </DialogHeader>
 
-          <section className="terminal-panel flex min-h-0 flex-col overflow-hidden border-0 shadow-none">
+          <section className="terminal-panel flex min-h-0 flex-1 flex-col overflow-hidden border-0 shadow-none">
           <header className="border-b border-border/70 px-5 py-5">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -1186,6 +1360,9 @@ export default function DecisionLog() {
                   {selectedMainReason}
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2">
+                  <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary">
+                    Managed by: {selectedProposalActorLabel}
+                  </span>
                   <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary">
                     Risk: {selectedRiskLabel}
                   </span>
@@ -1241,25 +1418,18 @@ export default function DecisionLog() {
                   />
                 )}
 
-                <div className="flex flex-wrap gap-2 border-t border-border/70 pt-4">
-                  <Button onClick={handleCreatePlan} disabled={working || localWarnings.length > 0}>
-                    {createPlan.isPending ? "Creating..." : aiDecisionMakerEnabled ? "Create AI proposal" : "Create proposal"}
-                  </Button>
-                  <Button variant="outline" onClick={handleRefreshChecks}>
-                    Re-run checks
-                  </Button>
-                  <Button variant="outline" onClick={() => setActiveSessionTab("evidence")}>
-                    View evidence
-                  </Button>
-                  <Button variant="outline" onClick={() => setShowRiskDialog(true)} disabled={!selectedSessionPlan?.risk_assessment && !risk}>
-                    View risk details
-                  </Button>
-                </div>
-
                 <div className="flex flex-wrap gap-2">
                   {!aiDecisionMakerEnabled && (
                     <>
-                      <Button onClick={() => void handleApprove()} disabled={!activeProposalId || working || !selectedSessionPlan?.approval_enabled}>
+                      <Button
+                        onClick={() => void handleApprove()}
+                        disabled={
+                          !activeProposalId ||
+                          working ||
+                          !selectedSessionPlan?.approval_enabled ||
+                          !selectedProposalPendingApproval
+                        }
+                      >
                         {approveProposal.isPending ? "Approving..." : "Approve plan"}
                       </Button>
                       <Button variant="outline" onClick={handleReject} disabled={!activeProposalId || working}>

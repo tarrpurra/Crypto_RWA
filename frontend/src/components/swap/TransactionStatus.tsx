@@ -31,10 +31,25 @@ export function TransactionStatus({
     <div className="space-y-2">
       {entries.map((entry) => {
         const href = entry.hash ? explorerLink(entry.hash, entry.chainId) : null;
+        const actorLabel =
+          entry.actor === "ai"
+            ? "AI"
+            : entry.actor === "user"
+              ? "User"
+              : entry.actor === "system"
+                ? "System"
+                : null;
         return (
           <div key={`${entry.proposalId}-${entry.type}-${entry.timestamp}`} className="rounded border border-border bg-surface-2 p-3 text-sm">
             <div className="flex items-center justify-between gap-3">
-              <p className="font-medium text-foreground">{entry.message}</p>
+              <div className="flex items-center gap-2">
+                <p className="font-medium text-foreground">{entry.message}</p>
+                {actorLabel && (
+                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">
+                    {actorLabel}
+                  </span>
+                )}
+              </div>
               <span className="shrink-0 text-xs text-muted-foreground">
                 {new Date(entry.timestamp).toLocaleString()}
               </span>
