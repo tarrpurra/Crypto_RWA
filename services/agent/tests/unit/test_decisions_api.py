@@ -5,13 +5,20 @@ from datetime import timedelta
 from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from services.agent.app.api.decisions import get_latest_decisions, list_proposals
+from services.agent.app.api.decisions import create_investment_plan, get_latest_decisions, list_proposals
 from services.agent.app.api.decisions import execute_proposal
 from services.agent.app.core.settings import Settings
 from services.agent.app.core.status_codes import TargetChain
 from services.agent.app.core.status_codes import DataStatusCode
 from services.agent.app.schemas.allocation import AllocationDecision
 from services.agent.app.schemas.recommendations import AIDebugPayload, RecommendationResponse
+from services.agent.app.schemas.proposals import (
+    ExecutionPayloadSchema,
+    InvestmentPlanRequest,
+    InvestmentPlanResponse,
+    LinkedProposalSummary,
+    TradeProposal,
+)
 from services.agent.modules.oracle.freshness import utc_now
 from services.agent.repositories.db.models import InvestmentPlanRecord, TradeExecutionRecord, TradeProposalRecord
 from services.agent.repositories.db.session import create_session, init_db
@@ -178,6 +185,141 @@ class DecisionsApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.proposals[0].recommended_action, "REBALANCE")
         self.assertEqual(response.proposals[0].confidence, 88.3)
         self.assertEqual(response.proposals[0].reasoning_summary, "Move capital into the target basket.")
+
+    @patch("services.agent.app.api.decisions._save_proposal_record")
+    @patch("services.agent.app.api.decisions.InvestmentPlanRepository.save_plan_for_proposals")
+    @patch("services.agent.app.api.decisions.build_investment_plan")
+    @patch("services.agent.modules.decisions.build_decision_context", new_callable=AsyncMock)
+    @patch("services.agent.app.api.decisions.get_vault_balance_snapshot", new_callable=AsyncMock)
+    @patch("services.agent.app.api.decisions.get_settings")
+    async def test_create_investment_plan_ai_mode_selects_best_deal_and_rejects_others(
+        self,
+        get_settings,
+        mock_get_vault_balance_snapshot,
+        mock_build_decision_context,
+        mock_build_investment_plan,
+        mock_save_plan_for_proposals,
+        mock_save_proposal_record,
+    ) -> None:
+        get_settings.return_value = Settings(
+            _env_file=None,
+            app_env="test",
+            target_chain=TargetChain.MANTLE_SEPOLIA,
+            ai_decision_maker_enabled=True,
+            executor_vault_address="0x301e982dbc40f4aa42C291427E7cB0E9491102F1",
+            database_url="sqlite+pysqlite:///:memory:",
+        )
+        mock_get_vault_balance_snapshot.return_value = MagicMock(
+            balances=[MagicMock(asset_symbol="WMNT", balance="100")],
+            total_value_usd="100",
+        )
+        mock_build_decision_context.return_value = MagicMock(
+            portfolio_response=MagicMock(),
+            actual_portfolio_response=MagicMock(),
+            risk_assessment=MagicMock(),
+        )
+        winner = TradeProposal(
+            proposal_id="0xwinner",
+            plan_hash="0xplanwinner",
+            wallet_or_vault="0xwallet",
+            payload=ExecutionPayloadSchema(
+                proposalId="0xwinner",
+                planHash="0xplanwinner",
+                router="0x0000000000000000000000000000000000000001",
+                selector="0x414bf389",
+                calldataHash="0xcalldatawinner",
+                tokenIn="0x0000000000000000000000000000000000000002",
+                tokenOut="0x0000000000000000000000000000000000000003",
+                recipient="0x0000000000000000000000000000000000000004",
+                maxAmountIn=100,
+                minAmountOut=98,
+                nativeValue=0,
+                deadline=123,
+                proposalExpiry=456,
+                nonce=1,
+            ),
+            status_code="PROPOSAL_PENDING_APPROVAL",
+            risk_snapshot_id=None,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        loser = TradeProposal(
+            proposal_id="0xloser",
+            plan_hash="0xplanloser",
+            wallet_or_vault="0xwallet",
+            payload=ExecutionPayloadSchema(
+                proposalId="0xloser",
+                planHash="0xplanloser",
+                router="0x0000000000000000000000000000000000000001",
+                selector="0x414bf389",
+                calldataHash="0xcalldataloser",
+                tokenIn="0x0000000000000000000000000000000000000002",
+                tokenOut="0x0000000000000000000000000000000000000003",
+                recipient="0x0000000000000000000000000000000000000004",
+                maxAmountIn=25,
+                minAmountOut=24,
+                nativeValue=0,
+                deadline=123,
+                proposalExpiry=456,
+                nonce=2,
+            ),
+            status_code="PROPOSAL_PENDING_APPROVAL",
+            risk_snapshot_id=None,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        plan_response = InvestmentPlanResponse(
+            status="ok",
+            status_code="EXECUTION_READY",
+            status_label="EXECUTION_READY",
+            status_reason="AI auto-approved the trade proposal. Execution is pending through the ExecutorVault on-chain path.",
+            generated_at=utc_now(),
+            plan_id="plan-1",
+            deposit_asset_symbol="MNT",
+            deposit_amount=100.0,
+            risk_profile="Balanced",
+            allocation_mode="AI Suggested",
+            approval_enabled=True,
+            approval_blockers=[],
+            linked_proposals=[
+                LinkedProposalSummary(
+                    proposal_id="0xwinner",
+                    asset_symbol="USDY",
+                    action="BUY",
+                    token_in_symbol="WMNT",
+                    token_out_symbol="USDY",
+                    amount=100.0,
+                    status_code="PROPOSAL_PENDING_APPROVAL",
+                ),
+                LinkedProposalSummary(
+                    proposal_id="0xloser",
+                    asset_symbol="mETH",
+                    action="BUY",
+                    token_in_symbol="WMNT",
+                    token_out_symbol="mETH",
+                    amount=25.0,
+                    status_code="PROPOSAL_PENDING_APPROVAL",
+                ),
+            ],
+        )
+        mock_build_investment_plan.return_value = (plan_response, [(winner, "0x1111"), (loser, "0x2222")])
+
+        response = await create_investment_plan(
+            InvestmentPlanRequest(
+                wallet_address="0xwallet",
+                deposit_asset_symbol="MNT",
+                deposit_amount=100.0,
+                risk_profile="Balanced",
+                allocation_mode="AI Suggested",
+            )
+        )
+
+        self.assertEqual(response.linked_proposals[0].status_code, "PROPOSAL_APPROVED")
+        self.assertEqual(response.linked_proposals[1].status_code, "PROPOSAL_REJECTED")
+        self.assertEqual(winner.status_code, "PROPOSAL_APPROVED")
+        self.assertEqual(loser.status_code, "PROPOSAL_REJECTED")
+        mock_save_proposal_record.assert_called()
+        mock_save_plan_for_proposals.assert_called_once()
 
     @patch("services.agent.repositories.db.session.get_settings")
     @patch("services.agent.app.api.decisions.submit_executor_vault_trade")

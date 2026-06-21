@@ -69,6 +69,20 @@ def _risk_summary_for_proposal(plan_json: dict[str, Any] | None) -> dict[str, An
     return {}
 
 
+def _select_ai_winner_proposal_id(linked_proposals: list[Any]) -> str | None:
+    if not linked_proposals:
+        return None
+    winner = max(
+        linked_proposals,
+        key=lambda item: (
+            float(getattr(item, "amount", 0.0) or 0.0),
+            str(getattr(item, "token_out_symbol", "") or ""),
+            str(getattr(item, "proposal_id", "") or ""),
+        ),
+    )
+    return getattr(winner, "proposal_id", None)
+
+
 def _save_proposal_record(proposal: TradeProposal, calldata: str) -> None:
     """Persist a new TradeProposalRecord. Refuses to overwrite an existing row
     (Bug 3 fix: replaced session.merge() silent-upsert with an explicit
@@ -305,6 +319,32 @@ async def create_investment_plan(request: InvestmentPlanRequest) -> InvestmentPl
             if settings.ai_decision_maker_enabled
             else "Human approval required",
         )
+    ai_winner_proposal_id = None
+    if settings.ai_decision_maker_enabled and len(plan_response.linked_proposals) > 1:
+        ai_winner_proposal_id = _select_ai_winner_proposal_id(plan_response.linked_proposals)
+        if ai_winner_proposal_id:
+            logger.info(
+                "AI access selected proposal %s as the best deal and will reject %d competing proposal(s).",
+                ai_winner_proposal_id,
+                len(plan_response.linked_proposals) - 1,
+            )
+            proposal_by_id = {proposal.proposal_id: proposal for proposal, _ in proposal_pairs}
+            linked_by_id = {linked.proposal_id: linked for linked in plan_response.linked_proposals}
+            for proposal_id, proposal in proposal_by_id.items():
+                if proposal_id == ai_winner_proposal_id:
+                    proposal.status_code = "PROPOSAL_APPROVED"
+                    if proposal_id in linked_by_id:
+                        linked_by_id[proposal_id].status_code = "PROPOSAL_APPROVED"
+                else:
+                    proposal.status_code = "PROPOSAL_REJECTED"
+                    if proposal_id in linked_by_id:
+                        linked_by_id[proposal_id].status_code = "PROPOSAL_REJECTED"
+    elif settings.ai_decision_maker_enabled and plan_response.linked_proposals:
+        ai_winner_proposal_id = plan_response.linked_proposals[0].proposal_id
+        plan_response.linked_proposals[0].status_code = "PROPOSAL_APPROVED"
+        if proposal_pairs:
+            proposal_pairs[0][0].status_code = "PROPOSAL_APPROVED"
+        logger.info("AI access selected the only available proposal %s.", ai_winner_proposal_id)
     for proposal, calldata in proposal_pairs:
         _save_proposal_record(proposal, calldata)
     if plan_response.linked_proposals:
@@ -312,36 +352,6 @@ async def create_investment_plan(request: InvestmentPlanRequest) -> InvestmentPl
             InvestmentPlanRepository().save_plan_for_proposals(plan_response)
         except Exception as exc:
             logger.warning("Failed to persist investment plan detail: %s", exc)
-
-    # AI auto-approve: when ai_decision_maker_enabled is on, immediately transition
-    # all newly-saved proposals from PROPOSAL_PENDING_APPROVAL to PROPOSAL_APPROVED
-    # so no human gate blocks the flow.  The status is updated in a single session
-    # per proposal to maintain the same atomicity guarantees as the manual approve path.
-    if settings.ai_decision_maker_enabled and plan_response.linked_proposals:
-        init_db()
-        for linked in plan_response.linked_proposals:
-            proposal_id = linked.proposal_id
-            try:
-                with create_session() as session:
-                    from sqlalchemy import select as _select
-
-                    record = session.scalar(
-                        _select(TradeProposalRecord).where(
-                            TradeProposalRecord.proposal_id == proposal_id
-                        )
-                    )
-                    if record and record.status_code not in _APPROVE_TERMINAL_STATES:
-                        record.status_code = "PROPOSAL_APPROVED"
-                        record.updated_at = utc_now()
-                        session.commit()
-                        logger.info(
-                            "AI auto-approved proposal %s (ai_decision_maker_enabled=True)",
-                            proposal_id,
-                        )
-            except Exception as exc:
-                logger.warning(
-                    "AI auto-approve failed for proposal %s: %s", proposal_id, exc
-                )
 
     return plan_response
 

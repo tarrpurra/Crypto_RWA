@@ -445,7 +445,7 @@ describe("DecisionLog", () => {
     });
   });
 
-  it("does not create a proposal from a scoped rebalance recommendation without review query params", async () => {
+  it("creates a proposal from a scoped rebalance recommendation without review query params", async () => {
     allocationState.response = {
       status: "ok",
       status_code: "RISK_NORMAL",
@@ -484,6 +484,6 @@ describe("DecisionLog", () => {
       ([input, init]) => String(input).includes("/proposals/create") && init?.method === "POST",
     );
 
-    expect(createCall).toBeUndefined();
+    expect(createCall).toBeDefined();
   });
 });

@@ -398,6 +398,13 @@ def _build_rebalance_swaps(
         token_out_symbol = action.token_out_symbol or action.asset_symbol
         if not token_in_symbol or not token_out_symbol:
             continue
+        if token_in_symbol.upper() == token_out_symbol.upper():
+            logger.info(
+                "Skipping rebalance swap %s->%s because it is a no-op route.",
+                token_in_symbol,
+                token_out_symbol,
+            )
+            continue
 
         source_price = _symbol_price(token_in_symbol, prices, portfolio)
         target_price = _symbol_price(token_out_symbol, prices, portfolio)
@@ -1013,7 +1020,11 @@ def build_investment_plan(
         response_status = "ok"
         response_status_code = ExecutionStatusCode.EXECUTION_READY.value
         if settings.ai_decision_maker_enabled:
-            response_status_reason = "AI auto-approved the trade proposal. Execution is pending through the ExecutorVault on-chain path."
+            response_status_reason = (
+                "AI auto-selected the best trade proposal. Execution is pending through the ExecutorVault on-chain path."
+                if len(linked_proposals) > 1
+                else "AI auto-approved the trade proposal. Execution is pending through the ExecutorVault on-chain path."
+            )
         elif linked_proposals:
             response_status_reason = "Trade proposal created. Human approval is required before execution."
         elif rebalance_swaps:
