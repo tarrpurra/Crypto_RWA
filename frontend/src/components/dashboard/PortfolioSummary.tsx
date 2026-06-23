@@ -89,6 +89,7 @@ export function PortfolioSummary({
   }, [vaultData?.pnl_percent]);
 
   const isPositive = (pnl ?? 0) >= 0;
+  const pnlPercentIsPositive = (pnlPercent ?? 0) >= 0;
   const riskScore = risk?.risk_score_normalized ?? risk?.risk_score;
   const riskBand = risk?.risk_band ?? "PENDING";
   const confidence = risk?.confidence_normalized ?? risk?.confidence;
@@ -141,7 +142,7 @@ export function PortfolioSummary({
               <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">P&amp;L</p>
               {pnl != null && pnlPercent != null ? (
                 <p className={`font-mono text-sm ${isPositive ? "text-emerald-400" : "text-red-400"}`}>
-                  {isPositive ? "+" : ""}${toTwo(Math.abs(pnl))} ({isPositive ? "+" : ""}{toTwo(pnlPercent)}%)
+                  {isPositive ? "+" : ""}${toTwo(Math.abs(pnl))} ({pnlPercentIsPositive ? "+" : ""}{toTwo(pnlPercent)}%)
                 </p>
               ) : (
                 <p className="font-mono text-sm text-muted-foreground">

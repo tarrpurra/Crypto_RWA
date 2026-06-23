@@ -946,7 +946,10 @@ def build_investment_plan(
 
     transaction_steps: list[TransactionStep] = []
     step_index = 1
-    ai_managed_execution = settings.ai_decision_maker_enabled
+    ai_managed_execution = (
+        settings.ai_decision_maker_enabled
+        and settings.runtime_mode == RuntimeMode.LIVE
+    )
     # Bug D fix: emit the wrap step whenever native MNT is being deposited,
     # regardless of whether swap legs were built. Previously the condition
     # required swaps to exist with token_in_symbol=="WMNT", which meant an
@@ -1019,7 +1022,7 @@ def build_investment_plan(
     elif execution_ready:
         response_status = "ok"
         response_status_code = ExecutionStatusCode.EXECUTION_READY.value
-        if settings.ai_decision_maker_enabled:
+        if ai_managed_execution:
             response_status_reason = (
                 "AI auto-selected the best trade proposal. Execution is pending through the ExecutorVault on-chain path."
                 if len(linked_proposals) > 1
@@ -1070,8 +1073,9 @@ def build_investment_plan(
             "runtime_mode": settings.runtime_mode.value,
             "target_chain": settings.target_chain.value,
             "execution_required": execution_required,
-            "human_approval_required": not settings.ai_decision_maker_enabled and bool(linked_proposals),
-            "proposal_creation_mode": "ai_auto" if settings.ai_decision_maker_enabled else "manual",
+            "human_approval_required": not ai_managed_execution and bool(linked_proposals),
+            "proposal_creation_mode": "ai_auto" if ai_managed_execution else "manual",
+            "ai_auto_execution_active": ai_managed_execution,
         },
     )
     for proposal in linked_proposals:

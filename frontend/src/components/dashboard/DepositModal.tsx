@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { parseUnits } from "viem";
-import { usePublicClient, useWriteContract } from "wagmi";
+import { useAccount, usePublicClient, useWriteContract } from "wagmi";
 import {
   AlertCircle,
   CheckCircle2,
@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useSystemReadiness } from "@/hooks/useSystem";
 import type { VaultBalanceResponse } from "@/lib/api/types";
 import { normalizeAddress } from "@/lib/addresses";
 import { vaultApi } from "@/lib/api/vault";
@@ -44,8 +45,8 @@ const EXECUTOR_VAULT_ABI = [
   },
 ] as const;
 
-function assetDecimals(_symbol: string) {
-  return 18;
+function assetDecimals(symbol: string, decimalsBySymbol: Map<string, number>) {
+  return decimalsBySymbol.get(symbol.toUpperCase()) ?? 18;
 }
 
 function shortenAddress(value: string | null | undefined) {
@@ -59,10 +60,8 @@ function shortenAddress(value: string | null | undefined) {
 }
 
 export function getDepositAssets(nativeMntEnabled: boolean, wmntAddress?: string | null) {
-  const canWrapNativeMnt = Boolean(wmntAddress);
-  return canWrapNativeMnt
-    ? [...DEPOSIT_ASSETS]
-    : DEPOSIT_ASSETS.filter((value) => value !== "MNT" && value !== "WMNT");
+  const canWrapNativeMnt = nativeMntEnabled && Boolean(wmntAddress);
+  return DEPOSIT_ASSETS.filter((value) => value !== "MNT" || canWrapNativeMnt);
 }
 
 interface DepositModalProps {
@@ -83,16 +82,17 @@ interface DepositModalProps {
 type DepositStep = "idle" | "approving" | "approve_done" | "depositing" | "done" | "error";
 
 export function DepositModal(props: DepositModalProps) {
-  if (!props.open) return null;
   return <DepositModalContent {...props} />;
 }
 
 
-function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, nativeMntBalance, nativeMntEnabled, suggestedAsset, suggestedAmount }: Omit<DepositModalProps, "open">) {
+function DepositModalContent({ open, onClose, walletData, vaultAddress, wmntAddress, nativeMntBalance, nativeMntEnabled, suggestedAsset, suggestedAmount }: DepositModalProps) {
   const queryClient = useQueryClient();
+  const { address: connectedAddress } = useAccount();
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
   const chainId = useChainId();
+  const readinessQuery = useSystemReadiness();
   const wrapMnt = useWrapMnt();
   const depositAssets = useMemo(() => getDepositAssets(nativeMntEnabled, wmntAddress), [nativeMntEnabled, wmntAddress]);
   const [asset, setAsset] = useState<string>(() => {
@@ -106,12 +106,14 @@ function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, n
   const [errorMsg, setErrorMsg] = useState("");
   const [txHash, setTxHash] = useState<string>("");
   const [recordNote, setRecordNote] = useState<string>("");
+  const [syncingDashboard, setSyncingDashboard] = useState(false);
   const inFlightRef = useRef(false);
   const normalizedVaultAddress = normalizeAddress(vaultAddress);
   const normalizedWmntAddress = normalizeAddress(wmntAddress);
   const walletBalance = walletData?.balances?.find((b) => b.asset_symbol === asset);
   const walletAddress = walletData?.user_address ?? "";
   const normalizedWalletAddress = normalizeAddress(walletAddress);
+  const normalizedConnectedAddress = normalizeAddress(connectedAddress);
   // For WMNT: when wallet balance entry has no asset_address (e.g. 0 balance
   // returned without address, or query still loading), fall back to the
   // wmntAddress prop which comes directly from settings and is always reliable.
@@ -121,6 +123,20 @@ function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, n
     null;
   const tokenAddress = rawTokenAddress;
   const normalizedTokenAddress = normalizeAddress(tokenAddress);
+  const decimalsBySymbol = useMemo(() => {
+    const map = new Map<string, number>();
+    const tokens = readinessQuery.data?.tokens ?? {};
+    for (const [key, token] of Object.entries(tokens)) {
+      if (typeof token.decimals === "number") {
+        map.set(key.toUpperCase(), token.decimals);
+      }
+      if (token.symbol && typeof token.decimals === "number") {
+        map.set(token.symbol.toUpperCase(), token.decimals);
+      }
+    }
+    map.set("MNT", 18);
+    return map;
+  }, [readinessQuery.data?.tokens]);
   // Bug E fix: for native MNT, walletData.balances contains ERC-20 positions
   // only. Use the caller-supplied nativeMntBalance instead so the user sees
   // their real MNT balance and the Max button is available.
@@ -137,12 +153,17 @@ function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, n
   const exceedsWallet = numericAmount > walletBalanceNum;
   const hasVaultAddress = Boolean(normalizedVaultAddress);
   const hasDepositTokenAddress = asset === "MNT" ? Boolean(normalizedWmntAddress) : Boolean(normalizedTokenAddress);
+  const signerMatchesWallet =
+    Boolean(normalizedConnectedAddress) &&
+    Boolean(normalizedWalletAddress) &&
+    normalizedConnectedAddress === normalizedWalletAddress;
   const isValid =
     amount.trim() &&
     Number.isFinite(numericAmount) &&
     numericAmount > 0 &&
     !exceedsWallet &&
     Boolean(normalizedWalletAddress) &&
+    signerMatchesWallet &&
     hasVaultAddress &&
     hasDepositTokenAddress;
   const needsApproval = asset !== "MNT" && step === "idle";
@@ -151,12 +172,28 @@ function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, n
       return null;
     }
     try {
-      return parseUnits(amount, assetDecimals(asset));
+      return parseUnits(amount, assetDecimals(asset, decimalsBySymbol));
     } catch {
       return null;
     }
-  }, [amount, asset]);
+  }, [amount, asset, decimalsBySymbol]);
   const canSubmit = Boolean(isValid && amountRaw !== null);
+
+  const refreshDashboardState = async () => {
+    if (!normalizedWalletAddress) {
+      return;
+    }
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["vault"] }),
+      queryClient.invalidateQueries({ queryKey: ["portfolio"] }),
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+      queryClient.invalidateQueries({ queryKey: ["allocation"] }),
+      queryClient.refetchQueries({ queryKey: ["vault", "balance", normalizedWalletAddress], exact: true }),
+      queryClient.refetchQueries({ queryKey: ["vault", "wallet", normalizedWalletAddress], exact: true }),
+      queryClient.refetchQueries({ queryKey: ["portfolio", "current", normalizedWalletAddress, false], exact: true }),
+      queryClient.refetchQueries({ queryKey: ["dashboard", "summary", normalizedWalletAddress], exact: true }),
+    ]);
+  };
 
   useEffect(() => {
     if (!depositAssets.includes(asset as (typeof DEPOSIT_ASSETS)[number])) {
@@ -174,6 +211,9 @@ function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, n
     try {
       if (!normalizedWalletAddress) {
         throw new Error("Connected wallet address is missing.");
+      }
+      if (!signerMatchesWallet) {
+        throw new Error("Connected signer does not match the wallet balance being viewed.");
       }
       if (amountRaw === null) {
         throw new Error("Deposit amount is invalid for the selected asset.");
@@ -238,6 +278,9 @@ function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, n
     try {
       if (!normalizedWalletAddress) {
         throw new Error("Connected wallet address is missing.");
+      }
+      if (!signerMatchesWallet) {
+        throw new Error("Connected signer does not match the wallet balance being viewed.");
       }
       if (amountRaw === null) {
         throw new Error("Deposit amount is invalid for the selected asset.");
@@ -346,45 +389,48 @@ function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, n
       });
 
       setTxHash(hash);
-
-      try {
-        await vaultApi.recordFlow({
-          user_address: normalizedWalletAddress,
-          asset_symbol: effectiveSymbol,
-          asset_amount: amount,
-          asset_address: effectiveTokenAddress,
-          tx_hash: hash,
-          flow_type: "deposit",
-          metadata: {
-            source: "frontend.deposit_modal",
-            vault_address: normalizedVaultAddress,
-            source_asset_symbol: asset,
-            wrapped_from_native: asset === "MNT",
-            wmnt_address: normalizedWmntAddress ?? null,
-          },
-        });
-        logger.info("vault.deposit.recorded", {
-          wallet_address: normalizedWalletAddress,
-          asset: effectiveSymbol,
-          amount,
-          tx_hash: hash,
-        });
-      } catch (recordError) {
-        logger.error("vault.deposit.record.failed", {
-          wallet_address: normalizedWalletAddress,
-          asset: effectiveSymbol,
-          amount,
-          tx_hash: hash,
-          error: recordError,
-        });
-        setRecordNote("Transaction confirmed, but backend vault history recording failed.");
-      }
-
-      queryClient.invalidateQueries({ queryKey: ["vault"] });
-      queryClient.invalidateQueries({ queryKey: ["portfolio"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["allocation"] });
       setStep("done");
+      setSyncingDashboard(true);
+
+      const flowPayload = {
+        user_address: normalizedWalletAddress,
+        asset_symbol: effectiveSymbol,
+        asset_amount: amount,
+        asset_address: effectiveTokenAddress,
+        tx_hash: hash,
+        flow_type: "deposit" as const,
+        metadata: {
+          source: "frontend.deposit_modal",
+          vault_address: normalizedVaultAddress,
+          source_asset_symbol: asset,
+          wrapped_from_native: asset === "MNT",
+          wmnt_address: normalizedWmntAddress ?? null,
+        },
+      };
+
+      void (async () => {
+        try {
+          await vaultApi.recordFlow(flowPayload);
+          logger.info("vault.deposit.recorded", {
+            wallet_address: normalizedWalletAddress,
+            asset: effectiveSymbol,
+            amount,
+            tx_hash: hash,
+          });
+          await refreshDashboardState();
+        } catch (recordError) {
+          logger.error("vault.deposit.record.failed", {
+            wallet_address: normalizedWalletAddress,
+            asset: effectiveSymbol,
+            amount,
+            tx_hash: hash,
+            error: recordError,
+          });
+          setRecordNote("Transaction confirmed, but backend vault history recording failed.");
+        } finally {
+          setSyncingDashboard(false);
+        }
+      })();
     } catch (error) {
       logger.error("vault.deposit.failed", {
         wallet_address: normalizedWalletAddress || null,
@@ -406,8 +452,13 @@ function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, n
     setErrorMsg("");
     setTxHash("");
     setRecordNote("");
+    setSyncingDashboard(false);
     onClose();
   };
+
+  if (!open) {
+    return null;
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -434,6 +485,8 @@ function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, n
             </div>
             {recordNote ? (
               <p className="text-center text-[11px] text-warning">{recordNote}</p>
+            ) : syncingDashboard ? (
+              <p className="text-center text-[11px] text-muted-foreground">Transaction confirmed. Syncing dashboard...</p>
             ) : (
               <p className="text-center text-[11px] text-success">Backend vault flow history updated.</p>
             )}
@@ -516,6 +569,13 @@ function DepositModalContent({ onClose, walletData, vaultAddress, wmntAddress, n
             {!hasVaultAddress && (
               <p className="text-[0.6rem] text-destructive">
                 Vault address is unavailable, so deposits cannot be submitted from this modal yet.
+              </p>
+            )}
+            {!signerMatchesWallet && (
+              <p className="text-[0.6rem] text-destructive">
+                {!normalizedConnectedAddress
+                  ? "Connect the same wallet shown in the dashboard before depositing."
+                  : "Connected signer does not match the wallet loaded in the dashboard. Reconnect the same wallet before depositing."}
               </p>
             )}
             {asset === "MNT" ? (

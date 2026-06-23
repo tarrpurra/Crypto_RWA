@@ -53,7 +53,9 @@ export function useUpdateSettings() {
     mutationFn: systemApi.updateSettings,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["system", "settings"] });
+      queryClient.invalidateQueries({ queryKey: ["system", "health"] });
       queryClient.invalidateQueries({ queryKey: ["system", "status"] });
+      queryClient.invalidateQueries({ queryKey: ["system", "readiness"] });
       queryClient.invalidateQueries({ queryKey: ["decisions"] });
       queryClient.invalidateQueries({ queryKey: ["risk"] });
       queryClient.invalidateQueries({ queryKey: ["allocation"] });

@@ -247,6 +247,7 @@ vi.mock("@/hooks/useSystem", () => ({
   useSettings: () => ({
     data: {
       ai_decision_maker_enabled: false,
+      runtime_mode: "monitor_only",
       chain_id: 5003,
       native_mnt_enabled: true,
       sepolia_usdy_address: "0x1",

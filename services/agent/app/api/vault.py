@@ -4,7 +4,7 @@ import logging
 from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from services.agent.app.api.portfolio import current_portfolio
 from services.agent.app.core.settings import get_settings
@@ -68,18 +68,20 @@ def _safe_decimal(value: str | None) -> Decimal:
 def _compute_pnl(total_value_usd: Decimal, net_invested_usd: Decimal) -> tuple[str | None, str | None]:
     pnl_usd = total_value_usd - net_invested_usd
     pnl_usd_str = _format_decimal(pnl_usd)
-    if net_invested_usd == 0:
+    if net_invested_usd <= 0:
         return pnl_usd_str, None
     pnl_percent = (pnl_usd / net_invested_usd) * Decimal("100")
     return pnl_usd_str, _format_decimal(pnl_percent)
 
 
-def _reconcile_dashboard_cost_basis(total_value_usd: Decimal, net_invested_usd: Decimal) -> tuple[Decimal, bool]:
+def _reconcile_dashboard_cost_basis(total_value_usd: Decimal, net_invested_usd: Decimal) -> tuple[Decimal, str | None]:
+    if net_invested_usd < 0:
+        return Decimal("0"), "clamped_negative_basis"
     if total_value_usd <= 0 or net_invested_usd <= 0:
-        return net_invested_usd, False
+        return net_invested_usd, None
     if net_invested_usd <= (total_value_usd * Decimal("5")):
-        return net_invested_usd, False
-    return total_value_usd, True
+        return net_invested_usd, None
+    return total_value_usd, "reconciled_live_value"
 
 
 def _summary_metadata(summary) -> dict[str, object]:
@@ -88,6 +90,14 @@ def _summary_metadata(summary) -> dict[str, object]:
         "last_flow_at": summary.last_flow_at.isoformat() if summary.last_flow_at else None,
         "cost_basis_tracking": summary.flow_count > 0,
     }
+
+
+async def _refresh_portfolio_snapshot_after_flow(user_address: str) -> None:
+    try:
+        await current_portfolio(wallet_address=user_address, force_refresh=True)
+        logger.info("Portfolio snapshot refreshed after flow recording for user=%s", user_address)
+    except Exception as exc:
+        logger.warning("Portfolio snapshot refresh after flow recording failed: %s", exc)
 
 
 def _get_vault_contract(web3, vault_address: str):
@@ -365,15 +375,21 @@ async def get_vault_balance_snapshot(user_address: str | None = None) -> VaultBa
     pnl_percent = None
     metadata = {"cost_basis_tracking": False}
     if summary is not None:
-        effective_invested_usd, reconciled = _reconcile_dashboard_cost_basis(total_value, summary.net_invested_usd)
+        effective_invested_usd, reconciliation_mode = _reconcile_dashboard_cost_basis(total_value, summary.net_invested_usd)
         invested_amount_usd = _format_decimal(effective_invested_usd)
         pnl_usd, pnl_percent = _compute_pnl(total_value, effective_invested_usd)
         metadata = _summary_metadata(summary)
-        if reconciled:
+        if reconciliation_mode == "reconciled_live_value":
             metadata["cost_basis_tracking_mode"] = "reconciled_live_value"
             metadata["cost_basis_reconciled"] = True
             metadata["cost_basis_reconciliation_reason"] = (
                 "Historical vault flow basis was far above current live vault ownership, so the dashboard capped invested capital to live value."
+            )
+        elif reconciliation_mode == "clamped_negative_basis":
+            metadata["cost_basis_tracking_mode"] = "clamped_negative_basis"
+            metadata["cost_basis_reconciled"] = True
+            metadata["cost_basis_reconciliation_reason"] = (
+                "Historical vault flow basis became negative after withdrawals exceeded recorded deposits, so the dashboard reset invested capital to zero."
             )
 
     return VaultBalanceResponse(
@@ -503,7 +519,7 @@ async def deposit_prepare(req: DepositPrepareRequest) -> DepositPrepareResponse:
 
 
 @router.post("/flows/record", response_model=VaultFlowRecordResponse)
-async def record_vault_flow(req: VaultFlowRecordRequest) -> VaultFlowRecordResponse:
+async def record_vault_flow(req: VaultFlowRecordRequest, background_tasks: BackgroundTasks) -> VaultFlowRecordResponse:
     settings = get_settings()
     vault_address = settings.executor_vault_address
     if not vault_address:
@@ -564,16 +580,12 @@ async def record_vault_flow(req: VaultFlowRecordRequest) -> VaultFlowRecordRespo
     )
 
     try:
-        await current_portfolio(wallet_address=req.user_address, force_refresh=True)
-        logger.info("Portfolio snapshot refreshed after flow recording for user=%s", req.user_address)
-    except Exception as exc:
-        logger.warning("Portfolio snapshot refresh after flow recording failed: %s", exc)
-
-    try:
         cache_key = f"dashboard_summary:{req.user_address.lower()}"
         clear_cached(cache_key)
     except Exception as exc:
         logger.warning("Dashboard cache invalidation after flow recording failed: %s", exc)
+
+    background_tasks.add_task(_refresh_portfolio_snapshot_after_flow, req.user_address)
 
     return VaultFlowRecordResponse(
         status="ok",

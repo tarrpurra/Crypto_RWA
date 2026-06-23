@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter
 
 from services.agent.app.core import runtime_config
+from services.agent.app.core.status_codes import RuntimeMode
 
 
 router = APIRouter(tags=["settings"])
@@ -12,6 +13,7 @@ router = APIRouter(tags=["settings"])
 
 class SettingsResponse(BaseModel):
     ai_decision_maker_enabled: bool
+    runtime_mode: RuntimeMode
     chain_id: int
     native_mnt_enabled: bool
     sepolia_usdy_address: str | None
@@ -22,7 +24,8 @@ class SettingsResponse(BaseModel):
 
 
 class UpdateSettingsRequest(BaseModel):
-    ai_decision_maker_enabled: bool
+    ai_decision_maker_enabled: bool | None = None
+    runtime_mode: RuntimeMode | None = None
 
 
 @router.get("/settings", response_model=SettingsResponse)
@@ -32,6 +35,7 @@ async def get_runtime_settings() -> SettingsResponse:
     settings = get_settings()
     return SettingsResponse(
         ai_decision_maker_enabled=runtime_config.get_ai_decision_maker_enabled(),
+        runtime_mode=settings.runtime_mode,
         chain_id=settings.effective_chain_id,
         native_mnt_enabled=settings.native_mnt_enabled,
         sepolia_usdy_address=settings.sepolia_usdy_address,
@@ -48,9 +52,13 @@ async def update_runtime_settings(body: UpdateSettingsRequest) -> SettingsRespon
     from services.agent.app.core.settings import get_settings
 
     settings = get_settings()
-    runtime_config.AI_DECISION_MAKER_ENABLED = body.ai_decision_maker_enabled
+    if body.ai_decision_maker_enabled is not None:
+        runtime_config.AI_DECISION_MAKER_ENABLED = body.ai_decision_maker_enabled
+    if body.runtime_mode is not None:
+        settings.runtime_mode = body.runtime_mode
     return SettingsResponse(
         ai_decision_maker_enabled=runtime_config.get_ai_decision_maker_enabled(),
+        runtime_mode=settings.runtime_mode,
         chain_id=settings.effective_chain_id,
         native_mnt_enabled=settings.native_mnt_enabled,
         sepolia_usdy_address=settings.sepolia_usdy_address,

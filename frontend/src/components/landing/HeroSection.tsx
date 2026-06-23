@@ -3,7 +3,6 @@
 import { Link } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import { DashboardMockup } from "./DashboardMockup";
-import DecryptedText from "@/components/ui/DecryptedText";
 import { HeroLightBendingBackground } from "./HeroLightBendingBackground";
 
 
@@ -41,17 +40,7 @@ export function HeroSection() {
             >
               The AI That Never
               <br />
-              <DecryptedText
-                text="Sleeps on Your Yield"
-                animateOn="view"
-                revealDirection="center"
-                sequential
-                speed={160}
-                useOriginalCharsOnly
-                className="text-stone-950"
-                parentClassName="text-stone-950"
-                encryptedClassName="text-stone-950/40"
-              />
+              <span className="text-stone-950">Sleeps on Your Yield</span>
             </motion.h1>
 
             <motion.p

@@ -25,7 +25,7 @@ import { useDecisions } from "@/hooks/useDecisions";
 import { useCurrentRisk } from "@/hooks/useRisk";
 import { useStrategyActive } from "@/hooks/useStrategy";
 import { useApproveProposal, useCreateProposal, useExecuteProposal, useProposalDetail, useProposals, useRejectProposal } from "@/hooks/useSwap";
-import { useSettings } from "@/hooks/useSystem";
+import { useSettings, useUpdateSettings } from "@/hooks/useSystem";
 import { useVaultBalance } from "@/hooks/useVault";
 import type { ProposalActivityEntry } from "@/hooks/useProposalActivity";
 import type { InvestmentPlanResponse, ProposalListItem } from "@/lib/api/types";
@@ -133,6 +133,26 @@ function parseManualWeights(input: string) {
   };
 }
 
+function selectAiWinnerProposal<T extends { proposal_id: string; amount: number; token_out_symbol?: string | null; status_code?: string | null }>(
+  proposals: T[],
+) {
+  const approved = proposals.find((proposal) => proposal.status_code === "PROPOSAL_APPROVED");
+  if (approved) {
+    return approved;
+  }
+  return [...proposals].sort((left, right) => {
+    if (right.amount !== left.amount) {
+      return right.amount - left.amount;
+    }
+    const leftTokenOut = left.token_out_symbol ?? "";
+    const rightTokenOut = right.token_out_symbol ?? "";
+    if (leftTokenOut !== rightTokenOut) {
+      return rightTokenOut.localeCompare(leftTokenOut);
+    }
+    return right.proposal_id.localeCompare(left.proposal_id);
+  })[0] ?? null;
+}
+
 function deriveDecisionType(
   proposal: {
     token_in_symbol?: string | null;
@@ -213,6 +233,7 @@ export default function DecisionLog() {
   const routesQuery = useMarketRoutes();
   const proposalsQuery = useProposals();
   const settingsQuery = useSettings();
+  const updateSettings = useUpdateSettings();
   const vaultBalanceQuery = useVaultBalance();
 
   const createPlan = useCreateProposal();
@@ -232,6 +253,7 @@ export default function DecisionLog() {
   const vaultData = vaultBalanceQuery.data;
   const proposals = useMemo(() => proposalsQuery.data?.proposals ?? [], [proposalsQuery.data?.proposals]);
   const aiDecisionMakerEnabled = settings?.ai_decision_maker_enabled ?? false;
+  const runtimeMode = settings?.runtime_mode ?? risk?.runtime_mode ?? "monitor_only";
   const autoCreatePlanRef = useRef<string | null>(null);
   const [draftHydrated, setDraftHydrated] = useState(false);
 
@@ -447,7 +469,8 @@ export default function DecisionLog() {
     if (!plan?.linked_proposals.length) {
       return;
     }
-    setActiveProposalId(plan.linked_proposals[0].proposal_id);
+    const winnerProposal = selectAiWinnerProposal(plan.linked_proposals);
+    setActiveProposalId((winnerProposal ?? plan.linked_proposals[0]).proposal_id);
   }, [plan]);
 
   useEffect(() => {
@@ -599,10 +622,12 @@ export default function DecisionLog() {
       },
       {
         onSuccess: async (response) => {
+          const aiAutoExecutionActive = response.metadata?.ai_auto_execution_active === true;
           console.info("[frontend][trade] investment plan created", {
             plan_id: response.plan_id,
             status_code: response.status_code,
             approval_enabled: response.approval_enabled,
+            ai_auto_execution_active: aiAutoExecutionActive,
             linked_proposals: response.linked_proposals.map((proposal) => ({
               proposal_id: proposal.proposal_id,
               token_in_symbol: proposal.token_in_symbol,
@@ -622,8 +647,8 @@ export default function DecisionLog() {
             });
           }
           setPlan(response);
-          const winnerProposal = aiDecisionMakerEnabled
-            ? [...response.linked_proposals].sort((left, right) => right.amount - left.amount)[0] ?? null
+          const winnerProposal = aiAutoExecutionActive
+            ? selectAiWinnerProposal(response.linked_proposals)
             : null;
           const firstProposalId = (winnerProposal ?? response.linked_proposals[0])?.proposal_id;
           if (firstProposalId) {
@@ -635,7 +660,7 @@ export default function DecisionLog() {
             }
           }
           for (const proposal of response.linked_proposals) {
-            if (aiDecisionMakerEnabled) {
+            if (aiAutoExecutionActive) {
               if (winnerProposal && proposal.proposal_id !== winnerProposal.proposal_id) {
                 appendEntry({
                   proposalId: proposal.proposal_id,
@@ -652,16 +677,24 @@ export default function DecisionLog() {
                   proposalId: proposal.proposal_id,
                   type: "approved",
                   actor: "ai",
-                  message: "AI auto-approved trade proposal and submitted vault execution",
+                  message: "AI auto-approved the trade proposal.",
                   timestamp: new Date().toISOString(),
                 });
                 appendEntry({
                   proposalId: proposal.proposal_id,
                   type: "executed",
                   actor: "ai",
-                  message: execution.tx_hash
-                    ? `AI submitted vault execution transaction ${execution.tx_hash.slice(0, 10)}...`
-                    : "AI submitted vault execution transaction to the on-chain path.",
+                  message: execution.status_code === "EXECUTION_CONFIRMED"
+                    ? (execution.tx_hash
+                      ? `AI executed the swap on-chain in transaction ${execution.tx_hash.slice(0, 10)}...`
+                      : "AI executed the swap on-chain.")
+                    : execution.status_code === "EXECUTION_SUBMITTED"
+                      ? (execution.tx_hash
+                        ? `AI submitted vault execution transaction ${execution.tx_hash.slice(0, 10)}...`
+                        : "AI submitted vault execution transaction to the on-chain path.")
+                      : execution.status_code === "EXECUTION_REVERTED"
+                        ? "AI submitted the execution transaction, but it reverted on-chain."
+                        : "AI recorded execution progress for the proposal.",
                   timestamp: new Date().toISOString(),
                   hash: execution.tx_hash ?? undefined,
                   chainId: execution.chain_id,
@@ -815,13 +848,72 @@ export default function DecisionLog() {
       }
 
       if (!aiDecisionMakerEnabled) {
-        toast.success("Plan approved");
+        if (runtimeMode === "live") {
+          for (const proposalId of proposalIds) {
+            const execution = await executeProposal.mutateAsync(proposalId);
+            appendEntry({
+              proposalId,
+              type: "executed",
+              actor: "user",
+              message: execution.tx_hash
+                ? `Investment plan execution submitted on-chain (${shortHash(execution.tx_hash)})`
+                : "Investment plan execution submitted on-chain",
+              timestamp: new Date().toISOString(),
+              hash: execution.tx_hash ?? undefined,
+            });
+          }
+          toast.success("Plan approved and execution submitted");
+        } else {
+          toast.success("Plan approved");
+        }
         return;
       }
       toast.success("Plan approved. Funds remain in the vault and must execute through the ExecutorVault path.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to approve plan");
     }
+  };
+
+  const handleExecute = async () => {
+    if (!activeProposalId) {
+      toast.error("Select an approved proposal before executing.");
+      return;
+    }
+    if (runtimeMode !== "live") {
+      toast.error("Switch runtime mode to Live before executing.");
+      return;
+    }
+
+    try {
+      const execution = await executeProposal.mutateAsync(activeProposalId);
+      appendEntry({
+        proposalId: activeProposalId,
+        type: "executed",
+        actor: aiDecisionMakerEnabled ? "ai" : "user",
+        message: execution.tx_hash
+          ? `Execution submitted on-chain (${shortHash(execution.tx_hash)})`
+          : "Execution submitted on-chain",
+        timestamp: new Date().toISOString(),
+        hash: execution.tx_hash ?? undefined,
+      });
+      toast.success("Execution submitted");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to execute plan");
+    }
+  };
+
+  const handleMoveToLiveMode = () => {
+    updateSettings.mutate(
+      { runtime_mode: "live" },
+      {
+        onSuccess: () => {
+          toast.success("Runtime mode switched to Live");
+        },
+        onError: (error) => {
+          toast.error(error instanceof Error ? error.message : "Failed to switch runtime mode");
+        },
+      },
+    );
   };
 
   const handleReject = () => {
@@ -877,7 +969,8 @@ export default function DecisionLog() {
     createPlan.isPending ||
     approveProposal.isPending ||
     executeProposal.isPending ||
-    rejectProposal.isPending;
+    rejectProposal.isPending ||
+    updateSettings.isPending;
 
   const selectedSessionPlan = resolvedPlan ?? plan;
   const selectedLinkedProposals = selectedSessionPlan?.linked_proposals ?? [];
@@ -982,7 +1075,10 @@ export default function DecisionLog() {
     ? formatDecisionStatus(selectedProposalLog.status_code)
     : selectedSessionPlan?.status_label ?? "Draft";
   const selectedProposalStatusCode = selectedProposalLog?.status_code ?? selectedPlanProposal?.status_code ?? null;
+  const selectedRuntimeMode = runtimeMode;
+  const selectedAiAutomationActive = aiDecisionMakerEnabled && selectedRuntimeMode === "live";
   const selectedProposalPendingApproval = selectedProposalStatusCode === "PROPOSAL_PENDING_APPROVAL";
+  const selectedProposalApproved = selectedProposalStatusCode === "PROPOSAL_APPROVED";
   const selectedProposalFinalized = selectedProposalStatusCode
     ? ["PROPOSAL_APPROVED", "PROPOSAL_EXECUTING", "PROPOSAL_EXECUTED", "PROPOSAL_REJECTED"].includes(selectedProposalStatusCode)
     : false;
@@ -1018,6 +1114,10 @@ export default function DecisionLog() {
       "Create a decision draft to review the AI recommendation.";
   const selectedCurrentBlocker = selectedProposalLog?.status_code === "PROPOSAL_REJECTED"
     ? "Execution cannot continue until a new approved proposal is created."
+    : selectedProposalStatusCode === "PROPOSAL_EXECUTED"
+      ? "This proposal has already executed on-chain."
+    : selectedProposalStatusCode === "PROPOSAL_EXECUTING"
+      ? "Execution has already been submitted and is awaiting settlement."
     : selectedProposalFinalized && !selectedProposalPendingApproval
       ? "This proposal is already finalized and cannot be approved again."
     : selectedProposalPendingApproval
@@ -1041,6 +1141,8 @@ export default function DecisionLog() {
     ? "Execution blocked"
     : selectedProposalStatusCode === "PROPOSAL_EXECUTED"
       ? "Executed"
+      : selectedProposalStatusCode === "PROPOSAL_EXECUTING"
+        ? "Execution submitted"
       : selectedProposalStatusCode === "PROPOSAL_APPROVED"
         ? "Ready to execute"
         : selectedProposalStatusCode === "PROPOSAL_PENDING_APPROVAL"
@@ -1051,11 +1153,7 @@ export default function DecisionLog() {
     : selectedSessionPlan?.plan_id
       ? shortHash(selectedSessionPlan.plan_id)
       : "No session";
-  const runtimeModeLabel = formatCompactLabel(
-    selectedSessionPlan?.risk_assessment?.runtime_mode ??
-    risk?.runtime_mode ??
-    "Local mode",
-  );
+  const runtimeModeLabel = formatCompactLabel(selectedRuntimeMode);
   const selectedEvidenceItems = [
     { label: "Proposal hash", value: selectedProposalLog?.plan_hash ?? selectedSessionPlan?.plan_id ?? "Not recorded" },
     { label: "Calldata hash", value: "Not submitted" },
@@ -1431,6 +1529,15 @@ export default function DecisionLog() {
                 <div className="flex flex-wrap gap-2">
                   {!aiDecisionMakerEnabled && (
                     <>
+                      {selectedRuntimeMode !== "live" && (
+                        <Button
+                          variant="outline"
+                          onClick={handleMoveToLiveMode}
+                          disabled={working}
+                        >
+                          {updateSettings.isPending ? "Switching..." : "Move to live mode"}
+                        </Button>
+                      )}
                       <Button
                         onClick={() => void handleApprove()}
                         disabled={
@@ -1442,6 +1549,18 @@ export default function DecisionLog() {
                       >
                         {approveProposal.isPending ? "Approving..." : "Approve plan"}
                       </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => void handleExecute()}
+                        disabled={
+                          !activeProposalId ||
+                          working ||
+                          selectedRuntimeMode !== "live" ||
+                          !selectedProposalApproved
+                        }
+                      >
+                        {executeProposal.isPending ? "Executing..." : "Execute plan"}
+                      </Button>
                       <Button variant="outline" onClick={handleReject} disabled={!activeProposalId || working}>
                         Reject plan
                       </Button>
@@ -1449,9 +1568,19 @@ export default function DecisionLog() {
                   )}
                 </div>
 
-                {aiDecisionMakerEnabled && selectedSessionPlan?.approval_enabled && (
+                {!aiDecisionMakerEnabled && selectedRuntimeMode !== "live" && (
+                  <div className="text-sm text-copper">
+                    Runtime mode is {runtimeModeLabel}. Manual approval will not execute on-chain until you switch to Live.
+                  </div>
+                )}
+
+                {selectedAiAutomationActive && selectedProposalStatusCode && ["PROPOSAL_APPROVED", "PROPOSAL_EXECUTING", "PROPOSAL_EXECUTED"].includes(selectedProposalStatusCode) && (
                   <div className="text-sm text-success">
-                    Full access AI auto-approved and submitted vault execution intent for this proposal. No human approval step is required.
+                    {selectedProposalStatusCode === "PROPOSAL_EXECUTED"
+                      ? "Full access AI auto-approved this proposal and the swap has already executed."
+                      : selectedProposalStatusCode === "PROPOSAL_EXECUTING"
+                        ? "Full access AI auto-approved this proposal and submitted vault execution. No human approval step is required."
+                        : "Full access AI auto-approved this proposal. It is ready for vault execution without human approval."}
                   </div>
                 )}
 

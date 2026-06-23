@@ -40,6 +40,7 @@ vi.mock("react-router-dom", async () => {
 const fetchMock = vi.fn();
 let settingsResponse = {
   ai_decision_maker_enabled: false,
+  runtime_mode: "monitor_only",
   chain_id: 5003,
   native_mnt_enabled: true,
   sepolia_usdy_address: "0x1",
@@ -122,6 +123,7 @@ beforeEach(() => {
   walletState.setWalletAddress.mockReset();
   settingsResponse = {
     ai_decision_maker_enabled: false,
+    runtime_mode: "monitor_only",
     chain_id: 5003,
     native_mnt_enabled: true,
     sepolia_usdy_address: "0x1",

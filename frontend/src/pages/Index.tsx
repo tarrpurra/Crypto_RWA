@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { PageScaffold } from "@/components/rwa/PageScaffold";
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -620,6 +620,126 @@ const Index = () => {
     updateSettings.mutate({ ai_decision_maker_enabled: enabled });
   };
 
+  const openDepositModal = useCallback(() => {
+    setDepositModalOpen(true);
+  }, []);
+
+  const closeDepositModal = useCallback(() => {
+    setDepositModalOpen(false);
+  }, []);
+
+  const openWithdrawModal = useCallback(() => {
+    setWithdrawModalOpen(true);
+  }, []);
+
+  const closeWithdrawModal = useCallback(() => {
+    setWithdrawModalOpen(false);
+  }, []);
+
+  const dashboardContent = useMemo(() => {
+    if (!hasConnectedSupportedWallet) {
+      return (
+        <section className="terminal-panel border-primary/20 p-6">
+          <div className="flex flex-col items-center gap-4 py-6">
+            <p className="terminal-label text-primary text-center">
+              Connect or paste a wallet to unlock the AIxRWA Portfolio Vault
+            </p>
+            <Button
+              onClick={login}
+              variant="outline"
+              className="border-primary/40 text-primary hover:bg-primary/10"
+            >
+              Connect wallet
+            </Button>
+          </div>
+        </section>
+      );
+    }
+
+    if (showDashboardGhostShell) {
+      return <DashboardGhostShell />;
+    }
+
+    return (
+      <>
+        <PortfolioSummary
+          portfolio={displayPortfolio}
+          vaultData={vaultData}
+          isLoading={dashboardSummaryQuery.isLoading}
+          detail={portfolioDetail}
+          risk={risk ?? undefined}
+          riskProfile={riskProfile}
+          allocation={allocation}
+          decisions={decisions}
+          freshness={dashboardSummary?.freshness ?? null}
+          onDeposit={openDepositModal}
+          onWithdraw={openWithdrawModal}
+        >
+          <div className="grid gap-4 xl:grid-cols-[2fr_1fr]">
+            <CapitalChart
+              points={chartPoints}
+              isLoading={chartLoading}
+              isDemo={chartDemo}
+              availableAssets={chartAssets}
+              range={chartRange}
+              bucket={chartBucket}
+              onRangeChange={setChartRange}
+              onBucketChange={setChartBucket}
+            />
+            <PortfolioAllocationChart
+              portfolio={displayPortfolio}
+              targetWeights={allocation?.decision?.target_weights}
+              isLoading={dashboardSummaryQuery.isLoading}
+            />
+          </div>
+        </PortfolioSummary>
+
+        <AIReasoningPanel
+          allocation={allocation}
+          risk={risk}
+          decisions={decisions}
+          aiReasoningData={aiReasoningData}
+          isLoading={
+            !risk &&
+            !decisions &&
+            dashboardSummaryQuery.isLoading
+          }
+          hasConnectedWallet={hasConnectedSupportedWallet}
+          aiDecisionMakerEnabled={aiDecisionMakerEnabled}
+          onAiAccessChange={updateAiAccess}
+          isAiAccessPending={updateSettings.isPending}
+          swapRecommendations={swapRecommendations}
+          availableRouteCount={availableRouteCount}
+        />
+      </>
+    );
+  }, [
+    aiDecisionMakerEnabled,
+    aiReasoningData,
+    allocation,
+    availableRouteCount,
+    chartAssets,
+    chartBucket,
+    chartDemo,
+    chartLoading,
+    chartPoints,
+    chartRange,
+    dashboardSummary?.freshness,
+    dashboardSummaryQuery.isLoading,
+    decisions,
+    displayPortfolio,
+    hasConnectedSupportedWallet,
+    login,
+    openDepositModal,
+    openWithdrawModal,
+    portfolioDetail,
+    risk,
+    riskProfile,
+    showDashboardGhostShell,
+    swapRecommendations,
+    updateSettings.isPending,
+  ]);
+
   return (
     <div
       data-testid="overview-page"
@@ -630,84 +750,12 @@ const Index = () => {
         title="Dashboard"
         description="AI-powered yield optimization with real-time risk management for RWA portfolios."
       >
-        {/* Portfolio Section */}
-        {hasConnectedSupportedWallet ? (
-          showDashboardGhostShell ? (
-            <DashboardGhostShell />
-          ) : (
-          <>
-            <PortfolioSummary
-              portfolio={displayPortfolio}
-              vaultData={vaultData}
-              isLoading={dashboardSummaryQuery.isLoading}
-              detail={portfolioDetail}
-              risk={risk ?? undefined}
-              riskProfile={riskProfile}
-              allocation={allocation}
-              decisions={decisions}
-              freshness={dashboardSummary?.freshness ?? null}
-              onDeposit={() => setDepositModalOpen(true)}
-              onWithdraw={() => setWithdrawModalOpen(true)}
-            >
-              <div className="grid gap-4 xl:grid-cols-[2fr_1fr]">
-                <CapitalChart
-                  points={chartPoints}
-                  isLoading={chartLoading}
-                  isDemo={chartDemo}
-                  availableAssets={chartAssets}
-                  range={chartRange}
-                  bucket={chartBucket}
-                  onRangeChange={setChartRange}
-                  onBucketChange={setChartBucket}
-                />
-                <PortfolioAllocationChart
-                  portfolio={displayPortfolio}
-                  targetWeights={allocation?.decision?.target_weights}
-                  isLoading={dashboardSummaryQuery.isLoading}
-                />
-              </div>
-            </PortfolioSummary>
-
-            <AIReasoningPanel
-              allocation={allocation}
-              risk={risk}
-              decisions={decisions}
-              aiReasoningData={aiReasoningData}
-              isLoading={
-                !risk &&
-                !decisions &&
-                dashboardSummaryQuery.isLoading
-              }
-              hasConnectedWallet={hasConnectedSupportedWallet}
-              aiDecisionMakerEnabled={aiDecisionMakerEnabled}
-              onAiAccessChange={updateAiAccess}
-              isAiAccessPending={updateSettings.isPending}
-              swapRecommendations={swapRecommendations}
-              availableRouteCount={availableRouteCount}
-            />
-          </>
-          )
-        ) : (
-          <section className="terminal-panel border-primary/20 p-6">
-            <div className="flex flex-col items-center gap-4 py-6">
-              <p className="terminal-label text-primary text-center">
-                Connect or paste a wallet to unlock the AIxRWA Portfolio Vault
-              </p>
-              <Button
-                onClick={login}
-                variant="outline"
-                className="border-primary/40 text-primary hover:bg-primary/10"
-              >
-                Connect wallet
-              </Button>
-            </div>
-          </section>
-        )}
+        {dashboardContent}
       </PageScaffold>
 
       <DepositModal
         open={depositModalOpen}
-        onClose={() => setDepositModalOpen(false)}
+        onClose={closeDepositModal}
         walletData={hasConnectedSupportedWallet ? walletData : undefined}
         vaultAddress={resolvedVaultAddress}
         wmntAddress={resolvedWmntAddress}
@@ -724,7 +772,7 @@ const Index = () => {
       />
       <WithdrawModal
         open={withdrawModalOpen}
-        onClose={() => setWithdrawModalOpen(false)}
+        onClose={closeWithdrawModal}
         vaultData={hasConnectedSupportedWallet ? vaultData : undefined}
         vaultAddress={resolvedVaultAddress}
         wmntAddress={normalizeAddress(settings?.sepolia_wmnt_address) ?? undefined}

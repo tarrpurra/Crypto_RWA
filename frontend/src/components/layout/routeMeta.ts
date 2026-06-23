@@ -32,9 +32,9 @@ const routeMeta: Array<{ match: RegExp; meta: RouteMeta }> = [
   {
     match: /^\/strategy-lab/,
     meta: {
-      title: "Strategy Lab",
+      title: "Strategy Studio",
       description: "Risk, allocation, and portfolio signals for operator review.",
-      eyebrow: "Strategy Lab",
+      eyebrow: "Strategy Studio",
     },
   },
 
