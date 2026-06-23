@@ -22,6 +22,7 @@ const approvalsState = vi.hoisted(() => ({
   }>,
   settings: {
     ai_decision_maker_enabled: true,
+    runtime_mode: "monitor_only",
     chain_id: 5003,
     native_mnt_enabled: true,
     sepolia_usdy_address: null as string | null,
@@ -123,6 +124,7 @@ beforeEach(() => {
   ];
   approvalsState.settings = {
     ai_decision_maker_enabled: true,
+    runtime_mode: "monitor_only",
     chain_id: 5003,
     native_mnt_enabled: true,
     sepolia_usdy_address: null,

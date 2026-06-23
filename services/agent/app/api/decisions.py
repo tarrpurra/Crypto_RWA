@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 
 from services.agent.app.api.investment_scope import InvestmentScopeInput, build_scoped_decision_response
 from services.agent.app.api.vault import get_vault_balance_snapshot
-from services.agent.app.core.settings import get_settings
+from services.agent.app.core.settings import RuntimeMode, get_settings
 from services.agent.app.schemas.proposals import (
     InvestmentPlanRequest,
     InvestmentPlanResponse,
@@ -81,6 +81,14 @@ def _select_ai_winner_proposal_id(linked_proposals: list[Any]) -> str | None:
         ),
     )
     return getattr(winner, "proposal_id", None)
+
+
+def _ai_auto_execution_enabled() -> bool:
+    settings = get_settings()
+    return (
+        settings.ai_decision_maker_enabled
+        and settings.runtime_mode == RuntimeMode.LIVE
+    )
 
 
 def _save_proposal_record(proposal: TradeProposal, calldata: str) -> None:
@@ -182,6 +190,37 @@ def _update_proposal_status(proposal_id: str, status_code: str) -> TradeProposal
         if record is None:
             raise HTTPException(status_code=404, detail=f"Proposal not found: {proposal_id}")
         record.status_code = status_code
+        record.updated_at = utc_now()
+        session.commit()
+        session.refresh(record)
+        return record
+
+
+def _transition_proposal_status(
+    proposal_id: str,
+    *,
+    next_status: str,
+    forbidden_statuses: frozenset[str],
+) -> TradeProposalRecord:
+    with create_session() as session:
+        from sqlalchemy import select
+
+        record = session.scalar(
+            select(TradeProposalRecord).where(
+                TradeProposalRecord.proposal_id == proposal_id
+            )
+        )
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"Proposal not found: {proposal_id}")
+        if record.status_code in forbidden_statuses:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Cannot transition proposal {proposal_id} to {next_status}: "
+                    f"current status is {record.status_code}."
+                ),
+            )
+        record.status_code = next_status
         record.updated_at = utc_now()
         session.commit()
         session.refresh(record)
@@ -312,15 +351,16 @@ async def create_investment_plan(request: InvestmentPlanRequest) -> InvestmentPl
         plan_response.approval_enabled,
         settings.ai_decision_maker_enabled,
     )
+    ai_auto_execution_enabled = _ai_auto_execution_enabled()
     if plan_response.linked_proposals:
         logger.info(
             "Investment plan approval mode: %s",
             "AI auto-approval enabled"
-            if settings.ai_decision_maker_enabled
+            if ai_auto_execution_enabled
             else "Human approval required",
         )
     ai_winner_proposal_id = None
-    if settings.ai_decision_maker_enabled and len(plan_response.linked_proposals) > 1:
+    if ai_auto_execution_enabled and len(plan_response.linked_proposals) > 1:
         ai_winner_proposal_id = _select_ai_winner_proposal_id(plan_response.linked_proposals)
         if ai_winner_proposal_id:
             logger.info(
@@ -339,7 +379,7 @@ async def create_investment_plan(request: InvestmentPlanRequest) -> InvestmentPl
                     proposal.status_code = "PROPOSAL_REJECTED"
                     if proposal_id in linked_by_id:
                         linked_by_id[proposal_id].status_code = "PROPOSAL_REJECTED"
-    elif settings.ai_decision_maker_enabled and plan_response.linked_proposals:
+    elif ai_auto_execution_enabled and plan_response.linked_proposals:
         ai_winner_proposal_id = plan_response.linked_proposals[0].proposal_id
         plan_response.linked_proposals[0].status_code = "PROPOSAL_APPROVED"
         if proposal_pairs:
@@ -396,20 +436,12 @@ async def approve_proposal(proposal_id: str) -> ProposalMutationResponse:
             status_code=400,
             detail=f"Cannot approve: {'; '.join(blockers)}",
         )
-    # Bug 1 & 2: single session — fetch, validate state, then update atomically.
-    record = _fetch_proposal_record(proposal_id)
-    if not record:
-        raise HTTPException(status_code=404, detail=f"Proposal not found: {proposal_id}")
-    if record.status_code in _APPROVE_TERMINAL_STATES:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Cannot approve proposal {proposal_id}: "
-                f"current status is {record.status_code} which is a terminal state."
-            ),
-        )
     logger.info("Human approval requested for proposal %s", proposal_id)
-    _update_proposal_status(proposal_id, "PROPOSAL_APPROVED")
+    _transition_proposal_status(
+        proposal_id,
+        next_status="PROPOSAL_APPROVED",
+        forbidden_statuses=_APPROVE_TERMINAL_STATES,
+    )
     logger.info("Human approval recorded for proposal %s", proposal_id)
     return ProposalMutationResponse(
         status="ok",
@@ -439,19 +471,11 @@ async def reject_proposal(proposal_id: str) -> ProposalMutationResponse:
     single DB session, closing the TOCTOU window.
     """
     init_db()
-    # Bug 1 & 2: single session — fetch, validate state, then update atomically.
-    record = _fetch_proposal_record(proposal_id)
-    if not record:
-        raise HTTPException(status_code=404, detail=f"Proposal not found: {proposal_id}")
-    if record.status_code in _REJECT_TERMINAL_STATES:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Cannot reject proposal {proposal_id}: "
-                f"current status is {record.status_code} which is a terminal state."
-            ),
-        )
-    _update_proposal_status(proposal_id, "PROPOSAL_REJECTED")
+    _transition_proposal_status(
+        proposal_id,
+        next_status="PROPOSAL_REJECTED",
+        forbidden_statuses=_REJECT_TERMINAL_STATES,
+    )
     return ProposalMutationResponse(
         status="ok",
         status_code="PROPOSAL_REJECTED",
@@ -552,6 +576,14 @@ async def execute_proposal(proposal_id: str) -> ProposalExecuteResponse:
         proposal_id,
     )
     settings = get_settings()
+    if settings.runtime_mode != RuntimeMode.LIVE:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Execution is only available when runtime_mode=live. "
+                f"Current runtime_mode is {settings.runtime_mode.value}."
+            ),
+        )
     init_db()
     with create_session() as session:
         from sqlalchemy import select as _select

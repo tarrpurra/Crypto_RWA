@@ -194,7 +194,7 @@ function buildCardData(props: AIReasoningPanelProps) {
     ? "Execution is blocked until the guard condition clears and inputs return to a safe state."
     : aiDecisionMakerEnabled
       ? swapRecommendations.length > 0
-        ? `Full access AI auto-approved and submitted ${swapRecommendations.length} swap leg${swapRecommendations.length > 1 ? "s" : ""} for vault execution.`
+        ? `Full access AI can auto-approve and submit ${swapRecommendations.length} swap leg${swapRecommendations.length > 1 ? "s" : ""} once the proposal is created in live mode.`
         : "Full access AI is monitoring the portfolio. No execution step is required at this time."
       : needsApproval
         ? "A human review is required before the proposal can move into execution."
@@ -334,7 +334,7 @@ function buildCardData(props: AIReasoningPanelProps) {
         action === "PAUSE"
           ? "Pause strategy and request human approval."
           : aiDecisionMakerEnabled
-            ? "Decision auto-approved by full access AI. Vault execution intent submitted."
+            ? "Decision can be auto-approved by full access AI when the proposal is created in live mode."
             : needsApproval
               ? "Recommendation is ready but still requires human approval."
               : "Decision is ready to move into execution.",

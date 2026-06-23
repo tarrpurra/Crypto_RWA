@@ -48,11 +48,30 @@ function persistScope(scope: InvestmentScopeState | null) {
   window.dispatchEvent(new Event(SCOPE_EVENT));
 }
 
+function scopesEqual(left: InvestmentScopeState | null, right: InvestmentScopeState | null) {
+  if (left === right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  return (
+    left.depositAssetSymbol === right.depositAssetSymbol &&
+    left.depositAmount === right.depositAmount &&
+    left.riskProfile === right.riskProfile &&
+    left.allocationMode === right.allocationMode &&
+    left.chainId === right.chainId
+  );
+}
+
 export function useInvestmentScope() {
   const [scope, setScopeState] = useState<InvestmentScopeState | null>(readStoredScope);
 
   useEffect(() => {
-    const sync = () => setScopeState(readStoredScope());
+    const sync = () => {
+      const nextScope = readStoredScope();
+      setScopeState((currentScope) => (scopesEqual(currentScope, nextScope) ? currentScope : nextScope));
+    };
     window.addEventListener(SCOPE_EVENT, sync);
     window.addEventListener("storage", sync);
     return () => {
@@ -62,12 +81,32 @@ export function useInvestmentScope() {
   }, []);
 
   const setScope = useCallback((nextScope: InvestmentScopeState | null) => {
-    setScopeState(nextScope);
+    let changed = false;
+    setScopeState((currentScope) => {
+      if (scopesEqual(currentScope, nextScope)) {
+        return currentScope;
+      }
+      changed = true;
+      return nextScope;
+    });
+    if (!changed) {
+      return;
+    }
     persistScope(nextScope);
   }, []);
 
   const clearScope = useCallback(() => {
-    setScopeState(null);
+    let changed = false;
+    setScopeState((currentScope) => {
+      if (currentScope === null) {
+        return currentScope;
+      }
+      changed = true;
+      return null;
+    });
+    if (!changed) {
+      return;
+    }
     persistScope(null);
   }, []);
 

@@ -7,6 +7,6 @@ export const systemApi = {
   readiness: () => request<SystemReadinessResponse>("/system/readiness"),
   chainStatus: () => request<ChainStatusResponse>("/chain/status"),
   settings: () => request<SettingsResponse>("/settings"),
-  updateSettings: (body: { ai_decision_maker_enabled: boolean }) =>
+  updateSettings: (body: { ai_decision_maker_enabled?: boolean; runtime_mode?: string }) =>
     request<SettingsResponse>("/settings", "PUT", body),
 };

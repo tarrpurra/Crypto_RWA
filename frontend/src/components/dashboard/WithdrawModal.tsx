@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { parseUnits } from "viem";
-import { usePublicClient, useWriteContract } from "wagmi";
+import { useAccount, usePublicClient, useWriteContract } from "wagmi";
 import {
   AlertCircle,
   CheckCircle2,
@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useSystemReadiness } from "@/hooks/useSystem";
 import type { VaultBalanceResponse } from "@/lib/api/types";
 import { normalizeAddress } from "@/lib/addresses";
 import { vaultApi } from "@/lib/api/vault";
@@ -51,8 +52,8 @@ const WMNT_ABI = [
 ] as const;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
-function assetDecimals(_symbol: string) {
-  return 18;
+function assetDecimals(symbol: string, decimalsBySymbol: Map<string, number>) {
+  return decimalsBySymbol.get(symbol.toUpperCase()) ?? 18;
 }
 
 function shortenAddress(value: string | null | undefined) {
@@ -77,26 +78,44 @@ interface WithdrawModalProps {
 type WithdrawStep = "idle" | "withdrawing" | "done" | "error";
 
 export function WithdrawModal(props: WithdrawModalProps) {
-  if (!props.open) return null;
   return <WithdrawModalContent {...props} />;
 }
 
-function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, nativeMntEnabled }: Omit<WithdrawModalProps, "open">) {
+function WithdrawModalContent({ open, onClose, vaultData, vaultAddress, wmntAddress, nativeMntEnabled }: WithdrawModalProps) {
   const queryClient = useQueryClient();
+  const { address: connectedAddress } = useAccount();
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
   const chainId = useChainId();
+  const readinessQuery = useSystemReadiness();
   const [asset, setAsset] = useState<string>("MNT");
   const [amount, setAmount] = useState("");
   const [step, setStep] = useState<WithdrawStep>("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [txHash, setTxHash] = useState("");
   const [recordNote, setRecordNote] = useState("");
+  const [syncingDashboard, setSyncingDashboard] = useState(false);
   const inFlightRef = useRef(false);
   const normalizedVaultAddress = normalizeAddress(vaultAddress);
   const normalizedWmntAddress = normalizeAddress(wmntAddress);
   const normalizedWalletAddress = normalizeAddress(vaultData?.user_address);
-  const canWithdrawMnt = Boolean(normalizedWmntAddress && nativeMntEnabled);
+  const normalizedConnectedAddress = normalizeAddress(connectedAddress);
+  const hasNativeMntBalance = (vaultData?.balances ?? []).some((balance) => balance.asset_symbol === "MNT");
+  const canWithdrawMnt = hasNativeMntBalance || Boolean(normalizedWmntAddress && nativeMntEnabled);
+  const decimalsBySymbol = useMemo(() => {
+    const map = new Map<string, number>();
+    const tokens = readinessQuery.data?.tokens ?? {};
+    for (const [key, token] of Object.entries(tokens)) {
+      if (typeof token.decimals === "number") {
+        map.set(key.toUpperCase(), token.decimals);
+      }
+      if (token.symbol && typeof token.decimals === "number") {
+        map.set(token.symbol.toUpperCase(), token.decimals);
+      }
+    }
+    map.set("MNT", 18);
+    return map;
+  }, [readinessQuery.data?.tokens]);
   const availableAssets = useMemo(
     () => {
       const symbols = (vaultData?.balances ?? [])
@@ -109,16 +128,19 @@ function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, n
     },
     [vaultData?.balances, canWithdrawMnt],
   );
-  const selectableAssets =
-    availableAssets.length > 0 ? availableAssets : canWithdrawMnt ? ["MNT", "USDY", "mETH"] : ["USDY", "mETH"];
+  const selectableAssets = useMemo(
+    () => (availableAssets.length > 0 ? availableAssets : canWithdrawMnt ? ["MNT", "USDY", "mETH"] : ["USDY", "mETH"]),
+    [availableAssets, canWithdrawMnt],
+  );
 
   const vaultBalance =
     asset === "MNT"
-      ? vaultData?.balances?.find((b) => b.asset_symbol === "WMNT")
-        ?? vaultData?.balances?.find((b) => b.asset_symbol === "MNT")
+      ? vaultData?.balances?.find((b) => b.asset_symbol === "MNT")
+        ?? vaultData?.balances?.find((b) => b.asset_symbol === "WMNT")
       : vaultData?.balances?.find((b) => b.asset_symbol === asset);
   const vaultBalanceSymbol = vaultBalance?.asset_symbol ?? (asset === "MNT" ? "WMNT" : asset);
   const wrappedMntWithdrawal = asset === "MNT" && vaultBalanceSymbol === "WMNT";
+  const nativeMntWithdrawal = asset === "MNT" && vaultBalanceSymbol === "MNT";
   const walletAddress = vaultData?.user_address ?? "";
   const tokenAddress = asset === "MNT" ? (normalizedWmntAddress ?? null) : normalizeAddress(vaultBalance?.asset_address ?? null);
   const vaultBalanceNum = Number.parseFloat(vaultBalance?.balance ?? "0");
@@ -129,11 +151,15 @@ function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, n
       return null;
     }
     try {
-      return parseUnits(amount, assetDecimals(asset));
+      return parseUnits(amount, assetDecimals(asset === "MNT" ? vaultBalanceSymbol : asset, decimalsBySymbol));
     } catch {
       return null;
     }
-  }, [amount, asset]);
+  }, [amount, asset, decimalsBySymbol, vaultBalanceSymbol]);
+  const signerMatchesWallet =
+    Boolean(normalizedConnectedAddress) &&
+    Boolean(normalizedWalletAddress) &&
+    normalizedConnectedAddress === normalizedWalletAddress;
   const isValid =
     amount.trim() &&
     Number.isFinite(numericAmount) &&
@@ -141,9 +167,25 @@ function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, n
     vaultBalanceNum > 0 &&
     !exceedsVault &&
     Boolean(normalizedWalletAddress) &&
+    signerMatchesWallet &&
     Boolean(normalizedVaultAddress) &&
     (asset === "MNT" || Boolean(tokenAddress)) &&
     amountRaw !== null;
+
+  const refreshDashboardState = async () => {
+    if (!normalizedWalletAddress) {
+      return;
+    }
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["vault"] }),
+      queryClient.invalidateQueries({ queryKey: ["portfolio"] }),
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+      queryClient.invalidateQueries({ queryKey: ["allocation"] }),
+      queryClient.refetchQueries({ queryKey: ["vault", "balance", normalizedWalletAddress], exact: true }),
+      queryClient.refetchQueries({ queryKey: ["portfolio", "current", normalizedWalletAddress, false], exact: true }),
+      queryClient.refetchQueries({ queryKey: ["dashboard", "summary", normalizedWalletAddress], exact: true }),
+    ]);
+  };
 
   useEffect(() => {
     if (!selectableAssets.includes(asset)) {
@@ -163,6 +205,9 @@ function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, n
     try {
       if (!normalizedWalletAddress) {
         throw new Error("Connected wallet address is missing.");
+      }
+      if (!signerMatchesWallet) {
+        throw new Error("Connected signer does not match the wallet loaded in the dashboard.");
       }
       if (!normalizedVaultAddress) {
         throw new Error("Vault address is not available.");
@@ -187,37 +232,47 @@ function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, n
 
       let hash: `0x${string}`;
       if (asset === "MNT") {
-        if (!normalizedWmntAddress) {
-          throw new Error("WMNT address is not available for wrapped MNT withdrawal.");
-        }
-        hash = await writeContractAsync({
-          address: normalizedVaultAddress,
-          abi: EXECUTOR_VAULT_ABI,
-          functionName: "withdrawToken",
-          chainId,
-          args: [normalizedWmntAddress, normalizedWalletAddress, amountRaw],
-        });
-        await publicClient?.waitForTransactionReceipt({ hash });
-
-        try {
-          const unwrapHash = await writeContractAsync({
-            address: normalizedWmntAddress,
-            abi: WMNT_ABI,
-            functionName: "withdraw",
+        if (nativeMntWithdrawal) {
+          hash = await writeContractAsync({
+            address: normalizedVaultAddress,
+            abi: EXECUTOR_VAULT_ABI,
+            functionName: "withdrawNative",
             chainId,
-            args: [amountRaw],
+            args: [normalizedWalletAddress, amountRaw],
           });
-          await publicClient?.waitForTransactionReceipt({ hash: unwrapHash });
-          setRecordNote("Wrapped WMNT was withdrawn and unwrapped to native MNT.");
-          unwrappedToNative = true;
-        } catch (unwrapError) {
-          logger.warn("vault.withdraw.unwrap.failed", {
-            wallet_address: normalizedWalletAddress,
-            vault_address: normalizedVaultAddress,
-            amount,
-            error: unwrapError,
+        } else {
+          if (!normalizedWmntAddress) {
+            throw new Error("WMNT address is not available for wrapped MNT withdrawal.");
+          }
+          hash = await writeContractAsync({
+            address: normalizedVaultAddress,
+            abi: EXECUTOR_VAULT_ABI,
+            functionName: "withdrawToken",
+            chainId,
+            args: [normalizedWmntAddress, normalizedWalletAddress, amountRaw],
           });
-          setRecordNote("WMNT was withdrawn from the vault, but native unwrap failed. It remains in your wallet.");
+          await publicClient?.waitForTransactionReceipt({ hash });
+
+          try {
+            const unwrapHash = await writeContractAsync({
+              address: normalizedWmntAddress,
+              abi: WMNT_ABI,
+              functionName: "withdraw",
+              chainId,
+              args: [amountRaw],
+            });
+            await publicClient?.waitForTransactionReceipt({ hash: unwrapHash });
+            setRecordNote("Wrapped WMNT was withdrawn and unwrapped to native MNT.");
+            unwrappedToNative = true;
+          } catch (unwrapError) {
+            logger.warn("vault.withdraw.unwrap.failed", {
+              wallet_address: normalizedWalletAddress,
+              vault_address: normalizedVaultAddress,
+              amount,
+              error: unwrapError,
+            });
+            setRecordNote("WMNT was withdrawn from the vault, but native unwrap failed. It remains in your wallet.");
+          }
         }
       } else {
         if (!tokenAddress) {
@@ -245,44 +300,47 @@ function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, n
         block_number: receipt?.blockNumber?.toString() ?? null,
       });
       setTxHash(hash);
-
-      try {
-        await vaultApi.recordFlow({
-          user_address: normalizedWalletAddress,
-          asset_symbol: asset === "MNT" ? (wrappedMntWithdrawal ? "WMNT" : "MNT") : asset,
-          asset_amount: amount,
-          asset_address: asset === "MNT" ? (wrappedMntWithdrawal ? normalizedWmntAddress : ZERO_ADDRESS) : tokenAddress,
-          tx_hash: hash,
-          flow_type: "withdrawal",
-          metadata: {
-            source: "frontend.withdraw_modal",
-            vault_address: normalizedVaultAddress,
-            destination_wallet: normalizedWalletAddress,
-            unwrapped_to_native: unwrappedToNative,
-          },
-        });
-        logger.info("vault.withdraw.recorded", {
-          wallet_address: normalizedWalletAddress,
-          asset,
-          amount,
-          tx_hash: hash,
-        });
-      } catch (recordError) {
-        logger.error("vault.withdraw.record.failed", {
-          wallet_address: normalizedWalletAddress,
-          asset,
-          amount,
-          tx_hash: hash,
-          error: recordError,
-        });
-        setRecordNote("Transaction confirmed, but backend vault history recording failed.");
-      }
-
-      queryClient.invalidateQueries({ queryKey: ["vault"] });
-      queryClient.invalidateQueries({ queryKey: ["portfolio"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["allocation"] });
       setStep("done");
+      setSyncingDashboard(true);
+
+      const flowPayload = {
+        user_address: normalizedWalletAddress,
+        asset_symbol: asset === "MNT" ? (wrappedMntWithdrawal ? "WMNT" : "MNT") : asset,
+        asset_amount: amount,
+        asset_address: asset === "MNT" ? (wrappedMntWithdrawal ? normalizedWmntAddress : ZERO_ADDRESS) : tokenAddress,
+        tx_hash: hash,
+        flow_type: "withdrawal" as const,
+        metadata: {
+          source: "frontend.withdraw_modal",
+          vault_address: normalizedVaultAddress,
+          destination_wallet: normalizedWalletAddress,
+          unwrapped_to_native: unwrappedToNative,
+        },
+      };
+
+      void (async () => {
+        try {
+          await vaultApi.recordFlow(flowPayload);
+          logger.info("vault.withdraw.recorded", {
+            wallet_address: normalizedWalletAddress,
+            asset,
+            amount,
+            tx_hash: hash,
+          });
+          await refreshDashboardState();
+        } catch (recordError) {
+          logger.error("vault.withdraw.record.failed", {
+            wallet_address: normalizedWalletAddress,
+            asset,
+            amount,
+            tx_hash: hash,
+            error: recordError,
+          });
+          setRecordNote("Transaction confirmed, but backend vault history recording failed.");
+        } finally {
+          setSyncingDashboard(false);
+        }
+      })();
     } catch (error) {
       logger.error("vault.withdraw.failed", {
         wallet_address: normalizedWalletAddress || null,
@@ -304,8 +362,13 @@ function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, n
     setErrorMsg("");
     setTxHash("");
     setRecordNote("");
+    setSyncingDashboard(false);
     onClose();
   };
+
+  if (!open) {
+    return null;
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -330,6 +393,8 @@ function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, n
             </div>
             {recordNote ? (
               <p className="text-center text-[11px] text-warning">{recordNote}</p>
+            ) : syncingDashboard ? (
+              <p className="text-center text-[11px] text-muted-foreground">Transaction confirmed. Syncing dashboard...</p>
             ) : (
               <p className="text-center text-[11px] text-success">Backend vault flow history updated.</p>
             )}
@@ -403,6 +468,13 @@ function WithdrawModalContent({ onClose, vaultData, vaultAddress, wmntAddress, n
             {!vaultAddress && (
               <p className="text-[0.6rem] text-destructive">
                 Vault address is unavailable, so withdrawals cannot be submitted from this modal yet.
+              </p>
+            )}
+            {!signerMatchesWallet && (
+              <p className="text-[0.6rem] text-destructive">
+                {!normalizedConnectedAddress
+                  ? "Connect the same wallet shown in the dashboard before withdrawing."
+                  : "Connected signer does not match the wallet loaded in the dashboard. Reconnect the same wallet before withdrawing."}
               </p>
             )}
 

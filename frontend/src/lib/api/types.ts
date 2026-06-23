@@ -475,6 +475,7 @@ export interface LatestQuotesResponse extends StatusEnvelope {
 
 export interface SettingsResponse {
   ai_decision_maker_enabled: boolean;
+  runtime_mode: string;
   chain_id: number;
   native_mnt_enabled: boolean;
   sepolia_usdy_address: string | null;

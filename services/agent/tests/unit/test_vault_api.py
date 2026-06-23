@@ -298,6 +298,46 @@ class VaultApiTests(unittest.TestCase):
         self.assertTrue(response.metadata["cost_basis_reconciled"])
         self.assertEqual(response.metadata["cost_basis_tracking_mode"], "reconciled_live_value")
 
+    @patch("services.agent.app.api.vault.get_settings")
+    @patch("services.agent.app.api.vault.VaultFlowRepository")
+    @patch("services.agent.app.api.vault.get_price_service")
+    @patch("services.agent.app.api.vault.VaultShareReader")
+    def test_vault_balance_snapshot_clamps_negative_cost_basis_after_withdrawals(
+        self,
+        vault_share_reader_cls,
+        get_price_service,
+        vault_flow_repo_cls,
+        get_settings,
+    ) -> None:
+        settings = Settings(
+            target_chain=TargetChain.MANTLE_SEPOLIA,
+            sepolia_usdy_address="0x0000000000000000000000000000000000000002",
+        )
+        get_settings.return_value = settings
+        vault_share_reader_cls.return_value.read_user_position.return_value = []
+
+        get_price_service.return_value.fetch_latest_prices = AsyncMock(
+            return_value=MagicMock(normalized_snapshots=[])
+        )
+
+        summary = MagicMock(
+            flow_count=1,
+            last_flow_at=None,
+            net_invested_usd=Decimal("-41.97"),
+            total_deposits_usd=Decimal("0"),
+            total_withdrawals_usd=Decimal("41.97"),
+        )
+        vault_flow_repo_cls.return_value.summarize.return_value = summary
+
+        response = asyncio.run(get_vault_balance_snapshot("0xuser"))
+
+        self.assertEqual(response.total_value_usd, "0")
+        self.assertEqual(response.invested_amount_usd, "0")
+        self.assertEqual(response.pnl_usd, "0")
+        self.assertIsNone(response.pnl_percent)
+        self.assertTrue(response.metadata["cost_basis_reconciled"])
+        self.assertEqual(response.metadata["cost_basis_tracking_mode"], "clamped_negative_basis")
+
 
 if __name__ == "__main__":
     unittest.main()

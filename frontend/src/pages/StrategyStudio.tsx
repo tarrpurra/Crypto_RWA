@@ -1,46 +1,24 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as SliderPrimitive from "@radix-ui/react-slider";
 import {
   AlertTriangle,
   CheckCircle2,
-  ChevronDown,
-  Clock3,
-  Database,
-  History,
-  Rocket,
-  Settings2,
-  ShieldAlert,
   SlidersHorizontal,
-  Sparkles,
-  Workflow,
   Save,
   RotateCcw,
 } from "lucide-react";
 
-import { PageScaffold, StatusPill } from "@/components/rwa/PageScaffold";
+import { PageScaffold } from "@/components/rwa/PageScaffold";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import {
-  Drawer,
-  DrawerContent,
-  DrawerDescription,
-  DrawerHeader,
-  DrawerTitle,
-  DrawerTrigger,
-} from "@/components/ui/drawer";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
 import { useAllocationRecommendation } from "@/hooks/useAllocation";
 import { useLatestPrices, useLatestQuotes, useMarketIngestionStatus, useMarketRoutes } from "@/hooks/useMarket";
 import { useCurrentPortfolio } from "@/hooks/usePortfolio";
 import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 import { useCurrentRisk } from "@/hooks/useRisk";
 import {
-  useActivateStrategy,
-  useCreateStrategyDraft,
   useRevertStrategy,
   useSimulateStrategy,
   useStrategyActive,
@@ -48,10 +26,10 @@ import {
   useStrategyTemplates,
   useStrategyVersions,
   useUpdateStrategyScheduler,
-  useValidateStrategy,
   useUpdateActiveStrategy,
 } from "@/hooks/useStrategy";
 import { useChainStatus, useServiceStatus, useSettings, useSystemHealth } from "@/hooks/useSystem";
+import { ApiClientError } from "@/lib/api/client";
 import type {
   StrategyAuditEventResponse,
   StrategyPolicyConfig,
@@ -115,7 +93,7 @@ const SUPPORTED_STRATEGY_ASSETS = ["USDY", "mETH", "WMNT"] as const;
 
 function highlightPrompt(text: string): string {
   if (!text) return "";
-  let escaped = text
+  const escaped = text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
@@ -130,7 +108,7 @@ function highlightPrompt(text: string): string {
     
     let newLine = line;
     keywords.forEach(keyword => {
-      const escapedKeyword = keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+      const escapedKeyword = keyword.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
       const regex = new RegExp(`\\b${escapedKeyword}\\b`, 'g');
       newLine = newLine.replace(regex, `<span class="text-[#D4962A] font-semibold">${keyword}</span>`);
     });
@@ -143,6 +121,18 @@ function highlightPrompt(text: string): string {
 }
 
 type StatusTone = "ready" | "degraded" | "blocked" | "neutral";
+
+type StrategyMutationErrorPayload = {
+  status?: string;
+  safety_score?: number;
+  errors?: StrategyValidationError[];
+  safe_suggestion?: string | null;
+  message?: string;
+};
+
+type StrategyMutationErrorDetails = {
+  detail?: StrategyMutationErrorPayload;
+};
 
 function clonePolicy(policy: StrategyPolicyConfig): StrategyPolicyConfig {
   return JSON.parse(JSON.stringify(policy)) as StrategyPolicyConfig;
@@ -263,11 +253,17 @@ function latestTimestamp(values: Array<string | null | undefined>) {
   return latest;
 }
 
-function splitAssets(value: string) {
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
+function parseStrategyMutationError(error: unknown): StrategyMutationErrorPayload | null {
+  if (!(error instanceof ApiClientError)) {
+    return null;
+  }
+
+  const details = error.details as StrategyMutationErrorDetails | undefined;
+  if (!details || typeof details !== "object" || !details.detail) {
+    return null;
+  }
+
+  return details.detail;
 }
 
 function buildPolicySnippet(policy: StrategyPolicyConfig) {
@@ -367,6 +363,7 @@ function PremiumSlider({
       </div>
       <SliderPrimitive.Root
         className="relative flex w-full touch-none select-none items-center cursor-pointer py-1"
+        aria-label={label}
         value={[value]}
         min={min}
         max={max}
@@ -378,6 +375,43 @@ function PremiumSlider({
         </SliderPrimitive.Track>
         <SliderPrimitive.Thumb className="block h-3.5 w-2 bg-[#D4962A] border border-[#0E0B06] rounded-none focus:outline-none focus:ring-1 focus:ring-[#D4962A] transition-transform hover:scale-y-110 active:scale-y-110" />
       </SliderPrimitive.Root>
+    </div>
+  );
+}
+
+function SourceStatusRow({
+  label,
+  detail,
+  tone,
+}: {
+  label: string;
+  detail: string;
+  tone: StatusTone;
+}) {
+  const dotClassName =
+    tone === "ready"
+      ? "bg-emerald-500"
+      : tone === "degraded"
+        ? "bg-amber-400"
+        : tone === "blocked"
+          ? "bg-red-400"
+          : "bg-[#A08858]";
+  const labelClassName =
+    tone === "ready"
+      ? "text-emerald-400"
+      : tone === "degraded"
+        ? "text-amber-400"
+        : tone === "blocked"
+          ? "text-red-400"
+          : "text-[#A08858]";
+
+  return (
+    <div className="flex items-center justify-between gap-4 py-1 text-xs">
+      <span className="min-w-0 text-[#F4EDD6]">{label}</span>
+      <div className="flex items-center gap-2">
+        <span className={cn("text-right text-[9px] font-mono uppercase tracking-[0.1em]", labelClassName)}>{detail}</span>
+        <span className={cn("inline-flex h-2 w-2 rounded-full", dotClassName)} aria-hidden="true" />
+      </div>
     </div>
   );
 }
@@ -443,6 +477,7 @@ function AuditRow({
 export default function StrategyStudio() {
   const wallet = usePortfolioWallet();
   const operatorAddress = wallet.effectiveWalletAddress ?? null;
+  const hasOperatorAddress = Boolean(operatorAddress?.trim());
 
   const healthQuery = useSystemHealth();
   const serviceQuery = useServiceStatus();
@@ -459,10 +494,7 @@ export default function StrategyStudio() {
   const templatesQuery = useStrategyTemplates();
   const activeQuery = useStrategyActive(operatorAddress);
   const versionsQuery = useStrategyVersions(operatorAddress);
-  const createDraftMutation = useCreateStrategyDraft();
-  const validateMutation = useValidateStrategy();
   const simulateMutation = useSimulateStrategy();
-  const activateMutation = useActivateStrategy();
   const updateActiveMutation = useUpdateActiveStrategy();
   const revertMutation = useRevertStrategy();
   const schedulerMutation = useUpdateStrategyScheduler();
@@ -496,11 +528,6 @@ export default function StrategyStudio() {
     message?: string;
   } | null>(null);
 
-  // Local UI States
-  const [minProtocolTier, setMinProtocolTier] = useState("Tier 2");
-  const [kellyAggressiveness, setKellyAggressiveness] = useState(0.45);
-  const [riskEngineSensitivity, setRiskEngineSensitivity] = useState(65);
-
   const initializedRef = useRef(false);
   const baselineSignatureRef = useRef<string>("");
 
@@ -525,11 +552,14 @@ export default function StrategyStudio() {
   const runtimeMode = healthQuery.data?.runtime_mode ?? serviceQuery.data?.runtime_mode ?? "Loading";
   const aiAccessEnabled = settingsQuery.data?.ai_decision_maker_enabled ?? serviceQuery.data?.ai_decision_maker_enabled ?? false;
 
-  const resolveTemplateId = (policyConfig: StrategyPolicyConfig) =>
-    String(
-      templates.find((template) => template.policy_json.objective === policyConfig.objective)?.id ??
-        "",
-    );
+  const resolveTemplateId = useCallback(
+    (policyConfig: StrategyPolicyConfig) =>
+      String(
+        templates.find((template) => template.policy_json.objective === policyConfig.objective)?.id ??
+          "",
+      ),
+    [templates],
+  );
 
   useEffect(() => {
     if (initializedRef.current || !activeData) {
@@ -554,7 +584,7 @@ export default function StrategyStudio() {
       baselineSignatureRef.current = snapshotSignature(templates[0].prompt_text, templates[0].policy_json, templateId);
     }
     initializedRef.current = true;
-  }, [activeData, activeVersion, templates]);
+  }, [activeData, activeVersion, resolveTemplateId, templates]);
 
   useEffect(() => {
     if (!templates.length) {
@@ -564,7 +594,7 @@ export default function StrategyStudio() {
     if (resolvedTemplateId && resolvedTemplateId !== selectedTemplateId) {
       setSelectedTemplateId(resolvedTemplateId);
     }
-  }, [policy, selectedTemplateId, templates]);
+  }, [policy, resolveTemplateId, selectedTemplateId, templates]);
 
   const selectedTemplate = useMemo<StrategyTemplateSummary | null>(() => {
     const numericId = Number.parseInt(selectedTemplateId, 10);
@@ -630,6 +660,43 @@ export default function StrategyStudio() {
     routesQuery.data?.routes.length,
   ]);
 
+  const dataSourceRows = useMemo(
+    () => [
+      {
+        label: "Strategy runtime",
+        detail: aiAccessEnabled ? "AI enabled" : "AI disabled",
+        tone: (aiAccessEnabled ? "ready" : "degraded") as StatusTone,
+      },
+      {
+        label: "Market ingestion",
+        detail: marketQuery.data ? `${marketQuery.data.assets.length} assets` : "Awaiting status",
+        tone: statusTone(marketQuery.data?.status, marketQuery.data?.status_code),
+      },
+      {
+        label: "Price snapshots",
+        detail: pricesQuery.data ? `${pricesQuery.data.prices.length} feeds` : "Awaiting status",
+        tone: statusTone(pricesQuery.data?.status, pricesQuery.data?.status_code),
+      },
+      {
+        label: "Quote snapshots",
+        detail: quotesQuery.data ? `${quotesQuery.data.quotes.length} routes` : "Awaiting status",
+        tone: statusTone(quotesQuery.data?.status, quotesQuery.data?.status_code),
+      },
+      {
+        label: "Route catalog",
+        detail: routesQuery.data ? `${routesQuery.data.routes.length} routes` : "Awaiting status",
+        tone: statusTone(routesQuery.data?.status, routesQuery.data?.status_code),
+      },
+    ],
+    [
+      aiAccessEnabled,
+      marketQuery.data,
+      pricesQuery.data,
+      quotesQuery.data,
+      routesQuery.data,
+    ],
+  );
+
   const riskWeightTotal = useMemo(() => {
     const weights = policy.risk_weights;
     return weights.llm_sentiment + weights.liquidity + weights.oracle + weights.depeg + weights.execution;
@@ -638,6 +705,7 @@ export default function StrategyStudio() {
   const baselineSignature = baselineSignatureRef.current;
   const currentSignature = snapshotSignature(strategyText, policy, selectedTemplateId);
   const isDirty = baselineSignature ? baselineSignature !== currentSignature : true;
+  const canRestoreEditorState = Boolean(activeVersion || templates[0]);
 
   const validationPassed = latestValidation?.status === "ok" && (latestValidation.validation_errors?.length ?? 0) === 0;
 
@@ -704,6 +772,13 @@ export default function StrategyStudio() {
   };
 
   const onSimulate = () => {
+    if (!hasOperatorAddress) {
+      toast.error("Connect a wallet to simulate strategy changes.", {
+        description: "Strategy actions require a connected or selected operator wallet.",
+      });
+      return;
+    }
+
     setValidationError(null);
     simulateMutation.mutate(requestBody, {
       onSuccess: (response) => {
@@ -724,11 +799,10 @@ export default function StrategyStudio() {
         });
         setLastActionMessage(`Impact simulation: ${response.simulation.recommendation}.`);
       },
-      onError: (error: any) => {
-        const details = error.details;
-        if (details && typeof details === "object" && details.detail) {
-          const det = details.detail;
-          const errors = det.errors || [];
+      onError: (error: unknown) => {
+        const det = parseStrategyMutationError(error);
+        if (det) {
+          const errors = det.errors ?? [];
           setValidationError({
             status: det.status || "rejected",
             safety_score: det.safety_score,
@@ -736,7 +810,7 @@ export default function StrategyStudio() {
             safe_suggestion: det.safe_suggestion,
             message: det.message || "Strategy simulation failed validation checks.",
           });
-          const specificTips = errors.slice(0, 2).map((e: any) => e.message).filter(Boolean);
+          const specificTips = errors.slice(0, 2).map((e) => e.message).filter(Boolean);
           const tipText = specificTips.length ? ` ${specificTips.join(" ")}` : "";
           toast.error("Strategy simulation failed", {
             description: `Fix the issues below${tipText}. Adjust the prompt text, risk weights, or hard limits and try again.`,
@@ -744,10 +818,10 @@ export default function StrategyStudio() {
           });
         } else {
           setValidationError({
-            message: error.message || "An unexpected error occurred during simulation.",
+            message: error instanceof Error ? error.message : "An unexpected error occurred during simulation.",
           });
           toast.error("Simulation failed", {
-            description: error.message || "An unexpected error occurred. Please try again.",
+            description: error instanceof Error ? error.message : "An unexpected error occurred. Please try again.",
             duration: 5000,
           });
         }
@@ -757,6 +831,13 @@ export default function StrategyStudio() {
   };
 
   const onSaveStrategy = () => {
+    if (!hasOperatorAddress) {
+      toast.error("Connect a wallet to save and activate a strategy.", {
+        description: "Strategy actions require a connected or selected operator wallet.",
+      });
+      return;
+    }
+
     setValidationError(null);
     updateActiveMutation.mutate(requestBody, {
       onSuccess: (response) => {
@@ -771,11 +852,10 @@ export default function StrategyStudio() {
         syncBaseline(nextText, nextPolicy, selectedTemplateId);
         setLastActionMessage(`Saved and activated ${response.active_version?.version ?? "strategy"}.`);
       },
-      onError: (error: any) => {
-        const details = error.details;
-        if (details && typeof details === "object" && details.detail) {
-          const det = details.detail;
-          const errors = det.errors || [];
+      onError: (error: unknown) => {
+        const det = parseStrategyMutationError(error);
+        if (det) {
+          const errors = det.errors ?? [];
           setValidationError({
             status: det.status || "rejected",
             safety_score: det.safety_score,
@@ -783,7 +863,7 @@ export default function StrategyStudio() {
             safe_suggestion: det.safe_suggestion,
             message: det.message || "Strategy activation failed validation checks.",
           });
-          const specificTips = errors.slice(0, 2).map((e: any) => e.message).filter(Boolean);
+          const specificTips = errors.slice(0, 2).map((e) => e.message).filter(Boolean);
           const tipText = specificTips.length ? ` ${specificTips.join(" ")}` : "";
           toast.error("Strategy validation failed", {
             description: `Fix the errors below${tipText}. Adjust the prompt text, risk weights, or hard limits and try again.`,
@@ -791,10 +871,10 @@ export default function StrategyStudio() {
           });
         } else {
           setValidationError({
-            message: error.message || "An unexpected error occurred while saving the strategy.",
+            message: error instanceof Error ? error.message : "An unexpected error occurred while saving the strategy.",
           });
           toast.error("Failed to save strategy", {
-            description: error.message || "An unexpected error occurred. Please try again.",
+            description: error instanceof Error ? error.message : "An unexpected error occurred. Please try again.",
             duration: 5000,
           });
         }
@@ -804,6 +884,13 @@ export default function StrategyStudio() {
   };
 
   const onRevert = (version: string) => {
+    if (!hasOperatorAddress) {
+      toast.error("Connect a wallet to revert strategy history.", {
+        description: "Strategy actions require a connected or selected operator wallet.",
+      });
+      return;
+    }
+
     revertMutation.mutate(
       {
         version,
@@ -815,9 +902,11 @@ export default function StrategyStudio() {
           if (response.active_version) {
             const nextPolicy = response.active_version.active_policy_json;
             const nextText = resolveStrategyText(response.active_version.raw_prompt_snapshot, nextPolicy);
+            const nextTemplateId = resolveTemplateId(nextPolicy);
             setPolicy(clonePolicy(nextPolicy));
             setStrategyText(nextText);
-            syncBaseline(nextText, nextPolicy, selectedTemplateId);
+            setSelectedTemplateId(nextTemplateId);
+            syncBaseline(nextText, nextPolicy, nextTemplateId);
           }
           setLastActionMessage(`Reverted to ${version}.`);
         },
@@ -826,6 +915,13 @@ export default function StrategyStudio() {
   };
 
   const onUpdateScheduler = () => {
+    if (!hasOperatorAddress) {
+      toast.error("Connect a wallet to update scheduler settings.", {
+        description: "Strategy actions require a connected or selected operator wallet.",
+      });
+      return;
+    }
+
     schedulerMutation.mutate(
       {
         version: activeVersion?.version ?? null,
@@ -868,7 +964,7 @@ export default function StrategyStudio() {
 
   return (
     <PageScaffold
-      title="Strategic Studio"
+      title="Strategy Studio"
       description="Bounded strategy policy controls, simulation, versioning, and audit history backed by the strategy policy service."
     >
       <div className="strategy-studio-theme">
@@ -877,13 +973,14 @@ export default function StrategyStudio() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="font-heading text-[44px] uppercase tracking-[0.05em] leading-none text-[#F4EDD6]">
-              STRATEGIC STUDIO
+              STRATEGY STUDIO
             </h1>
             <p className="mt-1 text-sm text-[#A08858]">
               Institutional control center for configuring AI reasoning, risk parameters, and execution protocols.
             </p>
             <div className="mt-3 flex flex-wrap gap-y-1">
               <HeroStat label="signals" value={formatCount(liveSignalCount)} />
+              <HeroStat label="risk" value={`${currentRiskScore}/100`} />
               <HeroStat label="chain" value={targetChain} />
               <HeroStat label="runtime" value={humanize(runtimeMode)} />
               <HeroStat label="checked" value={formatRelativeAge(latestGeneratedAt)} />
@@ -1014,6 +1111,8 @@ export default function StrategyStudio() {
                           setStrategyText(event.target.value);
                           setValidationError(null);
                         }}
+                        aria-label="Strategy prompt editor"
+                        spellCheck={false}
                         className="absolute inset-0 h-full w-full resize-none border-0 bg-transparent px-3 py-3 font-mono text-[11px] leading-[18px] text-transparent caret-[#F4EDD6] placeholder:text-[#A08858]/30 focus:outline-none focus:ring-0 focus-visible:ring-0 overflow-y-auto"
                         placeholder="Enter system prompt guidelines here..."
                       />
@@ -1030,6 +1129,7 @@ export default function StrategyStudio() {
                       variant="ghost"
                       size="sm"
                       onClick={loadActiveIntoForm}
+                      disabled={!canRestoreEditorState}
                       className="h-6 gap-1 px-1.5 text-[11px] text-[#D4962A] hover:bg-[#1E1509] hover:text-[#D4962A] rounded-none font-sans font-semibold uppercase tracking-wider"
                     >
                       <RotateCcw className="h-3.5 w-3.5 mr-1" />
@@ -1185,26 +1285,8 @@ export default function StrategyStudio() {
                     </div>
                   </div>
 
-                  {/* Protocol Tier Dropdown */}
-                  <div className="space-y-2">
-                    <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#A08858]">Min Protocol Tier</span>
-                    <Select
-                      value={minProtocolTier}
-                      onValueChange={(val) => {
-                        setMinProtocolTier(val);
-                        setValidationError(null);
-                      }}
-                    >
-                      <SelectTrigger className="rounded-none border-[#3A2812] bg-[#150F07] text-[#F4EDD6] h-9 text-xs focus:ring-[#D4962A]">
-                        <SelectValue placeholder="Select Tier" />
-                      </SelectTrigger>
-                      <SelectContent className="border-[#3A2812] bg-[#0E0B06] text-[#F4EDD6] rounded-none">
-                        <SelectItem value="Tier 1" className="text-xs rounded-none focus:bg-[#1E1509] focus:text-[#D4962A]">Tier 1 - High Liquidity / Low Risk</SelectItem>
-                        <SelectItem value="Tier 2" className="text-xs rounded-none focus:bg-[#1E1509] focus:text-[#D4962A]">Tier 2 - Balanced Liquidity / Medium Risk</SelectItem>
-                        <SelectItem value="Tier 3" className="text-xs rounded-none focus:bg-[#1E1509] focus:text-[#D4962A]">Tier 3 - Higher Yield / Higher Risk</SelectItem>
-                        <SelectItem value="Tier 4" className="text-xs rounded-none focus:bg-[#1E1509] focus:text-[#D4962A]">Tier 4 - Experimental Feeds / Maximum Risk</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  <div className="border border-[#3A2812]/50 bg-[#150F07]/50 p-3 text-[11px] leading-relaxed text-[#A08858]">
+                    Protocol tier gating is not exposed by the current strategy policy API. Only controls that persist to the active policy remain editable here.
                   </div>
 
                   {/* Global Circuit Breaker Toggle */}
@@ -1247,26 +1329,14 @@ export default function StrategyStudio() {
                     ACTIVE DATA SOURCES
                   </h2>
                   <div className="space-y-3 mt-4 font-sans">
-                    <div className="flex items-center justify-between py-1 text-xs">
-                      <span className="text-[#F4EDD6]">Pyth Network Oracles</span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[9px] font-mono text-[#D4962A] uppercase tracking-[0.1em]">Connected</span>
-                        <span className="relative flex h-2 w-2">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between py-1 text-xs">
-                      <span className="text-[#F4EDD6]">Governance Forum Scraper</span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[9px] font-mono text-[#D4962A] uppercase tracking-[0.1em]">Active</span>
-                        <span className="relative flex h-2 w-2">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                        </span>
-                      </div>
-                    </div>
+                    {dataSourceRows.map((row) => (
+                      <SourceStatusRow
+                        key={row.label}
+                        label={row.label}
+                        detail={row.detail}
+                        tone={row.tone}
+                      />
+                    ))}
                   </div>
                 </div>
               </div>
@@ -1430,29 +1500,6 @@ export default function StrategyStudio() {
                   }
                 />
 
-                {/* Simulated Sliders (UI Only to match mockup) */}
-                <PremiumSlider
-                  label="Kelly Aggressiveness"
-                  value={kellyAggressiveness}
-                  min={0.0}
-                  max={1.0}
-                  step={0.05}
-                  suffix=""
-                  onChange={(val) => {
-                    setKellyAggressiveness(val);
-                    setValidationError(null);
-                  }}
-                />
-
-                <PremiumSlider
-                  label="Risk Engine Sensitivity"
-                  value={riskEngineSensitivity}
-                  suffix="%"
-                  onChange={(val) => {
-                    setRiskEngineSensitivity(val);
-                    setValidationError(null);
-                  }}
-                />
               </div>
 
               {/* Status Message */}
@@ -1468,6 +1515,10 @@ export default function StrategyStudio() {
                     <span>Weights are fully normalized (100%).</span>
                   </div>
                 )}
+              </div>
+
+              <div className="border border-[#3A2812]/50 bg-[#150F07]/50 p-3 text-[11px] leading-relaxed text-[#A08858]">
+                Only the five core risk weights are saved to the active policy. Removed mock controls no longer imply unsupported behavior.
               </div>
             </div>
           </TabsContent>
@@ -1549,7 +1600,7 @@ export default function StrategyStudio() {
               <div className="flex justify-end border-t border-[#3A2812]/50 pt-4">
                 <Button
                   onClick={onUpdateScheduler}
-                  disabled={schedulerMutation.isPending}
+                  disabled={!hasOperatorAddress || schedulerMutation.isPending}
                   className="rounded-none bg-[#D4962A] hover:bg-[#b0781e] text-[#0E0B06] text-xs uppercase tracking-wider font-bold h-9"
                 >
                   {schedulerMutation.isPending ? "Saving Schedule..." : "Save Schedule Settings"}
@@ -1572,7 +1623,7 @@ export default function StrategyStudio() {
                       key={version.id}
                       version={version}
                       onRevert={onRevert}
-                      disabled={revertMutation.isPending}
+                      disabled={revertMutation.isPending || !hasOperatorAddress}
                     />
                   ))
                 ) : (
@@ -1629,7 +1680,7 @@ export default function StrategyStudio() {
             <Button
               variant="outline"
               onClick={onSimulate}
-              disabled={!strategyText.trim() || simulateMutation.isPending}
+              disabled={!hasOperatorAddress || !strategyText.trim() || simulateMutation.isPending}
               className="rounded-none border-[#3A2812] text-[#F4EDD6] hover:bg-[#1E1509] hover:text-[#D4962A] h-9 text-xs uppercase tracking-wider font-semibold"
             >
               {simulateMutation.isPending ? "Simulating..." : "Simulate Changes"}
@@ -1637,7 +1688,7 @@ export default function StrategyStudio() {
 
             <Button
               onClick={onSaveStrategy}
-              disabled={!strategyText.trim() || updateActiveMutation.isPending || Math.abs(riskWeightTotal - 1.0) > 0.001}
+              disabled={!hasOperatorAddress || !strategyText.trim() || updateActiveMutation.isPending || Math.abs(riskWeightTotal - 1.0) > 0.001}
               className="rounded-none bg-[#D4962A] hover:bg-[#b0781e] text-[#0E0B06] h-9 text-xs uppercase tracking-wider font-bold"
               title="Save changes and activate this strategy for the connected wallet"
             >
@@ -1645,6 +1696,9 @@ export default function StrategyStudio() {
               {updateActiveMutation.isPending ? "Saving..." : "Save and Activate"}
             </Button>
           </div>
+        </div>
+        <div className="pb-3 text-[11px] font-sans text-[#A08858]">
+          {!hasOperatorAddress ? "Connect a supported wallet to run strategy actions." : lastActionMessage ?? "Ready for the next strategy change."}
         </div>
       </section>
       </div>
