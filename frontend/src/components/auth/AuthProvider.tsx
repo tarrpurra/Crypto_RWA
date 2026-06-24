@@ -133,7 +133,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     <AuthContext.Provider value={{ ready: hydrated, user, login, logout }}>
       {children}
       <Dialog open={complianceDialogOpen} onOpenChange={setComplianceDialogOpen}>
-        <DialogContent className="max-w-2xl border-primary/30 bg-card p-0 shadow-[0_28px_80px_-36px_hsl(var(--primary)/0.45)]">
+        <DialogContent className="flex max-h-[calc(100dvh-1.5rem)] w-[calc(100vw-1.5rem)] max-w-2xl flex-col gap-0 overflow-hidden border-primary/30 bg-card p-0 shadow-[0_28px_80px_-36px_hsl(var(--primary)/0.45)] sm:w-full">
           <div className="border-b border-primary/20 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent px-6 py-5 sm:px-7">
             <DialogHeader className="space-y-3 text-left">
               <DialogTitle className="font-display text-2xl text-foreground">
@@ -145,8 +145,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
             </DialogHeader>
           </div>
 
-          <div className="space-y-4 px-6 py-6 sm:px-7">
-            <section className="rounded-lg border border-border bg-surface-1/80">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-7 sm:py-6">
+            <section className="flex min-h-0 flex-col rounded-lg border border-border bg-surface-1/80">
               <div className="border-b border-border px-4 py-3">
                 <p className="font-display text-lg text-foreground">
                   YieldMind Terms of Use & Risk Disclosures
@@ -155,7 +155,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
                   Last Updated: {TERMS_LAST_UPDATED}
                 </p>
               </div>
-              <ScrollArea className="h-64">
+              <ScrollArea className="h-64 max-h-[40dvh]">
                 <div className="space-y-5 px-4 py-4 text-sm leading-6 text-foreground">
                   <div>
                     <p className="text-muted-foreground">
@@ -229,7 +229,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
               </ScrollArea>
             </section>
 
-            <label className="flex items-start gap-3 rounded-lg border border-border bg-surface-1/80 px-4 py-4 transition-colors hover:bg-surface-2/70">
+            <label className="flex items-start gap-3 rounded-lg border border-border bg-surface-1/80 px-3 py-3 transition-colors hover:bg-surface-2/70 sm:px-4 sm:py-4">
               <Checkbox
                 checked={nonUsConfirmed}
                 onCheckedChange={(checked) => setNonUsConfirmed(checked === true)}
@@ -240,7 +240,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
               </span>
             </label>
 
-            <label className="flex items-start gap-3 rounded-lg border border-border bg-surface-1/80 px-4 py-4 transition-colors hover:bg-surface-2/70">
+            <label className="flex items-start gap-3 rounded-lg border border-border bg-surface-1/80 px-3 py-3 transition-colors hover:bg-surface-2/70 sm:px-4 sm:py-4">
               <Checkbox
                 checked={usdyRestrictionConfirmed}
                 onCheckedChange={(checked) => setUsdyRestrictionConfirmed(checked === true)}
@@ -251,7 +251,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
               </span>
             </label>
 
-            <label className="flex items-start gap-3 rounded-lg border border-border bg-surface-1/80 px-4 py-4 transition-colors hover:bg-surface-2/70">
+            <label className="flex items-start gap-3 rounded-lg border border-border bg-surface-1/80 px-3 py-3 transition-colors hover:bg-surface-2/70 sm:px-4 sm:py-4">
               <Checkbox
                 checked={termsConfirmed}
                 onCheckedChange={(checked) => setTermsConfirmed(checked === true)}
@@ -262,12 +262,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
               </span>
             </label>
 
-            <div className="rounded-lg border border-primary/15 bg-primary/5 px-4 py-3 text-sm leading-6 text-muted-foreground">
+            <div className="rounded-lg border border-primary/15 bg-primary/5 px-3 py-3 text-sm leading-6 text-muted-foreground sm:px-4">
               Wallet connection is available only after these declarations are accepted on this device.
             </div>
           </div>
 
-          <DialogFooter className="border-t border-border px-6 py-5 sm:px-7">
+          <DialogFooter className="shrink-0 border-t border-border px-4 py-4 sm:px-7 sm:py-5">
             <Button
               type="button"
               onClick={confirmComplianceAndContinue}
