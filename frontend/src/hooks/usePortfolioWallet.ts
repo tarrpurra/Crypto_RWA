@@ -62,7 +62,9 @@ export function usePortfolioWallet() {
     window.dispatchEvent(new Event(WALLET_EVENT));
   }, []);
 
-  const walletAddress = address ? (isSupportedChain ? address : "") : "";
+  // Always expose the connected address for read-only dashboard queries.
+  // Execution-oriented flows still use isSupportedChain separately.
+  const walletAddress = address ?? "";
   const effectiveWalletAddress = walletAddress || storedWallet.trim();
 
   return useMemo(

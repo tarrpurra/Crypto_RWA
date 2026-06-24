@@ -212,6 +212,7 @@ const Index = () => {
   const chartDemo = methHistory.data?.demo ?? usdyHistory.data?.demo ?? false;
   const chartLoading = methHistory.isLoading || usdyHistory.isLoading || wmntHistory.isLoading || mntHistory.isLoading;
   const decisions = decisionsQuery.data;
+  const hasWalletScope = Boolean(effectiveWalletAddress);
   const hasConnectedSupportedWallet = Boolean(
     connectedWalletAddress && isSupportedChain,
   );
@@ -223,12 +224,13 @@ const Index = () => {
     vaultBalanceQuery.isPending ||
     walletBalanceQuery.isPending;
   const walletActionContextReady =
+    hasConnectedSupportedWallet &&
     settingsQuery.isSuccess &&
     chainStatusQuery.isSuccess &&
     vaultBalanceQuery.isSuccess &&
     walletBalanceQuery.isSuccess;
   const showDashboardGhostShell =
-    hasConnectedSupportedWallet &&
+    hasWalletScope &&
     backendWarmupLoading &&
     !dashboardSummaryQuery.data &&
     !vaultBalanceQuery.data &&
@@ -463,7 +465,7 @@ const Index = () => {
     ].includes(pendingProposal.status_code);
   }, [effectiveWalletAddress, pendingProposal]);
   const depositAmountReady =
-    !hasConnectedSupportedWallet ||
+    !hasWalletScope ||
     parsedDepositAmount > 0 ||
     suggestedLaunchAmount > 0;
   const portfolioDetail = !effectiveWalletAddress
@@ -637,7 +639,7 @@ const Index = () => {
   }, []);
 
   const dashboardContent = useMemo(() => {
-    if (!hasConnectedSupportedWallet) {
+    if (!hasWalletScope) {
       return (
         <section className="terminal-panel border-primary/20 p-6">
           <div className="flex flex-col items-center gap-4 py-6">
@@ -706,7 +708,7 @@ const Index = () => {
             !decisions &&
             dashboardSummaryQuery.isLoading
           }
-          hasConnectedWallet={hasConnectedSupportedWallet}
+          hasConnectedWallet={hasWalletScope}
           aiDecisionMakerEnabled={aiDecisionMakerEnabled}
           onAiAccessChange={updateAiAccess}
           isAiAccessPending={updateSettings.isPending}
@@ -735,6 +737,7 @@ const Index = () => {
     dashboardSummaryQuery.isLoading,
     decisions,
     displayPortfolio,
+    hasWalletScope,
     hasConnectedSupportedWallet,
     login,
     openDepositModal,
@@ -766,7 +769,7 @@ const Index = () => {
         walletData={hasConnectedSupportedWallet ? walletData : undefined}
         vaultAddress={resolvedVaultAddress}
         wmntAddress={resolvedWmntAddress}
-        walletContextReady={!hasConnectedSupportedWallet || walletActionContextReady}
+        walletContextReady={!hasWalletScope || walletActionContextReady}
         // Bug E fix: pass native MNT balance so DepositModal shows it when
         // asset === "MNT" (native coin is not in walletData.balances).
         nativeMntBalance={hasConnectedSupportedWallet && walletBalanceQuery.data
