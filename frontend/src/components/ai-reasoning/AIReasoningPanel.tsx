@@ -12,6 +12,7 @@ import {
   ShieldX,
 } from "lucide-react";
 
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import type {
   AIAction,
@@ -433,6 +434,8 @@ export function AIReasoningPanel(props: AIReasoningPanelProps) {
     aiDecisionMakerEnabled,
     onAiAccessChange,
     isAiAccessPending,
+    backendLogs,
+    backendLogsLoading,
   } = props;
 
   const card = useMemo(() => buildCardData(props), [props]);
@@ -680,6 +683,49 @@ export function AIReasoningPanel(props: AIReasoningPanelProps) {
                   </div>
                 ))}
               </div>
+            </section>
+
+            <section className="rounded-lg border border-border bg-surface-2/60 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[0.7rem] font-extrabold uppercase tracking-[0.16em] text-primary">
+                    Backend Activity
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Recent backend logs from the running agent service.
+                  </p>
+                </div>
+                <span className="rounded-full border border-border bg-background/40 px-3 py-1 text-[0.62rem] uppercase tracking-[0.14em] text-muted-foreground">
+                  {backendLogsLoading ? "refreshing" : `${backendLogs?.length ?? 0} lines`}
+                </span>
+              </div>
+              <ScrollArea className="mt-3 h-72 rounded-lg border border-border bg-background/50">
+                <div className="space-y-2 p-3">
+                  {backendLogs && backendLogs.length > 0 ? (
+                    backendLogs.map((entry, index) => (
+                      <div
+                        key={`${entry.timestamp}-${entry.logger}-${index}`}
+                        className="rounded-md border border-border/70 bg-surface-2/50 px-3 py-2"
+                      >
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.68rem] uppercase tracking-[0.12em] text-muted-foreground">
+                          <span>{entry.level}</span>
+                          <span>{entry.logger}</span>
+                          <span>{new Date(entry.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                        <p className="mt-1 break-words font-mono text-xs leading-5 text-foreground">
+                          {entry.message}
+                        </p>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      {backendLogsLoading
+                        ? "Loading backend activity..."
+                        : "No backend log lines available yet."}
+                    </p>
+                  )}
+                </div>
+              </ScrollArea>
             </section>
           </div>
         </div>

@@ -182,12 +182,54 @@ class DecisionsApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.proposals[0].proposal_id, proposal_a)
         self.assertEqual(response.proposals[0].token_in_symbol, "WMNT")
         self.assertEqual(response.proposals[0].token_out_symbol, "USDY")
+        self.assertEqual(response.proposals[0].proposal_amount, 10.0)
         self.assertEqual(response.proposals[0].recommended_action, "REBALANCE")
         self.assertEqual(response.proposals[0].confidence, 88.3)
         self.assertEqual(response.proposals[0].reasoning_summary, "Move capital into the target basket.")
 
+    async def test_list_proposals_decodes_base_unit_amount_when_plan_detail_is_missing(self) -> None:
+        init_db()
+        now = utc_now()
+        proposal_id = f"0xproposal_amount_{uuid4().hex}"
+        with create_session() as session:
+            session.query(TradeProposalRecord).delete()
+            session.query(InvestmentPlanRecord).delete()
+            session.commit()
+        with create_session() as session:
+            session.add(
+                TradeProposalRecord(
+                    proposal_id=proposal_id,
+                    plan_hash="0xplan_amount",
+                    wallet_or_vault="0xwallet_a",
+                    router="0xrouter",
+                    selector="0x12345678",
+                    calldata_hash="0xhash_amount",
+                    token_in="0x0000000000000000000000000000000000000001",
+                    token_out="0x0000000000000000000000000000000000000002",
+                    recipient="0xrecipient",
+                    max_amount_in="69700000000000000000",
+                    min_amount_out="66000000000000000000",
+                    native_value="0",
+                    deadline=123,
+                    proposal_expiry=456,
+                    nonce=1,
+                    status_code="PROPOSAL_APPROVED",
+                    risk_snapshot_id="risk-a",
+                    calldata="0xabc",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            session.commit()
+
+        response = await list_proposals(wallet_address="0xwallet_a")
+
+        self.assertEqual(len(response.proposals), 1)
+        self.assertEqual(response.proposals[0].proposal_amount, 69.7)
+
     @patch("services.agent.app.api.decisions._save_proposal_record")
     @patch("services.agent.app.api.decisions.InvestmentPlanRepository.save_plan_for_proposals")
+    @patch("services.agent.app.api.decisions._execute_proposal_submission")
     @patch("services.agent.app.api.decisions.build_investment_plan")
     @patch("services.agent.modules.decisions.build_decision_context", new_callable=AsyncMock)
     @patch("services.agent.app.api.decisions.get_vault_balance_snapshot", new_callable=AsyncMock)
@@ -198,6 +240,7 @@ class DecisionsApiTests(unittest.IsolatedAsyncioTestCase):
         mock_get_vault_balance_snapshot,
         mock_build_decision_context,
         mock_build_investment_plan,
+        mock_execute_proposal_submission,
         mock_save_plan_for_proposals,
         mock_save_proposal_record,
     ) -> None:
@@ -303,6 +346,12 @@ class DecisionsApiTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
         mock_build_investment_plan.return_value = (plan_response, [(winner, "0x1111"), (loser, "0x2222")])
+        mock_execute_proposal_submission.return_value = MagicMock(
+            status_code="EXECUTION_SUBMITTED",
+            status_reason="Execution transaction submitted to the ExecutorVault on-chain path.",
+            tx_hash="0xabc123",
+            chain_id=5003,
+        )
 
         response = await create_investment_plan(
             InvestmentPlanRequest(
@@ -314,11 +363,124 @@ class DecisionsApiTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(response.linked_proposals[0].status_code, "PROPOSAL_APPROVED")
+        self.assertEqual(response.linked_proposals[0].status_code, "PROPOSAL_EXECUTING")
         self.assertEqual(response.linked_proposals[1].status_code, "PROPOSAL_REJECTED")
-        self.assertEqual(winner.status_code, "PROPOSAL_APPROVED")
+        self.assertEqual(winner.status_code, "PROPOSAL_EXECUTING")
         self.assertEqual(loser.status_code, "PROPOSAL_REJECTED")
+        self.assertEqual(response.metadata["ai_execution_status"], "EXECUTION_SUBMITTED")
+        self.assertEqual(response.metadata["ai_execution_tx_hash"], "0xabc123")
+        mock_execute_proposal_submission.assert_called_once_with("0xwinner", settings=get_settings.return_value)
         mock_save_proposal_record.assert_called()
+        mock_save_plan_for_proposals.assert_called_once()
+
+    @patch("services.agent.app.api.decisions._save_proposal_record")
+    @patch("services.agent.app.api.decisions.InvestmentPlanRepository.save_plan_for_proposals")
+    @patch("services.agent.app.api.decisions._execute_proposal_submission")
+    @patch("services.agent.app.api.decisions.build_investment_plan")
+    @patch("services.agent.modules.decisions.build_decision_context", new_callable=AsyncMock)
+    @patch("services.agent.app.api.decisions.get_vault_balance_snapshot", new_callable=AsyncMock)
+    @patch("services.agent.app.api.decisions.get_settings")
+    async def test_create_investment_plan_ai_mode_records_execution_failure_in_response(
+        self,
+        get_settings,
+        mock_get_vault_balance_snapshot,
+        mock_build_decision_context,
+        mock_build_investment_plan,
+        mock_execute_proposal_submission,
+        mock_save_plan_for_proposals,
+        mock_save_proposal_record,
+    ) -> None:
+        get_settings.return_value = Settings(
+            _env_file=None,
+            app_env="test",
+            target_chain=TargetChain.MANTLE_SEPOLIA,
+            ai_decision_maker_enabled=True,
+            runtime_mode="live",
+            executor_vault_address="0x301e982dbc40f4aa42C291427E7cB0E9491102F1",
+            database_url="sqlite+pysqlite:///:memory:",
+        )
+        mock_get_vault_balance_snapshot.return_value = MagicMock(
+            balances=[MagicMock(asset_symbol="WMNT", balance="100")],
+            total_value_usd="100",
+        )
+        mock_build_decision_context.return_value = MagicMock(
+            portfolio_response=MagicMock(),
+            actual_portfolio_response=MagicMock(),
+            risk_assessment=MagicMock(),
+        )
+        winner = TradeProposal(
+            proposal_id="0xwinner",
+            plan_hash="0xplanwinner",
+            wallet_or_vault="0xwallet",
+            payload=ExecutionPayloadSchema(
+                proposalId="0xwinner",
+                planHash="0xplanwinner",
+                router="0x0000000000000000000000000000000000000001",
+                selector="0x414bf389",
+                calldataHash="0xcalldatawinner",
+                tokenIn="0x0000000000000000000000000000000000000002",
+                tokenOut="0x0000000000000000000000000000000000000003",
+                recipient="0x0000000000000000000000000000000000000004",
+                maxAmountIn=100,
+                minAmountOut=98,
+                nativeValue=0,
+                deadline=123,
+                proposalExpiry=456,
+                nonce=1,
+            ),
+            status_code="PROPOSAL_PENDING_APPROVAL",
+            risk_snapshot_id=None,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        plan_response = InvestmentPlanResponse(
+            status="ok",
+            status_code="EXECUTION_READY",
+            status_label="EXECUTION_READY",
+            status_reason="AI auto-approved the trade proposal. Execution is pending through the ExecutorVault on-chain path.",
+            generated_at=utc_now(),
+            plan_id="plan-1",
+            deposit_asset_symbol="MNT",
+            deposit_amount=100.0,
+            risk_profile="Balanced",
+            allocation_mode="AI Suggested",
+            approval_enabled=True,
+            approval_blockers=[],
+            linked_proposals=[
+                LinkedProposalSummary(
+                    proposal_id="0xwinner",
+                    asset_symbol="USDY",
+                    action="BUY",
+                    token_in_symbol="WMNT",
+                    token_out_symbol="USDY",
+                    amount=100.0,
+                    status_code="PROPOSAL_PENDING_APPROVAL",
+                ),
+            ],
+        )
+        mock_build_investment_plan.return_value = (plan_response, [(winner, "0x1111")])
+        from fastapi import HTTPException
+        mock_execute_proposal_submission.side_effect = HTTPException(
+            status_code=502,
+            detail="ExecutorVault submission failed: boom",
+        )
+
+        response = await create_investment_plan(
+            InvestmentPlanRequest(
+                wallet_address="0xwallet",
+                deposit_asset_symbol="MNT",
+                deposit_amount=100.0,
+                risk_profile="Balanced",
+                allocation_mode="AI Suggested",
+            )
+        )
+
+        self.assertEqual(response.status, "degraded")
+        self.assertEqual(response.status_code, "EXECUTION_FAILED")
+        self.assertEqual(response.linked_proposals[0].status_code, "PROPOSAL_FAILED")
+        self.assertEqual(response.metadata["ai_execution_status"], "EXECUTION_FAILED")
+        self.assertIn("backend execution failed", response.status_reason)
+        mock_save_proposal_record.assert_called_once()
         mock_save_plan_for_proposals.assert_called_once()
 
     @patch("services.agent.repositories.db.session.get_settings")
@@ -538,6 +700,80 @@ class DecisionsApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(proposal.status_code, "PROPOSAL_FAILED")
         self.assertEqual(execution.status_code, "EXECUTION_REVERTED")
         self.assertEqual(execution.tx_hash, "0xghi789")
+
+    @patch("services.agent.repositories.db.session.get_settings")
+    @patch("services.agent.app.api.decisions.submit_executor_vault_trade")
+    @patch("services.agent.app.api.decisions.get_settings")
+    async def test_execute_proposal_marks_failed_when_submission_raises_http_exception(
+        self,
+        get_settings,
+        submit_executor_vault_trade,
+        db_get_settings,
+    ) -> None:
+        from fastapi import HTTPException
+
+        db_get_settings.return_value = Settings(
+            _env_file=None,
+            app_env="test",
+            target_chain=TargetChain.MANTLE_SEPOLIA,
+            database_url="sqlite+pysqlite:///:memory:",
+        )
+        db_session._ENGINE = None
+        db_session._SESSION_FACTORY = None
+        init_db()
+        now = utc_now()
+        proposal_id = f"0xproposal_http_fail_{uuid4().hex}"
+        with create_session() as session:
+            session.query(TradeExecutionRecord).delete()
+            session.query(TradeProposalRecord).delete()
+            session.query(InvestmentPlanRecord).delete()
+            session.add(
+                TradeProposalRecord(
+                    proposal_id=proposal_id,
+                    plan_hash="0xplan",
+                    wallet_or_vault="0xwallet",
+                    router="0xrouter",
+                    selector="0x12345678",
+                    calldata_hash="0xcalldatahash",
+                    token_in="0xtoken_in",
+                    token_out="0xtoken_out",
+                    recipient="0xrecipient",
+                    max_amount_in="10",
+                    min_amount_out="9",
+                    native_value="0",
+                    deadline=123,
+                    proposal_expiry=456,
+                    nonce=1,
+                    status_code="PROPOSAL_APPROVED",
+                    risk_snapshot_id=None,
+                    calldata="0x1234",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            session.commit()
+
+        get_settings.return_value = Settings(
+            _env_file=None,
+            target_chain=TargetChain.MANTLE_SEPOLIA,
+            executor_vault_address="0x301e982dbc40f4aa42C291427E7cB0E9491102F1",
+            executor_private_key="0x" + "11" * 32,
+            mantle_sepolia_rpc_url="http://example",
+        )
+        submit_executor_vault_trade.side_effect = HTTPException(
+            status_code=400,
+            detail="EXECUTOR_PRIVATE_KEY is not configured.",
+        )
+
+        with self.assertRaises(HTTPException):
+            await execute_proposal(proposal_id)
+
+        with create_session() as session:
+            proposal = session.query(TradeProposalRecord).filter_by(proposal_id=proposal_id).one()
+            execution = session.query(TradeExecutionRecord).filter_by(proposal_id=proposal_id).one()
+        self.assertEqual(proposal.status_code, "PROPOSAL_FAILED")
+        self.assertEqual(execution.status_code, "EXECUTION_FAILED")
+        self.assertEqual(execution.failure_reason, "EXECUTOR_PRIVATE_KEY is not configured.")
 
 
 if __name__ == "__main__":

@@ -6,9 +6,11 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from services.agent.app.core.cache import decision_cache, get_cache, set_cache
 from services.agent.app.api.investment_scope import InvestmentScopeInput, build_scoped_decision_response
 from services.agent.app.api.vault import get_vault_balance_snapshot
-from services.agent.app.core.settings import RuntimeMode, get_settings
+from services.agent.app.core.settings import RuntimeMode, Settings, get_settings
+from services.agent.app.core.status_codes import ExecutionTrigger, ProposalStatusCode
 from services.agent.app.schemas.proposals import (
     InvestmentPlanRequest,
     InvestmentPlanResponse,
@@ -20,8 +22,14 @@ from services.agent.app.schemas.proposals import (
 )
 from services.agent.app.schemas.recommendations import RecommendationResponse
 from services.agent.modules.oracle.freshness import utc_now
+from services.agent.modules.execution.execution_service import (
+    AutoExecutionResult,
+    execute_approved_proposal_if_allowed,
+    is_auto_execute_on_approval_enabled,
+)
 from services.agent.modules.execution.vault_executor import submit_executor_vault_trade
 from services.agent.modules.proposals.investment_planner import build_investment_plan, get_cached_plan_for_proposal
+from services.agent.repositories.db.decision_repository import DecisionRecommendationRepository
 from services.agent.repositories.db.investment_plan_repository import InvestmentPlanRepository
 from services.agent.repositories.db.models import InvestmentPlanRecord, TradeExecutionRecord, TradeProposalRecord
 from services.agent.repositories.db.session import create_session, init_db
@@ -31,6 +39,7 @@ from services.agent.strategies.decision_templates.parser import generate_recomme
 
 logger = logging.getLogger("services.agent.decisions.api")
 router = APIRouter(tags=["decisions"])
+_DECISION_CACHE_PREFIX = "decisions:latest"
 
 
 def _ai_debug_value(payload: Any, field: str) -> Any:
@@ -69,6 +78,41 @@ def _risk_summary_for_proposal(plan_json: dict[str, Any] | None) -> dict[str, An
     return {}
 
 
+def _token_decimals_by_address(settings: Settings) -> dict[str, int]:
+    decimals_by_address: dict[str, int] = {}
+    for asset in settings.asset_registry.values():
+        address = str(asset.get("address") or "").strip().lower()
+        if not address:
+            continue
+        try:
+            decimals_by_address[address] = int(asset.get("decimals") or 18)
+        except Exception:
+            decimals_by_address[address] = 18
+    return decimals_by_address
+
+
+def _proposal_amount_for_list_item(
+    *,
+    record: TradeProposalRecord,
+    linked_summary: dict[str, Any],
+    token_decimals_by_address: dict[str, int],
+) -> float | None:
+    linked_amount = linked_summary.get("amount")
+    if isinstance(linked_amount, (int, float)) and linked_amount > 0:
+        return float(linked_amount)
+
+    raw_amount = _safe_decimal(record.max_amount_in)
+    if raw_amount <= 0:
+        return None
+
+    decimals = token_decimals_by_address.get(str(record.token_in or "").lower(), 18)
+    try:
+        human_amount = raw_amount / (Decimal(10) ** decimals)
+    except Exception:
+        return None
+    return float(human_amount) if human_amount > 0 else None
+
+
 def _select_ai_winner_proposal_id(linked_proposals: list[Any]) -> str | None:
     if not linked_proposals:
         return None
@@ -89,6 +133,30 @@ def _ai_auto_execution_enabled() -> bool:
         settings.ai_decision_maker_enabled
         and settings.runtime_mode == RuntimeMode.LIVE
     )
+
+
+def _save_recommendation_snapshot(
+    response: RecommendationResponse,
+    *,
+    wallet_address: str | None,
+    scope_type: str,
+    deposit_asset_symbol: str | None = None,
+    deposit_amount: float | None = None,
+    risk_profile: str | None = None,
+    allocation_mode: str | None = None,
+) -> None:
+    try:
+        DecisionRecommendationRepository().save_recommendation(
+            response,
+            wallet_address=wallet_address,
+            scope_type=scope_type,
+            deposit_asset_symbol=deposit_asset_symbol,
+            deposit_amount=deposit_amount,
+            risk_profile=risk_profile,
+            allocation_mode=allocation_mode,
+        )
+    except Exception as exc:
+        logger.warning("Failed to persist decision recommendation snapshot: %s", exc)
 
 
 def _save_proposal_record(proposal: TradeProposal, calldata: str) -> None:
@@ -143,35 +211,58 @@ def _save_proposal_record(proposal: TradeProposal, calldata: str) -> None:
         logger.warning("Failed to persist proposal snapshot: %s", exc)
 
 
-def _proposal_execute_response(
-    *,
-    status_code: str,
-    status_reason: str,
+def _execute_proposal_submission(
     proposal_id: str,
-    tx_hash: str | None,
-    record: TradeProposalRecord,
+    *,
+    trigger: str = ExecutionTrigger.MANUAL_EXECUTE,
+    settings: Settings | None = None,
 ) -> ProposalExecuteResponse:
-    settings = get_settings()
+    settings = settings or get_settings()
+    result: AutoExecutionResult = execute_approved_proposal_if_allowed(
+        proposal_id=proposal_id,
+        trigger=trigger,
+        settings=settings,
+    )
+    if result.status == "SKIPPED" and result.reason and "not found" in result.reason.lower():
+        raise HTTPException(status_code=404, detail=result.reason)
+    if result.status in ("BLOCKED", "SKIPPED"):
+        raise HTTPException(
+            status_code=409,
+            detail=result.reason or f"Execution blocked: {result.status}",
+        )
+    if result.status == "ALREADY_EXECUTED":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Proposal {proposal_id} has already been executed (tx={result.tx_hash}).",
+        )
+    init_db()
+    with create_session() as session:
+        from sqlalchemy import select
+
+        record = session.scalar(
+            select(TradeProposalRecord).where(TradeProposalRecord.proposal_id == proposal_id)
+        )
+    chain_id = settings.effective_chain_id
     return ProposalExecuteResponse(
         status="ok",
-        status_code=status_code,
-        status_label=status_code,
-        status_reason=status_reason,
+        status_code=result.status,
+        status_label=result.status,
+        status_reason=result.reason or "",
         proposal_id=proposal_id,
-        tx_hash=tx_hash,
-        router=record.router,
-        selector=record.selector,
-        calldata=record.calldata,
-        calldata_hash=record.calldata_hash,
-        token_in=record.token_in,
-        token_out=record.token_out,
-        recipient=record.recipient,
-        max_amount_in=record.max_amount_in,
-        min_amount_out=record.min_amount_out,
-        native_value=record.native_value,
-        deadline=record.deadline,
-        nonce=record.nonce,
-        chain_id=settings.effective_chain_id,
+        tx_hash=result.tx_hash,
+        chain_id=chain_id,
+        router=record.router if record else None,
+        selector=record.selector if record else None,
+        calldata=record.calldata if record else None,
+        calldata_hash=record.calldata_hash if record else None,
+        token_in=record.token_in if record else None,
+        token_out=record.token_out if record else None,
+        recipient=record.recipient if record else None,
+        max_amount_in=record.max_amount_in if record else None,
+        min_amount_out=record.min_amount_out if record else None,
+        native_value=record.native_value if record else None,
+        deadline=int(record.deadline) if record else None,
+        nonce=int(record.nonce) if record else None,
     )
 
 
@@ -234,6 +325,7 @@ async def get_latest_decisions(
     deposit_amount: float | None = None,
     risk_profile: str | None = None,
     allocation_mode: str | None = None,
+    force_refresh: bool = False,
 ) -> RecommendationResponse:
     from services.agent.modules.decisions import build_decision_context
 
@@ -264,7 +356,28 @@ async def get_latest_decisions(
             _ai_debug_value(response.ai_debug, "mode"),
             _ai_debug_value(response.ai_debug, "used_fallback"),
         )
+        _save_recommendation_snapshot(
+            response,
+            wallet_address=wallet_address,
+            scope_type="deposit",
+            deposit_asset_symbol=deposit_asset_symbol,
+            deposit_amount=deposit_amount,
+            risk_profile=risk_profile,
+            allocation_mode=allocation_mode,
+        )
         return response
+    cache_key = f"{_DECISION_CACHE_PREFIX}:{(wallet_address or '').lower()}"
+    if not force_refresh:
+        cached = get_cache(decision_cache, cache_key)
+        if cached is not None:
+            return cached
+        latest = DecisionRecommendationRepository().latest_recommendation(
+            wallet_address=wallet_address,
+            scope_type="wallet",
+        )
+        if latest is not None:
+            set_cache(decision_cache, cache_key, latest)
+            return latest
     context = await build_decision_context(wallet_address=wallet_address)
     try:
         decision, actions = compute_rebalance(
@@ -286,6 +399,8 @@ async def get_latest_decisions(
         _ai_debug_value(response.ai_debug, "mode"),
         _ai_debug_value(response.ai_debug, "used_fallback"),
     )
+    _save_recommendation_snapshot(response, wallet_address=wallet_address, scope_type="wallet")
+    set_cache(decision_cache, cache_key, response)
     return response
 
 
@@ -387,6 +502,55 @@ async def create_investment_plan(request: InvestmentPlanRequest) -> InvestmentPl
         logger.info("AI access selected the only available proposal %s.", ai_winner_proposal_id)
     for proposal, calldata in proposal_pairs:
         _save_proposal_record(proposal, calldata)
+    if ai_auto_execution_enabled and ai_winner_proposal_id:
+        execution_result = execute_approved_proposal_if_allowed(
+            proposal_id=ai_winner_proposal_id,
+            trigger=ExecutionTrigger.AI_CREATE,
+            settings=settings,
+        )
+        linked_by_id = {linked.proposal_id: linked for linked in plan_response.linked_proposals}
+        proposal_by_id = {proposal.proposal_id: proposal for proposal, _ in proposal_pairs}
+        if execution_result.status == "ALREADY_EXECUTED":
+            executed_status = "PROPOSAL_EXECUTED"
+        elif execution_result.status == "EXECUTION_CONFIRMED":
+            executed_status = "PROPOSAL_EXECUTED"
+        elif execution_result.status == "EXECUTION_SUBMITTED":
+            executed_status = "PROPOSAL_EXECUTING"
+        elif execution_result.status == "FAILED":
+            executed_status = "PROPOSAL_EXECUTION_FAILED_RETRYABLE" if execution_result.retryable else "PROPOSAL_FAILED"
+        elif execution_result.status == "BLOCKED":
+            executed_status = "PROPOSAL_APPROVED"
+        else:
+            executed_status = "PROPOSAL_FAILED"
+        if ai_winner_proposal_id in linked_by_id:
+            linked_by_id[ai_winner_proposal_id].status_code = executed_status
+        if ai_winner_proposal_id in proposal_by_id:
+            proposal_by_id[ai_winner_proposal_id].status_code = executed_status
+        plan_response.metadata["ai_auto_execution_active"] = True
+        plan_response.metadata["ai_execution_status"] = execution_result.status
+        plan_response.metadata["ai_execution_tx_hash"] = execution_result.tx_hash
+        plan_response.metadata["ai_winner_proposal_id"] = ai_winner_proposal_id
+        plan_response.status_reason = execution_result.reason or plan_response.status_reason
+        if execution_result.status == "FAILED":
+            plan_response.status = "degraded"
+            plan_response.status_code = "EXECUTION_FAILED"
+            plan_response.status_label = "EXECUTION_FAILED"
+            plan_response.status_reason = f"AI auto-approved the trade proposal, but execution failed: {execution_result.error}"
+            plan_response.metadata["ai_execution_error"] = execution_result.error
+        elif execution_result.status == "BLOCKED":
+            plan_response.status = "degraded"
+            plan_response.status_code = "EXECUTION_BLOCKED"
+            plan_response.status_label = "EXECUTION_BLOCKED"
+            plan_response.status_reason = execution_result.reason or "Execution blocked by guard checks"
+        logger.info(
+            "AI auto-execution result for proposal %s: status=%s tx_hash=%s",
+            ai_winner_proposal_id,
+            execution_result.status,
+            execution_result.tx_hash,
+        )
+    elif ai_auto_execution_enabled:
+        plan_response.metadata["ai_auto_execution_active"] = True
+
     if plan_response.linked_proposals:
         try:
             InvestmentPlanRepository().save_plan_for_proposals(plan_response)
@@ -419,15 +583,14 @@ _APPROVE_TERMINAL_STATES = frozenset({
 async def approve_proposal(proposal_id: str) -> ProposalMutationResponse:
     """Approve a pending proposal.
 
-    Bug 1 fix: validates the current status_code before overwriting it so that
-    already-terminal proposals (APPROVED, EXECUTED, REJECTED) cannot be
-    transitioned again.
+    If AUTO_EXECUTE_ON_HUMAN_APPROVAL is enabled and all safety checks pass,
+    the approved proposal will be automatically executed.
 
-    Bug 2 fix: performs the existence check and the status update inside a
-    single DB session, eliminating the TOCTOU window that previously existed
-    between two separate sessions.
+    Approval is independent of execution — approval succeeds even if execution
+    fails, allowing manual retry via /execute.
     """
     init_db()
+    settings = get_settings()
     # Cached plan blocker check (no DB session required).
     cached_plan = InvestmentPlanRepository().get_plan_for_proposal(proposal_id)
     if cached_plan is not None and (not cached_plan.approval_enabled or cached_plan.approval_blockers):
@@ -443,13 +606,72 @@ async def approve_proposal(proposal_id: str) -> ProposalMutationResponse:
         forbidden_statuses=_APPROVE_TERMINAL_STATES,
     )
     logger.info("Human approval recorded for proposal %s", proposal_id)
+    # Record approved_by
+    init_db()
+    with create_session() as session:
+        from sqlalchemy import select
+
+        record = session.scalar(
+            select(TradeProposalRecord).where(TradeProposalRecord.proposal_id == proposal_id)
+        )
+        if record is not None:
+            record.approved_by = "operator"
+            record.approved_at = utc_now()
+            session.commit()
+
+    auto_execution_result: AutoExecutionResult | None = None
+    if is_auto_execute_on_approval_enabled(settings):
+        logger.info(
+            "Auto-execution triggered for proposal %s after human approval.",
+            proposal_id,
+        )
+        auto_execution_result = execute_approved_proposal_if_allowed(
+            proposal_id=proposal_id,
+            trigger=ExecutionTrigger.HUMAN_APPROVAL,
+            settings=settings,
+        )
+        logger.info(
+            "Auto-execution result for proposal %s: attempted=%s status=%s",
+            proposal_id,
+            auto_execution_result.attempted,
+            auto_execution_result.status,
+        )
+    # Build response — approval always succeeds, execution result is advisory.
+    message = f"Proposal {proposal_id} successfully approved by operator."
+    resp_status_code = "PROPOSAL_APPROVED"
+    resp_status_reason = "Proposal approved by operator."
+    auto_exec_info = None
+    if auto_execution_result is not None:
+        from services.agent.app.schemas.proposals import AutoExecutionInfo as AEI
+        auto_exec_info = AEI(
+            attempted=auto_execution_result.attempted,
+            status=auto_execution_result.status,
+            tx_hash=auto_execution_result.tx_hash,
+            error=auto_execution_result.error,
+            retryable=auto_execution_result.retryable,
+        )
+        if auto_execution_result.attempted:
+            resp_status_reason = f"Proposal approved. Auto-execution: {auto_execution_result.status}."
+            if auto_execution_result.status == "EXECUTION_CONFIRMED":
+                message = f"Proposal {proposal_id} approved and executed (tx={auto_execution_result.tx_hash})."
+                resp_status_code = "PROPOSAL_EXECUTED"
+            elif auto_execution_result.status == "FAILED":
+                message = (
+                    f"Proposal {proposal_id} approved but execution failed: "
+                    f"{auto_execution_result.error}. "
+                    f"You can retry via POST /proposals/{proposal_id}/execute."
+                )
+                resp_status_reason = f"Proposal approved. Auto-execution failed: {auto_execution_result.error}."
+        elif auto_execution_result.status == "BLOCKED":
+            resp_status_reason = f"Proposal approved but execution blocked: {auto_execution_result.reason}."
     return ProposalMutationResponse(
         status="ok",
-        status_code="PROPOSAL_APPROVED",
-        status_label="PROPOSAL_APPROVED",
-        status_reason="Proposal approved by operator.",
+        status_code=resp_status_code,
+        status_label=resp_status_code,
+        status_reason=resp_status_reason,
         proposal_id=proposal_id,
-        message=f"Proposal {proposal_id} successfully approved by operator.",
+        message=message,
+        auto_execution=auto_exec_info,
     )
 
 
@@ -518,6 +740,7 @@ async def list_proposals(status: str | None = None, wallet_address: str | None =
             query = query.where(func.lower(TradeProposalRecord.wallet_or_vault) == wallet_address.lower())
         rows = session.execute(query).all()
 
+    token_decimals_by_address = _token_decimals_by_address(get_settings())
     items: list[ProposalListItem] = []
     for record, plan_json in rows:
         linked_summary = _linked_summary_for_proposal(plan_json, record.proposal_id)
@@ -542,6 +765,11 @@ async def list_proposals(status: str | None = None, wallet_address: str | None =
                 nonce=record.nonce,
                 status_code=record.status_code,
                 risk_snapshot_id=record.risk_snapshot_id,
+                proposal_amount=_proposal_amount_for_list_item(
+                    record=record,
+                    linked_summary=linked_summary,
+                    token_decimals_by_address=token_decimals_by_address,
+                ),
                 deposit_asset_symbol=(plan_json or {}).get("deposit_asset_symbol"),
                 deposit_amount=(plan_json or {}).get("deposit_amount"),
                 risk_profile=(plan_json or {}).get("risk_profile"),
@@ -575,135 +803,6 @@ async def execute_proposal(proposal_id: str) -> ProposalExecuteResponse:
         "Submitting proposal_id=%s through the ExecutorVault execution path.",
         proposal_id,
     )
-    settings = get_settings()
-    if settings.runtime_mode != RuntimeMode.LIVE:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Execution is only available when runtime_mode=live. "
-                f"Current runtime_mode is {settings.runtime_mode.value}."
-            ),
-        )
-    init_db()
-    with create_session() as session:
-        from sqlalchemy import select as _select
-
-        proposal_record = session.scalar(
-            _select(TradeProposalRecord).where(TradeProposalRecord.proposal_id == proposal_id)
-        )
-        if proposal_record is None:
-            raise HTTPException(status_code=404, detail=f"Proposal not found: {proposal_id}")
-        if proposal_record.status_code == "PROPOSAL_REJECTED":
-            raise HTTPException(
-                status_code=409,
-                detail=f"Proposal {proposal_id} cannot be executed because it was rejected.",
-            )
-        if proposal_record.status_code not in {"PROPOSAL_APPROVED", "PROPOSAL_EXECUTING", "PROPOSAL_EXECUTED"}:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Proposal {proposal_id} must be approved before execution. "
-                    f"Current status is {proposal_record.status_code}."
-                ),
-            )
-
-        existing_execution = session.scalar(
-            _select(TradeExecutionRecord).where(TradeExecutionRecord.proposal_id == proposal_id)
-        )
-        if existing_execution is not None:
-            return _proposal_execute_response(
-                status_code=existing_execution.status_code,
-                status_reason="Execution already recorded for this proposal.",
-                proposal_id=proposal_id,
-                tx_hash=existing_execution.tx_hash,
-                record=proposal_record,
-            )
-        if proposal_record.status_code == "PROPOSAL_EXECUTED":
-            raise HTTPException(
-                status_code=409,
-                detail=f"Proposal {proposal_id} has already been executed and has no recorded execution row.",
-            )
-
-    try:
-        submission = submit_executor_vault_trade(
-            settings=settings,
-            foundry_out_dir=settings.foundry_out_dir,
-            proposal=proposal_record,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Execution submission failed for proposal %s", proposal_id)
-        init_db()
-        with create_session() as session:
-            from sqlalchemy import select as _select
-
-            proposal_record = session.scalar(
-                _select(TradeProposalRecord).where(TradeProposalRecord.proposal_id == proposal_id)
-            )
-            if proposal_record is not None:
-                proposal_record.status_code = "PROPOSAL_FAILED"
-                proposal_record.updated_at = utc_now()
-                session.add(
-                    TradeExecutionRecord(
-                        proposal_id=proposal_id,
-                        tx_hash=f"failed:{proposal_id}",
-                        quoted_amount_out=None,
-                        actual_amount_out=None,
-                        gas_used=None,
-                        realized_slippage_bps=None,
-                        status_code="EXECUTION_FAILED",
-                        failure_reason=str(exc),
-                    )
-                )
-                session.commit()
-        raise HTTPException(status_code=502, detail=f"ExecutorVault submission failed: {exc}") from exc
-
-    init_db()
-    with create_session() as session:
-        from sqlalchemy import select as _select
-
-        proposal_record = session.scalar(
-            _select(TradeProposalRecord).where(TradeProposalRecord.proposal_id == proposal_id)
-        )
-        if proposal_record is None:
-            raise HTTPException(status_code=404, detail=f"Proposal not found: {proposal_id}")
-
-        if submission.receipt_status == 1:
-            execution_status = "EXECUTION_CONFIRMED"
-            execution_reason = "Execution transaction was mined and confirmed on-chain."
-            proposal_status = "PROPOSAL_EXECUTED"
-        elif submission.receipt_status == 0:
-            execution_status = "EXECUTION_REVERTED"
-            execution_reason = "Execution transaction was mined but reverted on-chain."
-            proposal_status = "PROPOSAL_FAILED"
-        else:
-            execution_status = "EXECUTION_SUBMITTED"
-            execution_reason = "Execution transaction submitted to the ExecutorVault on-chain path."
-            proposal_status = "PROPOSAL_EXECUTING"
-
-        proposal_record.status_code = proposal_status
-        proposal_record.updated_at = utc_now()
-        session.add(
-            TradeExecutionRecord(
-                proposal_id=proposal_id,
-                tx_hash=submission.tx_hash,
-                quoted_amount_out=None,
-                actual_amount_out=None,
-                gas_used=None,
-                realized_slippage_bps=None,
-                status_code=execution_status,
-                failure_reason=execution_reason if submission.receipt_status == 0 else None,
-            )
-        )
-        session.commit()
-
-    return _proposal_execute_response(
-        status_code=execution_status,
-        status_reason=execution_reason,
-        proposal_id=proposal_id,
-        tx_hash=submission.tx_hash,
-        record=proposal_record,
-    )
+    return _execute_proposal_submission(proposal_id)
 
 

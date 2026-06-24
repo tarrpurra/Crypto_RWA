@@ -11,6 +11,8 @@ from services.agent.app.api import (
     dashboard_router,
     decisions_router,
     health_router,
+    jobs_router,
+    logs_router,
     market_router,
     reports_router,
     strategy_router,
@@ -19,7 +21,9 @@ from services.agent.app.api import (
     settings_router,
     vault_router,
 )
+from services.agent.app.core import runtime_config
 from services.agent.app.core.logging import configure_logging
+from services.agent.app.core.scheduler import start_scheduler
 from services.agent.app.core.settings import get_settings
 
 
@@ -41,13 +45,15 @@ app = FastAPI(title=settings.app_name, version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_allowed_origins.split(","),
+    allow_origins=settings.parsed_cors_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(health_router)
+app.include_router(jobs_router)
+app.include_router(logs_router)
 app.include_router(chain_router)
 app.include_router(contracts_router)
 app.include_router(dashboard_router)
@@ -60,3 +66,9 @@ app.include_router(allocation_router)
 app.include_router(decisions_router)
 app.include_router(settings_router)
 app.include_router(vault_router)
+
+
+@app.on_event("startup")
+async def startup_event() -> None:
+    runtime_config.set_ai_decision_maker_enabled(settings.ai_decision_maker_enabled)
+    start_scheduler()

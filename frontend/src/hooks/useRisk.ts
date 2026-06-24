@@ -23,10 +23,12 @@ export function useCurrentRisk(options?: { allowEnvFallback?: boolean }) {
             }
           : null,
         allowEnvFallback,
-      ),
+    ),
     enabled: Boolean(effectiveWalletAddress) || allowEnvFallback,
-    staleTime: 25_000,
-    refetchInterval: 30_000,
+    staleTime: 90_000,
+    refetchInterval: 90_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
   });
 }
 

@@ -17,7 +17,7 @@ DEFAULT_FOUNDRY_OUT_DIR = DEFAULT_CONTRACTS_ROOT / "out"
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=str(SERVICE_ROOT / ".env"),
+        env_file=(str(REPO_ROOT / ".env"), str(SERVICE_ROOT / ".env")),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -161,6 +161,7 @@ class Settings(BaseSettings):
     simulation_fallback_enabled: bool = True
     ai_reasoning_enabled: bool = True
     ai_decision_maker_enabled: bool = False
+    auto_execute_on_human_approval: bool = False
     ai_reasoning_provider: str = "gemini"
     ai_reasoning_model: str = "gemini-2.0-flash"
     gemini_api_key: str | None = None
@@ -173,6 +174,14 @@ class Settings(BaseSettings):
     rebalance_drift_tolerance: float = 0.03
     rebalance_cooldown_seconds: int = 1500
     rebalance_min_benefit_usd: float = 30.0
+
+    @property
+    def parsed_cors_allowed_origins(self) -> list[str]:
+        raw_origins = [origin.strip() for origin in self.cors_allowed_origins.split(",")]
+        origins = [origin for origin in raw_origins if origin]
+        if "*" in origins:
+            return ["*"]
+        return origins
 
     @property
     def effective_http_rpc_url(self) -> str:

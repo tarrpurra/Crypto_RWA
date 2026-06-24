@@ -37,6 +37,8 @@ interface PortfolioSummaryProps {
   freshness?: DashboardFreshnessPayload | null;
   onDeposit?: () => void;
   onWithdraw?: () => void;
+  depositDisabled?: boolean;
+  withdrawDisabled?: boolean;
   children?: ReactNode;
 }
 
@@ -70,6 +72,8 @@ export function PortfolioSummary({
   freshness: _freshness,
   onDeposit,
   onWithdraw,
+  depositDisabled = false,
+  withdrawDisabled = false,
   children,
 }: PortfolioSummaryProps) {
   const currentValue = portfolio?.total_value_usd ? Number(portfolio.total_value_usd) : 0;
@@ -158,6 +162,7 @@ export function PortfolioSummary({
             onClick={onDeposit}
             variant="outline"
             size="sm"
+            disabled={depositDisabled}
             className="border-primary/30 text-primary hover:bg-primary/10"
           >
             Deposit
@@ -167,6 +172,7 @@ export function PortfolioSummary({
             onClick={onWithdraw}
             variant="outline"
             size="sm"
+            disabled={withdrawDisabled}
             className="border-primary/30 text-primary hover:bg-primary/10"
           >
             Withdraw

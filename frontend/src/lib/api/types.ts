@@ -485,6 +485,18 @@ export interface SettingsResponse {
   sepolia_wmnt_address: string | null;
 }
 
+export interface BackendLogEntry {
+  timestamp: string;
+  level: string;
+  logger: string;
+  message: string;
+}
+
+export interface BackendLogsResponse {
+  status: string;
+  entries: BackendLogEntry[];
+}
+
 export interface TokenReadiness {
   address: string | null;
   code_exists: boolean;
@@ -571,6 +583,7 @@ export interface TradeProposal {
   nonce: number
   status_code: string
   risk_snapshot_id: string | null
+  proposal_amount?: number | null
   deposit_asset_symbol?: string | null
   deposit_amount?: number | null
   risk_profile?: string | null

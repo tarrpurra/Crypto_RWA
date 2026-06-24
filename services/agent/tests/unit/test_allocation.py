@@ -208,6 +208,30 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual(profile_name, "Balanced")
         self.assertAlmostEqual(sum(weights.values()), 1.0)
 
+    @patch("services.agent.strategies.allocation.rebalance.utc_now")
+    def test_allocation_decision_ids_do_not_collide_within_same_second(self, mock_utc_now) -> None:
+        mock_utc_now.return_value = self.now
+
+        balances = [
+            AssetBalance(asset_symbol="USDY", balance=350000.0, value_usd=350000.0, weight=0.35),
+            AssetBalance(asset_symbol="mETH", balance=185.71, value_usd=650000.0, weight=0.65),
+        ]
+        portfolio = PortfolioSnapshot(
+            snapshot_id="port_test_id_collision",
+            wallet_or_vault="0xvault",
+            total_value_usd=1000000.0,
+            balances=balances,
+            weights={"USDY": 0.35, "mETH": 0.65},
+            status_code="DATA_FRESH",
+            status_reason="",
+            created_at=self.now,
+        )
+
+        first_decision, _ = compute_rebalance(portfolio, self.risk_normal, "Balanced")
+        second_decision, _ = compute_rebalance(portfolio, self.risk_normal, "Balanced")
+
+        self.assertNotEqual(first_decision.decision_id, second_decision.decision_id)
+
 
 if __name__ == "__main__":
     unittest.main()

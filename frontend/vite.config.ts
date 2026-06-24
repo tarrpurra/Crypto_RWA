@@ -6,6 +6,9 @@ import { componentTagger } from "lovable-tagger";
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, "");
+  if (mode !== "development" && !env.VITE_API_BASE_URL?.trim()) {
+    throw new Error("VITE_API_BASE_URL is required for non-development builds.");
+  }
 
   return {
     server: {

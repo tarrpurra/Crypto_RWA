@@ -1,5 +1,6 @@
 import type {
   AllocationDecisionResponse,
+  BackendLogEntry,
   RiskAssessmentResponse,
   RecommendationResponse,
 } from "@/lib/api/types";
@@ -85,6 +86,8 @@ export interface AIReasoningPanelProps {
   swapRecommendations: SwapRecommendation[];
   availableRouteCount?: number;
   aiReasoningData?: AIReasoningData;
+  backendLogs?: BackendLogEntry[];
+  backendLogsLoading?: boolean;
 }
 
 export interface SwapRecommendation {

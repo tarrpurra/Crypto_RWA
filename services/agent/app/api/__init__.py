@@ -4,6 +4,8 @@ from services.agent.app.api.contracts import router as contracts_router
 from services.agent.app.api.dashboard import router as dashboard_router
 from services.agent.app.api.decisions import router as decisions_router
 from services.agent.app.api.health import router as health_router
+from services.agent.app.api.jobs import router as jobs_router
+from services.agent.app.api.logs import router as logs_router
 from services.agent.app.api.market import router as market_router
 from services.agent.app.api.settings import router as settings_router
 from services.agent.app.api.reports import router as reports_router
@@ -19,6 +21,8 @@ __all__ = [
     "dashboard_router",
     "decisions_router",
     "health_router",
+    "jobs_router",
+    "logs_router",
     "market_router",
     "reports_router",
     "strategy_router",

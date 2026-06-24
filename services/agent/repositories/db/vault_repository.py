@@ -105,3 +105,23 @@ class VaultFlowRepository:
             flow_count=len(records),
             last_flow_at=last_flow_at,
         )
+
+    def known_user_addresses(self, limit: int = 100) -> list[str]:
+        statement = (
+            select(VaultFlowRecord.user_address)
+            .order_by(VaultFlowRecord.occurred_at.desc())
+            .limit(limit)
+        )
+        with create_session() as session:
+            addresses = session.scalars(statement).all()
+        seen: set[str] = set()
+        result: list[str] = []
+        for address in addresses:
+            if not address:
+                continue
+            lower = address.lower()
+            if lower in seen:
+                continue
+            seen.add(lower)
+            result.append(address)
+        return result

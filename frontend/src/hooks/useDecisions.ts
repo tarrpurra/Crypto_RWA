@@ -28,7 +28,9 @@ export function useDecisions(options: UseDecisionsOptions = {}) {
           : null,
     ),
     enabled: Boolean(effectiveWalletAddress) && (!requireScope || Boolean(scope)),
-    staleTime: 25_000,
-    refetchInterval: 30_000,
+    staleTime: 5 * 60_000,
+    refetchInterval: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
   });
 }

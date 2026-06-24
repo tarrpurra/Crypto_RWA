@@ -48,12 +48,11 @@ async def get_runtime_settings() -> SettingsResponse:
 
 @router.put("/settings", response_model=SettingsResponse)
 async def update_runtime_settings(body: UpdateSettingsRequest) -> SettingsResponse:
-    from services.agent.app.core import runtime_config
     from services.agent.app.core.settings import get_settings
 
     settings = get_settings()
     if body.ai_decision_maker_enabled is not None:
-        runtime_config.AI_DECISION_MAKER_ENABLED = body.ai_decision_maker_enabled
+        runtime_config.set_ai_decision_maker_enabled(body.ai_decision_maker_enabled)
     if body.runtime_mode is not None:
         settings.runtime_mode = body.runtime_mode
     return SettingsResponse(

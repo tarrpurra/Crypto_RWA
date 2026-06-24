@@ -47,6 +47,17 @@ export function useSettings() {
   });
 }
 
+export function useRecentBackendLogs(limit = 120) {
+  return useQuery({
+    queryKey: ["system", "logs", limit],
+    queryFn: () => systemApi.recentBackendLogs(limit),
+    staleTime: 5_000,
+    refetchInterval: 10_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
 export function useUpdateSettings() {
   const queryClient = useQueryClient();
   return useMutation({

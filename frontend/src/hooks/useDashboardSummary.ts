@@ -9,9 +9,10 @@ export function useDashboardSummary() {
     queryKey: ["dashboard", "summary", effectiveWalletAddress],
     queryFn: () => dashboardApi.summary(effectiveWalletAddress),
     enabled: Boolean(effectiveWalletAddress),
-    staleTime: 30_000,
+    staleTime: 60_000,
     gcTime: 30 * 60_000,
     refetchOnWindowFocus: false,
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
+    retry: 1,
   });
 }

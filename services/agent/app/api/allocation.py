@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from fastapi import APIRouter, HTTPException, Response
+from services.agent.app.core.cache import allocation_cache, get_cache, set_cache
 from services.agent.app.api.investment_scope import InvestmentScopeInput, build_scoped_allocation_response
 from services.agent.app.schemas.allocation import AllocationDecisionResponse, AllocationDecision, UpdateProfileRequest
 # circular-safe: lazy import inside endpoint function
@@ -9,34 +10,29 @@ from services.agent.app.schemas.allocation import AllocationDecisionResponse, Al
 from services.agent.strategies.allocation.rebalance import compute_rebalance
 from services.agent.strategies.allocation import profiles
 from services.agent.strategies.allocation.profiles import normalize_profile_name
-from services.agent.repositories.db.models import AllocationDecisionRecord
-from services.agent.repositories.db.session import create_session, init_db
+from services.agent.repositories.db.allocation_repository import AllocationDecisionRepository
+from services.agent.repositories.db.session import init_db
 from services.agent.modules.oracle.freshness import utc_now
 from services.agent.app.core.settings import TargetChain, get_settings
 
 logger = logging.getLogger("services.agent.allocation.api")
 router = APIRouter(prefix="/allocation", tags=["allocation"])
+_ALLOCATION_CACHE_PREFIX = "allocation:recommendation"
 
 
 def _save_allocation_decision(decision: AllocationDecision) -> None:
     try:
-        init_db()
-        record = AllocationDecisionRecord(
-            decision_id=decision.decision_id,
-            wallet_or_vault=decision.wallet_or_vault,
-            profile_name=decision.profile_name,
-            current_weights_json=decision.current_weights,
-            target_weights_json=decision.target_weights,
-            recommended_action=decision.recommended_action,
-            confidence=decision.confidence,
-            reasoning=decision.reasoning,
-            risk_snapshot_id=decision.risk_snapshot_id,
-            status_code=decision.status_code,
-            created_at=decision.created_at,
+        AllocationDecisionRepository().save_decision(
+            AllocationDecisionResponse(
+                status="degraded" if decision.recommended_action == "PAUSE" else "ok",
+                status_code=decision.status_code,
+                status_label=decision.status_code,
+                status_reason=decision.reasoning,
+                generated_at=decision.created_at,
+                decision=decision,
+                rebalance_actions=[],
+            )
         )
-        with create_session() as session:
-            session.merge(record)
-            session.commit()
     except Exception as exc:
         logger.warning("Failed to persist allocation decision: %s", exc)
 
@@ -75,6 +71,14 @@ async def get_allocation_recommendation(
             len(response.rebalance_actions),
         )
         return response
+    cache_key = f"{_ALLOCATION_CACHE_PREFIX}:{(wallet_address or '').lower()}"
+    cached = get_cache(allocation_cache, cache_key)
+    if cached is not None:
+        return cached
+    latest = AllocationDecisionRepository().latest_decision(wallet_address)
+    if latest is not None:
+        set_cache(allocation_cache, cache_key, latest)
+        return latest
     try:
         from services.agent.modules.decisions import build_decision_context
         context = await build_decision_context(wallet_address=wallet_address)
@@ -112,6 +116,7 @@ async def get_allocation_recommendation(
         response.decision.recommended_action,
         len(response.rebalance_actions),
     )
+    set_cache(allocation_cache, cache_key, response)
     return response
 
 
