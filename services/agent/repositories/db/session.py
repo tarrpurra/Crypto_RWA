@@ -100,6 +100,48 @@ def _sync_schema(engine) -> None:
             "pnl_percent": "VARCHAR(78)",
         },
     )
+    _ensure_column_type(
+        engine,
+        inspector,
+        "trade_executions",
+        "proposal_id",
+        "VARCHAR(66)",
+    )
+    _ensure_column_type(
+        engine,
+        inspector,
+        "trade_executions",
+        "tx_hash",
+        "VARCHAR(128)",
+    )
+    _ensure_column_type(
+        engine,
+        inspector,
+        "trade_executions",
+        "failure_reason",
+        "TEXT",
+    )
+    _ensure_columns(
+        engine,
+        inspector,
+        "trade_proposals",
+        {
+            "approved_by": "VARCHAR(128)",
+            "approved_at": "TIMESTAMP WITH TIME ZONE",
+            "execution_attempt_count": "INTEGER DEFAULT 0",
+            "last_execution_trigger": "VARCHAR(32)",
+            "execution_error": "TEXT",
+            "retryable": "BOOLEAN DEFAULT true",
+        },
+    )
+    _ensure_columns(
+        engine,
+        inspector,
+        "trade_executions",
+        {
+            "trigger": "VARCHAR(32)",
+        },
+    )
 
 
 def _ensure_columns(engine, inspector, table_name: str, expected_columns: dict[str, str]) -> None:
@@ -115,3 +157,26 @@ def _ensure_columns(engine, inspector, table_name: str, expected_columns: dict[s
     with engine.begin() as connection:
         for column_name, definition in missing.items():
             connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}"))
+
+
+def _ensure_column_type(engine, inspector, table_name: str, column_name: str, target_type_sql: str) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    try:
+        columns = inspector.get_columns(table_name)
+    except Exception:
+        return
+
+    current = next((column for column in columns if column["name"] == column_name), None)
+    if current is None:
+        return
+
+    current_type = current.get("type")
+    current_type_name = getattr(current_type, "__class__", type(current_type)).__name__.lower()
+    if "text" in current_type_name:
+        return
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(f"ALTER TABLE {table_name} ALTER COLUMN {column_name} TYPE {target_type_sql}"),
+        )

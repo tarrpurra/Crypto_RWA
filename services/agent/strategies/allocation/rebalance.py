@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from uuid import uuid4
 from services.agent.app.core.status_codes import RiskStatusCode
 from services.agent.app.schemas.portfolio import PortfolioSnapshot
 from services.agent.app.schemas.risk import RiskSnapshot
@@ -11,6 +12,10 @@ from services.agent.strategies.allocation.swap_pairs import build_rebalance_swap
 from services.agent.modules.oracle.freshness import utc_now
 
 logger = logging.getLogger("services.agent.strategies.rebalance")
+
+
+def _decision_id(now) -> str:
+    return f"dec_{now.strftime('%Y%m%dT%H%M%S%f')}_{uuid4().hex[:8]}"
 
 
 def compute_rebalance(
@@ -36,7 +41,7 @@ def compute_rebalance(
     if portfolio.status_code != "DATA_FRESH" or portfolio.total_value_usd <= 0 or not portfolio.balances:
         target_weights = {asset: weight for asset, weight in target_profile.items()}
         decision = AllocationDecision(
-            decision_id=f"dec_{int(now.timestamp())}",
+            decision_id=_decision_id(now),
             wallet_or_vault=portfolio.wallet_or_vault,
             profile_name=resolved_profile_name,
             current_weights=portfolio.weights,
@@ -64,7 +69,7 @@ def compute_rebalance(
     all_assets = set(current_weights.keys()) | set(target_weights.keys())
     drifts = {asset: current_weights.get(asset, 0.0) - target_weights.get(asset, 0.0) for asset in all_assets}
     
-    decision_id = f"dec_{int(now.timestamp())}"
+    decision_id = _decision_id(now)
     recommended_action = "HOLD"
     confidence = 0.90
     reasoning = ""

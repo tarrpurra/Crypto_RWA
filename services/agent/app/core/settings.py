@@ -161,6 +161,7 @@ class Settings(BaseSettings):
     simulation_fallback_enabled: bool = True
     ai_reasoning_enabled: bool = True
     ai_decision_maker_enabled: bool = False
+    auto_execute_on_human_approval: bool = False
     ai_reasoning_provider: str = "gemini"
     ai_reasoning_model: str = "gemini-2.0-flash"
     gemini_api_key: str | None = None

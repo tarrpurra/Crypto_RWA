@@ -75,6 +75,7 @@ class ProposalListItem(BaseModel):
     nonce: int
     status_code: str
     risk_snapshot_id: str | None = None
+    proposal_amount: float | None = None
     deposit_asset_symbol: str | None = None
     deposit_amount: float | None = None
     risk_profile: str | None = None
@@ -96,6 +97,14 @@ class ProposalListResponse(BaseModel):
     proposals: list[ProposalListItem]
 
 
+class AutoExecutionInfo(BaseModel):
+    attempted: bool
+    status: str
+    tx_hash: str | None = None
+    error: str | None = None
+    retryable: bool | None = None
+
+
 class ProposalMutationResponse(BaseModel):
     status: str
     status_code: str
@@ -103,6 +112,10 @@ class ProposalMutationResponse(BaseModel):
     status_reason: str
     proposal_id: str
     message: str
+    auto_execution: AutoExecutionInfo | None = None
+
+    class Config:
+        extra = "allow"
 
 
 class ProposalExecuteResponse(BaseModel):

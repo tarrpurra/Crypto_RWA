@@ -583,6 +583,7 @@ export interface TradeProposal {
   nonce: number
   status_code: string
   risk_snapshot_id: string | null
+  proposal_amount?: number | null
   deposit_asset_symbol?: string | null
   deposit_amount?: number | null
   risk_profile?: string | null

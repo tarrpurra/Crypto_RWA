@@ -42,6 +42,7 @@ const proposalStatusTone: Record<string, string> = {
   PROPOSAL_APPROVED: "border-success/35 bg-success/10 text-success",
   PROPOSAL_EXECUTING: "border-primary/35 bg-primary/10 text-primary",
   PROPOSAL_EXECUTED: "border-success/35 bg-success/10 text-success",
+  PROPOSAL_FAILED: "border-destructive/35 bg-destructive/10 text-destructive",
   PROPOSAL_REJECTED: "border-destructive/35 bg-destructive/10 text-destructive",
 };
 
@@ -671,77 +672,58 @@ export default function DecisionLog() {
                 });
                 continue;
               }
-              try {
-                const execution = await executeProposal.mutateAsync(proposal.proposal_id);
-                appendEntry({
-                  proposalId: proposal.proposal_id,
-                  type: "approved",
-                  actor: "ai",
-                  message: "AI auto-approved the trade proposal.",
-                  timestamp: new Date().toISOString(),
-                });
+              appendEntry({
+                proposalId: proposal.proposal_id,
+                type: "approved",
+                actor: "ai",
+                message: "AI auto-approved the trade proposal.",
+                timestamp: new Date().toISOString(),
+              });
+              if (proposal.status_code === "PROPOSAL_EXECUTED") {
                 appendEntry({
                   proposalId: proposal.proposal_id,
                   type: "executed",
                   actor: "ai",
-                  message: execution.status_code === "EXECUTION_CONFIRMED"
-                    ? (execution.tx_hash
-                      ? `AI executed the swap on-chain in transaction ${execution.tx_hash.slice(0, 10)}...`
-                      : "AI executed the swap on-chain.")
-                    : execution.status_code === "EXECUTION_SUBMITTED"
-                      ? (execution.tx_hash
-                        ? `AI submitted vault execution transaction ${execution.tx_hash.slice(0, 10)}...`
-                        : "AI submitted vault execution transaction to the on-chain path.")
-                      : execution.status_code === "EXECUTION_REVERTED"
-                        ? "AI submitted the execution transaction, but it reverted on-chain."
-                        : "AI recorded execution progress for the proposal.",
+                  message: response.metadata?.ai_execution_tx_hash
+                    ? `AI executed the swap on-chain in transaction ${String(response.metadata.ai_execution_tx_hash).slice(0, 10)}...`
+                    : "AI executed the swap on-chain.",
                   timestamp: new Date().toISOString(),
-                  hash: execution.tx_hash ?? undefined,
-                  chainId: execution.chain_id,
+                  hash: typeof response.metadata?.ai_execution_tx_hash === "string" ? response.metadata.ai_execution_tx_hash : undefined,
+                  chainId: typeof response.metadata?.ai_execution_chain_id === "number" ? response.metadata.ai_execution_chain_id : undefined,
                 });
-              } catch (execError) {
-                console.warn("[frontend][trade] execute submission failed (non-fatal)", execError);
+              } else if (proposal.status_code === "PROPOSAL_EXECUTING") {
                 appendEntry({
                   proposalId: proposal.proposal_id,
-                  type: "approved",
+                  type: "executed",
                   actor: "ai",
-                  message: "AI auto-approved. Vault execution transaction could not be submitted.",
+                  message: response.metadata?.ai_execution_tx_hash
+                    ? `AI submitted vault execution transaction ${String(response.metadata.ai_execution_tx_hash).slice(0, 10)}...`
+                    : "AI submitted vault execution transaction to the on-chain path.",
+                  timestamp: new Date().toISOString(),
+                  hash: typeof response.metadata?.ai_execution_tx_hash === "string" ? response.metadata.ai_execution_tx_hash : undefined,
+                  chainId: typeof response.metadata?.ai_execution_chain_id === "number" ? response.metadata.ai_execution_chain_id : undefined,
+                });
+              } else if (proposal.status_code === "PROPOSAL_FAILED") {
+                appendEntry({
+                  proposalId: proposal.proposal_id,
+                  type: "executed",
+                  actor: "ai",
+                  message: typeof response.metadata?.ai_execution_error === "string"
+                    ? `AI auto-execution failed: ${response.metadata.ai_execution_error}`
+                    : "AI auto-execution failed before the swap could be submitted.",
                   timestamp: new Date().toISOString(),
                 });
               }
               continue;
-              // Auto-approve + auto-execute: backend already auto-approved on create;
-              // fire the execute endpoint to transition to PROPOSAL_EXECUTING and
-              // record the vault-pending intent.  Errors are non-fatal — a log entry
-              // is appended regardless so the audit trail stays complete.
-              appendEntry({
-                proposalId: proposal.proposal_id,
-                type: "approved",
-                message: "AI auto-approved trade proposal — submitting execution intent to vault path",
-                timestamp: new Date().toISOString(),
-              });
-              try {
-                await executeProposal.mutateAsync(proposal.proposal_id);
-                appendEntry({
-                  proposalId: proposal.proposal_id,
-                  type: "executed",
-                  message: "AI auto-executed: vault execution intent recorded — awaiting on-chain settlement",
-                  timestamp: new Date().toISOString(),
-                });
-              } catch (execError) {
-                console.warn("[frontend][trade] execute intent call failed (non-fatal)", execError);
-                appendEntry({
-                  proposalId: proposal.proposal_id,
-                  type: "approved",
-                  message: "AI auto-approved. Vault execution intent could not be recorded — check ExecutorVault path.",
-                  timestamp: new Date().toISOString(),
-                });
-              }
             } else {
               continue;
             }
           }
-          toast.success(response.status_reason);
+          if (response.status === "ok") {
+            toast.success(response.status_reason);
+          } else {
+            toast.error(response.status_reason);
+          }
         },
         onError: (error) => {
           toast.error(error instanceof Error ? error.message : "Failed to create investment plan");
@@ -755,7 +737,6 @@ export default function DecisionLog() {
     appendEntry,
     assetSymbol,
     createPlan,
-    executeProposal,
     localWarnings,
     manualWeights,
     numericAmount,
@@ -995,12 +976,14 @@ export default function DecisionLog() {
 
     const seededAsset = selectedSessionPlan?.deposit_asset_symbol
       ?? activeLinkedProposal?.token_in_symbol
+      ?? selectedProposalLog?.token_in_symbol
       ?? selectedProposalLog?.token_in
       ?? null;
     const seededAmount =
       selectedSessionPlan?.deposit_amount
       ?? activeLinkedProposal?.amount
-      ?? (selectedProposalLog ? Number.parseFloat(selectedProposalLog.max_amount_in || "0") : null);
+      ?? selectedProposalLog?.proposal_amount
+      ?? null;
     const seededRisk = selectedSessionPlan?.risk_profile ?? null;
     const seededMode = selectedSessionPlan?.allocation_mode ?? null;
 
@@ -1024,7 +1007,8 @@ export default function DecisionLog() {
     activeLinkedProposal?.token_in_symbol,
     amount,
     searchParams,
-    selectedProposalLog?.max_amount_in,
+    selectedProposalLog?.proposal_amount,
+    selectedProposalLog?.token_in_symbol,
     selectedProposalLog?.token_in,
     selectedSessionPlan?.allocation_mode,
     selectedSessionPlan?.deposit_amount,
@@ -1080,9 +1064,9 @@ export default function DecisionLog() {
   const selectedProposalPendingApproval = selectedProposalStatusCode === "PROPOSAL_PENDING_APPROVAL";
   const selectedProposalApproved = selectedProposalStatusCode === "PROPOSAL_APPROVED";
   const selectedProposalFinalized = selectedProposalStatusCode
-    ? ["PROPOSAL_APPROVED", "PROPOSAL_EXECUTING", "PROPOSAL_EXECUTED", "PROPOSAL_REJECTED"].includes(selectedProposalStatusCode)
+    ? ["PROPOSAL_APPROVED", "PROPOSAL_EXECUTING", "PROPOSAL_EXECUTED", "PROPOSAL_FAILED", "PROPOSAL_REJECTED"].includes(selectedProposalStatusCode)
     : false;
-  const selectedGuardBlocked = selectedProposalStatusCode === "PROPOSAL_REJECTED" || selectedSessionPlan?.approval_enabled === false;
+  const selectedGuardBlocked = ["PROPOSAL_FAILED", "PROPOSAL_REJECTED"].includes(selectedProposalStatusCode ?? "") || selectedSessionPlan?.approval_enabled === false;
   const selectedGuardState = selectedSessionPlan
     ? selectedGuardBlocked
       ? "Guardrail hold"
@@ -1101,6 +1085,8 @@ export default function DecisionLog() {
     ? `${selectedSessionPlan.deposit_amount} ${selectedSessionPlan.deposit_asset_symbol}`
     : selectedProposalLog?.deposit_amount && selectedProposalLog?.deposit_asset_symbol
       ? `${selectedProposalLog.deposit_amount} ${selectedProposalLog.deposit_asset_symbol}`
+    : selectedProposalLog?.proposal_amount && selectedProposalLog?.token_in_symbol
+      ? `${selectedProposalLog.proposal_amount.toFixed(4)} ${selectedProposalLog.token_in_symbol}`
     : activeLinkedProposal
       ? `${activeLinkedProposal.amount.toFixed(4)} ${activeLinkedProposal.token_in_symbol}`
       : amount
@@ -1114,6 +1100,8 @@ export default function DecisionLog() {
       "Create a decision draft to review the AI recommendation.";
   const selectedCurrentBlocker = selectedProposalLog?.status_code === "PROPOSAL_REJECTED"
     ? "Execution cannot continue until a new approved proposal is created."
+    : selectedProposalStatusCode === "PROPOSAL_FAILED"
+      ? "Execution failed. Review the ExecutorVault path and create a new approved proposal if needed."
     : selectedProposalStatusCode === "PROPOSAL_EXECUTED"
       ? "This proposal has already executed on-chain."
     : selectedProposalStatusCode === "PROPOSAL_EXECUTING"
@@ -1137,10 +1125,12 @@ export default function DecisionLog() {
     risk?.recommended_action ??
     risk?.risk_band,
   );
-  const selectedExecutionLabel = hasBlockers.length > 0 || selectedProposalLog?.status_code === "PROPOSAL_REJECTED"
+  const selectedExecutionLabel = hasBlockers.length > 0 || ["PROPOSAL_FAILED", "PROPOSAL_REJECTED"].includes(selectedProposalLog?.status_code ?? "")
     ? "Execution blocked"
     : selectedProposalStatusCode === "PROPOSAL_EXECUTED"
       ? "Executed"
+      : selectedProposalStatusCode === "PROPOSAL_FAILED"
+        ? "Execution failed"
       : selectedProposalStatusCode === "PROPOSAL_EXECUTING"
         ? "Execution submitted"
       : selectedProposalStatusCode === "PROPOSAL_APPROVED"
@@ -1162,7 +1152,12 @@ export default function DecisionLog() {
     { label: "Token in", value: selectedProposalLog ? resolveTokenLabel(selectedProposalLog.token_in, tokenLabelsByAddress) : activeLinkedProposal?.token_in_symbol ?? "Not recorded" },
     { label: "Token out", value: selectedProposalLog ? resolveTokenLabel(selectedProposalLog.token_out, tokenLabelsByAddress) : activeLinkedProposal?.token_out_symbol ?? "Not recorded" },
     { label: "Recipient", value: selectedProposalLog?.recipient ?? "Not recorded" },
-    { label: "Max input", value: selectedProposalLog?.max_amount_in ?? "Not recorded" },
+    {
+      label: "Max input",
+      value: selectedProposalLog?.proposal_amount != null
+        ? `${selectedProposalLog.proposal_amount} ${selectedProposalLog.token_in_symbol ?? resolveTokenLabel(selectedProposalLog.token_in, tokenLabelsByAddress)}`
+        : selectedProposalLog?.max_amount_in ?? "Not recorded",
+    },
     { label: "Min amount out", value: selectedProposalLog?.min_amount_out ?? "Not recorded" },
     { label: "Native value", value: selectedProposalLog?.native_value ?? "Not recorded" },
     { label: "Deadline", value: formatUnixDateTime(selectedProposalLog?.deadline) },
@@ -1331,9 +1326,9 @@ export default function DecisionLog() {
                 const latestActivity = proposalActivityEntries[0];
                 const actorLabel = deriveProposalActorLabel(proposal, proposalActivityEntries, aiDecisionMakerEnabled);
                 const approvalBlocked = (proposal.approval_blockers?.length ?? 0) > 0 || proposal.approval_enabled === false;
-                const sessionAmount = Number.isFinite(proposal.deposit_amount ?? NaN)
-                  ? proposal.deposit_amount
-                  : Number.parseFloat(proposal.max_amount_in || "0");
+                const sessionAmount = Number.isFinite(proposal.proposal_amount ?? NaN)
+                  ? proposal.proposal_amount
+                  : null;
                 const decisionType = deriveDecisionType(proposal, tokenLabelsByAddress);
                 const proposalStatusLabel = formatCompactLabel(proposal.status_code);
                 const confidenceLabel = normalizeConfidenceToPercent(
@@ -1343,6 +1338,8 @@ export default function DecisionLog() {
                 );
                 const approvalLabel = proposal.status_code === "PROPOSAL_EXECUTED"
                   ? "Executed"
+                  : proposal.status_code === "PROPOSAL_FAILED"
+                    ? "Failed"
                   : proposal.status_code === "PROPOSAL_REJECTED"
                     ? "Rejected"
                     : proposal.status_code === "PROPOSAL_PENDING_APPROVAL"
@@ -1396,7 +1393,7 @@ export default function DecisionLog() {
                     </div>
                     <div className="flex items-center justify-between gap-3 text-base">
                       <span className={cn(
-                        approvalLabel === "Rejected"
+                        approvalLabel === "Rejected" || approvalLabel === "Failed"
                           ? "text-destructive"
                           : approvalLabel === "Executed" || approvalLabel === "Approved"
                             ? "text-success"
@@ -1521,23 +1518,27 @@ export default function DecisionLog() {
                 {selectedSessionPlan && (
                   <SwapDetailCard
                     tokenInSymbol={activeLinkedProposal?.token_in_symbol ?? executionInputSymbol}
-                    tokenOutSymbol={activeLinkedProposal?.token_out_symbol}
+                    tokenOutSymbol={
+                      activeLinkedProposal?.token_out_symbol
+                      ?? (selectedProposalLog ? resolveTokenLabel(selectedProposalLog.token_out, tokenLabelsByAddress) : undefined)
+                      ?? (selectedSessionPlan?.linked_proposals[0]?.token_out_symbol)
+                    }
                     amount={activeLinkedProposal?.amount ?? selectedSessionPlan.deposit_amount}
                   />
                 )}
 
                 <div className="flex flex-wrap gap-2">
+                  {selectedRuntimeMode !== "live" && !aiDecisionMakerEnabled && (
+                    <Button
+                      variant="outline"
+                      onClick={handleMoveToLiveMode}
+                      disabled={working}
+                    >
+                      {updateSettings.isPending ? "Switching..." : "Move to live mode"}
+                    </Button>
+                  )}
                   {!aiDecisionMakerEnabled && (
                     <>
-                      {selectedRuntimeMode !== "live" && (
-                        <Button
-                          variant="outline"
-                          onClick={handleMoveToLiveMode}
-                          disabled={working}
-                        >
-                          {updateSettings.isPending ? "Switching..." : "Move to live mode"}
-                        </Button>
-                      )}
                       <Button
                         onClick={() => void handleApprove()}
                         disabled={
@@ -1549,28 +1550,31 @@ export default function DecisionLog() {
                       >
                         {approveProposal.isPending ? "Approving..." : "Approve plan"}
                       </Button>
-                      <Button
-                        variant="secondary"
-                        onClick={() => void handleExecute()}
-                        disabled={
-                          !activeProposalId ||
-                          working ||
-                          selectedRuntimeMode !== "live" ||
-                          !selectedProposalApproved
-                        }
-                      >
-                        {executeProposal.isPending ? "Executing..." : "Execute plan"}
-                      </Button>
                       <Button variant="outline" onClick={handleReject} disabled={!activeProposalId || working}>
                         Reject plan
                       </Button>
                     </>
+                  )}
+                  {selectedRuntimeMode === "live" && selectedProposalStatusCode === "PROPOSAL_APPROVED" && (
+                    <Button
+                      variant="secondary"
+                      onClick={() => void handleExecute()}
+                      disabled={!activeProposalId || working}
+                    >
+                      {executeProposal.isPending ? "Executing..." : aiDecisionMakerEnabled ? "Execute swap" : "Execute plan"}
+                    </Button>
                   )}
                 </div>
 
                 {!aiDecisionMakerEnabled && selectedRuntimeMode !== "live" && (
                   <div className="text-sm text-copper">
                     Runtime mode is {runtimeModeLabel}. Manual approval will not execute on-chain until you switch to Live.
+                  </div>
+                )}
+
+                {aiDecisionMakerEnabled && selectedRuntimeMode === "live" && selectedProposalStatusCode === "PROPOSAL_APPROVED" && (
+                  <div className="text-sm text-copper">
+                    AI mode is active. The backend should auto-submit execution, but you can trigger a manual fallback if the swap has not appeared yet.
                   </div>
                 )}
 
