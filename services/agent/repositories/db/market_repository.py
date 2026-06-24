@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
 if TYPE_CHECKING:
@@ -31,21 +32,13 @@ class MarketDataRepository:
                     logger.warning("Skipping duplicate raw snapshot %s in bundle", snapshot.snapshot_id)
                     continue
                 seen_snapshot_ids.add(snapshot.snapshot_id)
-                try:
-                    session.merge(self._price_record_from_raw(snapshot))
-                except IntegrityError as exc:
-                    session.rollback()
-                    logger.warning("Duplicate raw snapshot skipped on persist: %s — %s", snapshot.snapshot_id, exc)
+                self._persist_price_record(session, self._price_record_from_raw(snapshot))
             for snapshot in bundle.normalized_snapshots:
                 if snapshot.snapshot_id in seen_snapshot_ids:
                     logger.warning("Skipping duplicate normalized snapshot %s in bundle", snapshot.snapshot_id)
                     continue
                 seen_snapshot_ids.add(snapshot.snapshot_id)
-                try:
-                    session.merge(self._price_record_from_normalized(snapshot))
-                except IntegrityError as exc:
-                    session.rollback()
-                    logger.warning("Duplicate normalized snapshot skipped on persist: %s — %s", snapshot.snapshot_id, exc)
+                self._persist_price_record(session, self._price_record_from_normalized(snapshot))
             session.commit()
 
     def latest_normalized_prices(self, include_null_prices: bool = False) -> list[NormalizedPriceSnapshot]:
@@ -331,3 +324,31 @@ class MarketDataRepository:
             status_reason=record.status_reason,
             data_sources_used=(record.metadata_json or {}).get("data_sources_used", []),
         )
+
+    @staticmethod
+    def _persist_price_record(session, record: PriceSnapshotRecord) -> None:
+        record_values = {
+            column.name: getattr(record, column.name)
+            for column in PriceSnapshotRecord.__table__.columns
+            if column.name != "id"
+        }
+        try:
+            if session.bind is not None and session.bind.dialect.name == "postgresql":
+                session.execute(
+                    pg_insert(PriceSnapshotRecord)
+                    .values(**record_values)
+                    .on_conflict_do_nothing(index_elements=["snapshot_id"])
+                )
+                return
+
+            existing = session.scalar(
+                select(PriceSnapshotRecord.id).where(PriceSnapshotRecord.snapshot_id == record.snapshot_id).limit(1)
+            )
+            if existing is not None:
+                logger.warning("Duplicate price snapshot skipped on persist: %s", record.snapshot_id)
+                return
+            session.add(record)
+            session.flush()
+        except IntegrityError as exc:
+            session.rollback()
+            logger.warning("Duplicate price snapshot skipped on persist: %s — %s", record.snapshot_id, exc)
