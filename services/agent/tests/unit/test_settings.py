@@ -1,6 +1,8 @@
 import asyncio
 import unittest
 from datetime import UTC, datetime
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from services.agent.app.core.settings import Settings
@@ -35,6 +37,19 @@ class SettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.runtime_mode, RuntimeMode.MONITOR_ONLY)
 
+    def test_service_env_file_overrides_repo_root_env_file(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root_env = Path(tmpdir) / ".env"
+            service_env = Path(tmpdir) / "services" / "agent" / ".env"
+            service_env.parent.mkdir(parents=True, exist_ok=True)
+            root_env.write_text("APP_ENV=root\nRUNTIME_MODE=live\n", encoding="utf-8")
+            service_env.write_text("APP_ENV=service\n", encoding="utf-8")
+
+            settings = Settings(_env_file=(str(root_env), str(service_env)))
+
+            self.assertEqual(settings.app_env, "service")
+            self.assertEqual(settings.runtime_mode, RuntimeMode.LIVE)
+
     def test_allocation_profile_defaults_to_balanced(self) -> None:
         settings = Settings(_env_file=None)
 
@@ -44,6 +59,19 @@ class SettingsTests(unittest.TestCase):
         settings = Settings(log_level="WARNING", log_quotes=None)
 
         self.assertEqual(settings.subsystem_log_levels["quotes"], "WARNING")
+
+    def test_parsed_cors_allowed_origins_trims_and_filters_entries(self) -> None:
+        settings = Settings(cors_allowed_origins=" https://frontend.up.railway.app, http://localhost:8080 , ,")
+
+        self.assertEqual(
+            settings.parsed_cors_allowed_origins,
+            ["https://frontend.up.railway.app", "http://localhost:8080"],
+        )
+
+    def test_parsed_cors_allowed_origins_preserves_wildcard(self) -> None:
+        settings = Settings(cors_allowed_origins="*, https://frontend.up.railway.app")
+
+        self.assertEqual(settings.parsed_cors_allowed_origins, ["*"])
 
     def test_effective_sepolia_meth_address_prefers_new_field(self) -> None:
         settings = Settings(

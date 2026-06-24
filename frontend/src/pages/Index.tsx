@@ -25,7 +25,7 @@ import { useAllocationRecommendation } from "@/hooks/useAllocation";
 import { useDashboardSummary } from "@/hooks/useDashboardSummary";
 import { useInvestmentScope } from "@/hooks/useInvestmentScope";
 import { useLatestPrices, useLatestQuotes, useMarketIngestionStatus, useMarketRoutes, usePriceHistory } from "@/hooks/useMarket";
-import { useChainStatus, useSettings, useUpdateSettings } from "@/hooks/useSystem";
+import { useChainStatus, useRecentBackendLogs, useSettings, useUpdateSettings } from "@/hooks/useSystem";
 import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 import { useVaultBalance, useWalletBalance } from "@/hooks/useVault";
 import { useStrategyActive } from "@/hooks/useStrategy";
@@ -60,6 +60,7 @@ const Index = () => {
   const [withdrawModalOpen, setWithdrawModalOpen] = useState(false);
   const settingsQuery = useSettings();
   const chainStatusQuery = useChainStatus();
+  const backendLogsQuery = useRecentBackendLogs(120);
   const updateSettings = useUpdateSettings();
   const dashboardSummaryQuery = useDashboardSummary();
   const allocationQuery = useAllocationRecommendation();
@@ -216,23 +217,22 @@ const Index = () => {
   );
   const availableRouteCount = routesQuery.data?.routes?.length ?? 0;
   const backendWarmupLoading =
-    settingsQuery.isLoading ||
-    chainStatusQuery.isLoading ||
-    dashboardSummaryQuery.isLoading ||
-    allocationQuery.isLoading ||
-    decisionsQuery.isLoading ||
-    marketIngestionQuery.isLoading ||
-    latestPricesQuery.isLoading ||
-    latestQuotesQuery.isLoading ||
-    routesQuery.isLoading ||
-    vaultBalanceQuery.isLoading ||
-    walletBalanceQuery.isLoading ||
-    strategyActiveQuery.isLoading ||
-    methHistory.isLoading ||
-    usdyHistory.isLoading ||
-    wmntHistory.isLoading ||
-    mntHistory.isLoading;
-  const showDashboardGhostShell = hasConnectedSupportedWallet && backendWarmupLoading;
+    settingsQuery.isPending ||
+    chainStatusQuery.isPending ||
+    dashboardSummaryQuery.isPending ||
+    vaultBalanceQuery.isPending ||
+    walletBalanceQuery.isPending;
+  const walletActionContextReady =
+    settingsQuery.isSuccess &&
+    chainStatusQuery.isSuccess &&
+    vaultBalanceQuery.isSuccess &&
+    walletBalanceQuery.isSuccess;
+  const showDashboardGhostShell =
+    hasConnectedSupportedWallet &&
+    backendWarmupLoading &&
+    !dashboardSummaryQuery.data &&
+    !vaultBalanceQuery.data &&
+    !walletBalanceQuery.data;
   const aiReasoningData = useMemo<AIReasoningData | undefined>(() => {
     if (!displayPortfolio || !risk || !decisions) {
       return undefined;
@@ -674,6 +674,8 @@ const Index = () => {
           freshness={dashboardSummary?.freshness ?? null}
           onDeposit={openDepositModal}
           onWithdraw={openWithdrawModal}
+          depositDisabled={!walletActionContextReady}
+          withdrawDisabled={!walletActionContextReady}
         >
           <div className="grid gap-4 xl:grid-cols-[2fr_1fr]">
             <CapitalChart
@@ -710,6 +712,8 @@ const Index = () => {
           isAiAccessPending={updateSettings.isPending}
           swapRecommendations={swapRecommendations}
           availableRouteCount={availableRouteCount}
+          backendLogs={backendLogsQuery.data?.entries}
+          backendLogsLoading={backendLogsQuery.isLoading || backendLogsQuery.isFetching}
         />
       </>
     );
@@ -718,6 +722,9 @@ const Index = () => {
     aiReasoningData,
     allocation,
     availableRouteCount,
+    backendLogsQuery.data?.entries,
+    backendLogsQuery.isFetching,
+    backendLogsQuery.isLoading,
     chartAssets,
     chartBucket,
     chartDemo,
@@ -759,6 +766,7 @@ const Index = () => {
         walletData={hasConnectedSupportedWallet ? walletData : undefined}
         vaultAddress={resolvedVaultAddress}
         wmntAddress={resolvedWmntAddress}
+        walletContextReady={!hasConnectedSupportedWallet || walletActionContextReady}
         // Bug E fix: pass native MNT balance so DepositModal shows it when
         // asset === "MNT" (native coin is not in walletData.balances).
         nativeMntBalance={hasConnectedSupportedWallet && walletBalanceQuery.data

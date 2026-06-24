@@ -4,6 +4,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Response
 
+from services.agent.app.core.cache import get_cache, risk_cache, set_cache
 from services.agent.app.api.investment_scope import InvestmentScopeInput, build_scoped_risk_assessment
 from services.agent.app.api.portfolio import current_portfolio
 from services.agent.app.core.settings import get_settings
@@ -18,6 +19,7 @@ from services.agent.risk.engine import RiskEngine
 
 logger = logging.getLogger("services.agent.risk.api")
 router = APIRouter(prefix="/risk", tags=["risk"])
+_RISK_CACHE_KEY = "risk:current:portfolio"
 
 
 def _save_assessment_best_effort(assessment: RiskAssessmentResponse) -> None:
@@ -59,11 +61,15 @@ async def current_risk(
         _save_assessment_best_effort(assessment)
         return assessment
     if not force_refresh:
-        try:
-            latest = RiskAssessmentRepository().latest_assessment()
-        except Exception as exc:
-            logger.warning("Latest risk assessment lookup failed before cached return: %s", exc)
-            latest = None
+        latest = get_cache(risk_cache, _RISK_CACHE_KEY)
+        if latest is None:
+            try:
+                latest = RiskAssessmentRepository().latest_assessment()
+                if latest is not None:
+                    set_cache(risk_cache, _RISK_CACHE_KEY, latest)
+            except Exception as exc:
+                logger.warning("Latest risk assessment lookup failed before cached return: %s", exc)
+                latest = None
         if latest is not None:
             served_metadata = dict(latest.metadata)
             served_metadata.update({"served_from": "latest_assessment", "force_refresh": False})
@@ -85,6 +91,7 @@ async def current_risk(
         quotes=quotes,
     )
     _save_assessment_best_effort(assessment)
+    set_cache(risk_cache, _RISK_CACHE_KEY, assessment)
     return assessment
 
 

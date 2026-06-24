@@ -6,9 +6,22 @@ import { DepositModal } from "@/components/dashboard/DepositModal";
 import { createTestQueryClient } from "@/test/queryClient";
 
 vi.mock("wagmi", () => ({
+  useAccount: () => ({ address: "0x2222222222222222222222222222222222222222" }),
   usePublicClient: () => ({ waitForTransactionReceipt: vi.fn() }),
   useWriteContract: () => ({ writeContractAsync: vi.fn() }),
   useChainId: () => 5003,
+}));
+
+vi.mock("@/hooks/useSystem", () => ({
+  useSystemReadiness: () => ({
+    data: {
+      tokens: {
+        USDY: { symbol: "USDY", decimals: 18 },
+        WMNT: { symbol: "WMNT", decimals: 18 },
+        METH: { symbol: "mETH", decimals: 18 },
+      },
+    },
+  }),
 }));
 
 vi.mock("@/hooks/useSwap", () => ({
@@ -63,6 +76,7 @@ describe("DepositModal render", () => {
           onClose={vi.fn()}
           walletData={walletData as never}
           vaultAddress="0x4444444444444444444444444444444444444444"
+          walletContextReady
           nativeMntEnabled={false}
         />
       </QueryClientProvider>,

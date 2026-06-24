@@ -1,30 +1,16 @@
 from __future__ import annotations
 
-import time
-from typing import Any
-
-
-_CACHE: dict[str, dict[str, Any]] = {}
+from services.agent.app.core.cache import clear_cache, dashboard_cache, get_cache, set_cache
 
 
 def get_cached(key: str, ttl_seconds: int):
-    item = _CACHE.get(key)
-    if not item:
-        return None
-    if time.time() - item["created_at"] > ttl_seconds:
-        return None
-    return item["value"]
+    del ttl_seconds
+    return get_cache(dashboard_cache, key)
 
 
-def set_cached(key: str, value: Any):
-    _CACHE[key] = {
-        "created_at": time.time(),
-        "value": value,
-    }
+def set_cached(key: str, value):
+    return set_cache(dashboard_cache, key, value)
 
 
 def clear_cached(key: str | None = None):
-    if key is None:
-        _CACHE.clear()
-        return
-    _CACHE.pop(key, None)
+    clear_cache(dashboard_cache, key)

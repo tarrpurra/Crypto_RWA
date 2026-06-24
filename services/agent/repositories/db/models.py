@@ -140,6 +140,27 @@ class AllocationDecisionRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class DecisionRecommendationRecord(Base):
+    __tablename__ = "decision_recommendations"
+    __table_args__ = (UniqueConstraint("recommendation_id", name="uq_decision_recommendations_recommendation_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    recommendation_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    wallet_or_vault: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    scope_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True, default="wallet")
+    deposit_asset_symbol: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    deposit_amount: Mapped[str | None] = mapped_column(String(78), nullable=True)
+    risk_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    allocation_mode: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    recommended_action: Mapped[str] = mapped_column(String(64), nullable=False)
+    confidence: Mapped[float] = mapped_column(nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    status_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    response_json: Mapped[dict] = mapped_column(JSON_TYPE, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class TradeProposalRecord(Base):
     __tablename__ = "trade_proposals"
     __table_args__ = (UniqueConstraint("proposal_id", name="uq_trade_proposals_proposal_id"),)
@@ -216,6 +237,18 @@ class VaultFlowRecord(Base):
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     metadata_json: Mapped[dict] = mapped_column(JSON_TYPE, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class JobRunRecord(Base):
+    __tablename__ = "job_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON_TYPE, nullable=False, default=dict)
 
 
 class StrategyTemplateRecord(Base):

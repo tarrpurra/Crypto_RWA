@@ -4,11 +4,14 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 
 
-from services.agent.app.schemas.allocation import AllocationDecision, AllocationDecisionResponse
+from services.agent.app.schemas.allocation import AllocationDecisionResponse
 from services.agent.app.schemas.dashboard import DashboardFreshnessPayload
 from services.agent.app.schemas.proposals import ProposalListItem
+from services.agent.app.schemas.recommendations import RecommendationResponse
 from services.agent.modules.oracle.freshness import utc_now
-from services.agent.repositories.db.models import AllocationDecisionRecord, TradeProposalRecord
+from services.agent.repositories.db.allocation_repository import AllocationDecisionRepository
+from services.agent.repositories.db.decision_repository import DecisionRecommendationRepository
+from services.agent.repositories.db.models import TradeProposalRecord
 from services.agent.repositories.db.portfolio_repository import PortfolioSnapshotRepository
 from services.agent.repositories.db.risk_repository import RiskAssessmentRepository
 from services.agent.repositories.db.session import create_session, init_db
@@ -64,39 +67,7 @@ def _latest_pending_proposal(wallet_address: str | None) -> ProposalListItem | N
 
 
 def _latest_allocation_recommendation(wallet_address: str | None) -> AllocationDecisionResponse | None:
-    init_db()
-    statement = select(AllocationDecisionRecord).order_by(AllocationDecisionRecord.created_at.desc())
-    if wallet_address:
-        statement = statement.where(AllocationDecisionRecord.wallet_or_vault == wallet_address)
-
-    with create_session() as session:
-        record = session.scalars(statement).first()
-
-    if record is None:
-        return None
-
-    decision = AllocationDecision(
-        decision_id=record.decision_id,
-        wallet_or_vault=record.wallet_or_vault,
-        profile_name=record.profile_name,
-        current_weights=record.current_weights_json,
-        target_weights=record.target_weights_json,
-        recommended_action=record.recommended_action,
-        confidence=record.confidence,
-        reasoning=record.reasoning,
-        risk_snapshot_id=record.risk_snapshot_id,
-        status_code=record.status_code,
-        created_at=record.created_at,
-    )
-    return AllocationDecisionResponse(
-        status="degraded" if decision.recommended_action == "PAUSE" else "ok",
-        status_code=decision.status_code,
-        status_label=decision.status_code,
-        status_reason=decision.reasoning,
-        generated_at=record.created_at,
-        decision=decision,
-        rebalance_actions=[],
-    )
+    return AllocationDecisionRepository().latest_decision(wallet_address)
 
 
 def _freshness_payload(*, timestamps: list[datetime | None]) -> DashboardFreshnessPayload:
@@ -118,20 +89,18 @@ def _freshness_payload(*, timestamps: list[datetime | None]) -> DashboardFreshne
     )
 
 
-async def _latest_portfolio_for_dashboard(wallet_address: str | None):
-    if not wallet_address:
-        return PortfolioSnapshotRepository().latest_snapshot(portfolio_address=wallet_address)
-    try:
-        from services.agent.app.api.portfolio import current_portfolio
-        return await current_portfolio(wallet_address=wallet_address)
-    except Exception:
-        return PortfolioSnapshotRepository().latest_snapshot(portfolio_address=wallet_address)
+def _latest_portfolio_for_dashboard(wallet_address: str | None):
+    return PortfolioSnapshotRepository().latest_snapshot(portfolio_address=wallet_address)
 
 
 async def get_dashboard_summary(wallet_address: str | None):
-    portfolio = await _latest_portfolio_for_dashboard(wallet_address)
+    portfolio = _latest_portfolio_for_dashboard(wallet_address)
     risk = RiskAssessmentRepository().latest_assessment()
     allocation = _latest_allocation_recommendation(wallet_address)
+    latest_decision: RecommendationResponse | None = DecisionRecommendationRepository().latest_recommendation(
+        wallet_address=wallet_address,
+        scope_type="wallet",
+    )
     pending_proposal = _latest_pending_proposal(wallet_address)
 
     freshness = _freshness_payload(
@@ -147,9 +116,9 @@ async def get_dashboard_summary(wallet_address: str | None):
         "portfolio": portfolio,
         "risk": risk,
         "allocation": allocation,
-        "latest_decision": None,
+        "latest_decision": latest_decision,
         "pending_proposal": pending_proposal,
         "alerts": [],
         "freshness": freshness,
-        "mode": "live",
+        "mode": "snapshot",
     }

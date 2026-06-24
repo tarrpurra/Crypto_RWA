@@ -6,6 +6,7 @@ from datetime import timedelta
 
 from fastapi import APIRouter, HTTPException, Query
 
+from services.agent.app.core.cache import get_cache, market_cache, set_cache
 from services.agent.app.schemas.market_data import LatestPricesResponse, MarketIngestionStatusResponse, NormalizedPriceSnapshot, PriceHistoryPoint, PriceHistoryResponse
 from services.agent.app.core.status_codes import TargetChain
 from services.agent.app.schemas.oracle import OndoUsdyOracleStatus
@@ -19,6 +20,8 @@ from services.agent.repositories.db.market_repository import MarketDataRepositor
 
 logger = logging.getLogger("services.agent.market_data.api")
 router = APIRouter(prefix="/market", tags=["market"])
+_MARKET_PRICES_CACHE_KEY = "market:prices:latest"
+_MARKET_QUOTES_CACHE_KEY = "market:quotes:latest"
 
 
 def _is_expected_sepolia_price(snapshot: NormalizedPriceSnapshot) -> bool:
@@ -75,50 +78,49 @@ def _quote_response_from_snapshots(
 
 @router.get("/prices/latest", response_model=LatestPricesResponse)
 async def latest_prices() -> LatestPricesResponse:
+    cached = get_cache(market_cache, _MARKET_PRICES_CACHE_KEY)
+    if cached is not None:
+        return cached
     service = get_price_service()
-    bundle = await service.fetch_latest_prices()
-    PRICE_SNAPSHOT_STORE.write(bundle)
-    _save_prices_best_effort(bundle)
-
+    prices = MarketDataRepository().latest_normalized_prices(include_null_prices=True)
+    if not prices:
+        return LatestPricesResponse(
+            status="degraded",
+            status_code="DATA_MISSING",
+            status_label="DATA_MISSING",
+            status_reason="No persisted price snapshots are available yet. Run a market refresh job first.",
+            generated_at=utc_now(),
+            prices=[],
+        )
     status_code = "DATA_FRESH"
     status = "ok"
-    status_reason = "Latest price snapshots fetched successfully."
+    status_reason = "Latest persisted price snapshots loaded."
     has_unhealthy_snapshot = any(
         snapshot.status_code not in {"DATA_FRESH", "ORACLE_FRESH", "QUOTE_FRESH"}
         and not (
             service.settings.target_chain == TargetChain.MANTLE_SEPOLIA
             and _is_expected_sepolia_price(snapshot)
         )
-        for snapshot in bundle.normalized_snapshots
+        for snapshot in prices
     )
     if has_unhealthy_snapshot:
         status_code = "DATA_PARTIAL"
         status = "degraded"
-        status_reason = "At least one asset is missing, unverified, or stale."
-    elif service.settings.target_chain == TargetChain.MANTLE_SEPOLIA and bundle.normalized_snapshots:
-        status_reason = "Latest Sepolia price snapshots fetched successfully using testnet-safe sources."
-
-    return LatestPricesResponse(
+        status_reason = "Persisted price snapshots are available, but at least one asset is stale or degraded."
+    response = LatestPricesResponse(
         status=status,
         status_code=status_code,
         status_label=status_code,
         status_reason=status_reason,
         generated_at=utc_now(),
-        prices=bundle.normalized_snapshots,
+        prices=prices,
     )
+    set_cache(market_cache, _MARKET_PRICES_CACHE_KEY, response)
+    return response
 
 
 @router.get("/prices/{asset_symbol}", response_model=NormalizedPriceSnapshot)
 async def latest_price_for_asset(asset_symbol: str) -> NormalizedPriceSnapshot:
-    service = get_price_service()
-    bundle = await service.fetch_latest_prices()
-    PRICE_SNAPSHOT_STORE.write(bundle)
-    _save_prices_best_effort(bundle)
-
-    for snapshot in bundle.normalized_snapshots:
-        if snapshot.asset_symbol.lower() == asset_symbol.lower() or snapshot.asset_key.lower() == asset_symbol.lower():
-            return snapshot
-
     try:
         persisted = MarketDataRepository().latest_normalized_price_for_asset(asset_symbol)
         if persisted is not None:
@@ -136,32 +138,24 @@ def latest_usdy_oracle_status() -> OndoUsdyOracleStatus:
 
 @router.get("/quotes/latest", response_model=LatestQuotesResponse)
 async def latest_quotes() -> LatestQuotesResponse:
-    price_service = get_price_service()
+    cached = get_cache(market_cache, _MARKET_QUOTES_CACHE_KEY)
+    if cached is not None:
+        return cached
     service = get_quote_service()
-    price_bundle, routes = await asyncio.gather(
-        price_service.fetch_latest_prices(),
-        asyncio.to_thread(service.discover_routes),
-    )
-    PRICE_SNAPSHOT_STORE.write(price_bundle)
-    _save_prices_best_effort(price_bundle)
-    bundle = service.sample_latest_quotes(routes=routes)
-    QUOTE_SNAPSHOT_STORE.write(bundle)
-    _save_quotes_best_effort(bundle)
-    return _quote_response_from_snapshots(
-        bundle.normalized_snapshots,
-        reason_if_empty="No quote routes are currently discoverable for the configured target chain.",
+    quotes = MarketDataRepository().latest_normalized_quotes()
+    response = _quote_response_from_snapshots(
+        quotes,
+        reason_if_empty="No persisted quote snapshots are available yet. Run a market refresh job first.",
         target_chain=service.settings.target_chain,
     )
+    set_cache(market_cache, _MARKET_QUOTES_CACHE_KEY, response)
+    return response
 
 
 @router.get("/quotes/{token_in}/{token_out}", response_model=LatestQuotesResponse)
 async def latest_quotes_for_pair(token_in: str, token_out: str) -> LatestQuotesResponse:
-    price_service = get_price_service()
-    price_bundle = await price_service.fetch_latest_prices()
-    PRICE_SNAPSHOT_STORE.write(price_bundle)
-    _save_prices_best_effort(price_bundle)
     service = get_quote_service()
-    quotes = await asyncio.to_thread(service.latest_quotes_for_pair, token_in, token_out)
+    quotes = MarketDataRepository().latest_normalized_quotes_for_pair(token_in, token_out)
     return _quote_response_from_snapshots(
         quotes,
         reason_if_empty=f"No quote routes are currently discoverable for {token_in}/{token_out} on the configured target chain.",
@@ -171,15 +165,6 @@ async def latest_quotes_for_pair(token_in: str, token_out: str) -> LatestQuotesR
 
 @router.get("/quotes/{token_in}/{token_out}/best", response_model=NormalizedQuoteSnapshot)
 async def best_quote_for_pair(token_in: str, token_out: str) -> NormalizedQuoteSnapshot:
-    price_service = get_price_service()
-    price_bundle = await price_service.fetch_latest_prices()
-    PRICE_SNAPSHOT_STORE.write(price_bundle)
-    _save_prices_best_effort(price_bundle)
-    service = get_quote_service()
-    best_quote = await asyncio.to_thread(service.best_quote_for_pair, token_in, token_out)
-    if best_quote is not None:
-        return best_quote
-
     try:
         persisted = MarketDataRepository().latest_best_quote_for_pair(token_in, token_out)
         if persisted is not None:

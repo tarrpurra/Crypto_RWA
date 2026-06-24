@@ -70,6 +70,7 @@ interface DepositModalProps {
   walletData: VaultBalanceResponse | undefined;
   vaultAddress?: string;
   wmntAddress?: string;
+  walletContextReady?: boolean;
   // Bug E fix: caller passes native MNT balance so the modal can display it
   // and enable the Max button for MNT deposits (native balance is not in
   // walletData.balances which only contains ERC-20 positions).
@@ -86,7 +87,18 @@ export function DepositModal(props: DepositModalProps) {
 }
 
 
-function DepositModalContent({ open, onClose, walletData, vaultAddress, wmntAddress, nativeMntBalance, nativeMntEnabled, suggestedAsset, suggestedAmount }: DepositModalProps) {
+function DepositModalContent({
+  open,
+  onClose,
+  walletData,
+  vaultAddress,
+  wmntAddress,
+  walletContextReady = true,
+  nativeMntBalance,
+  nativeMntEnabled,
+  suggestedAsset,
+  suggestedAmount,
+}: DepositModalProps) {
   const queryClient = useQueryClient();
   const { address: connectedAddress } = useAccount();
   const publicClient = usePublicClient();
@@ -94,7 +106,12 @@ function DepositModalContent({ open, onClose, walletData, vaultAddress, wmntAddr
   const chainId = useChainId();
   const readinessQuery = useSystemReadiness();
   const wrapMnt = useWrapMnt();
-  const depositAssets = useMemo(() => getDepositAssets(nativeMntEnabled, wmntAddress), [nativeMntEnabled, wmntAddress]);
+  const readinessWmntAddress = normalizeAddress(readinessQuery.data?.tokens?.WMNT?.address);
+  const effectiveWmntAddress = normalizeAddress(wmntAddress) ?? readinessWmntAddress ?? undefined;
+  const depositAssets = useMemo(
+    () => getDepositAssets(nativeMntEnabled, effectiveWmntAddress),
+    [nativeMntEnabled, effectiveWmntAddress],
+  );
   const [asset, setAsset] = useState<string>(() => {
     const initialAsset = suggestedAsset ?? (depositAssets.includes("MNT") ? "MNT" : depositAssets.includes("WMNT") ? "WMNT" : depositAssets[0] ?? "USDY");
     return depositAssets.includes(initialAsset as (typeof DEPOSIT_ASSETS)[number])
@@ -109,7 +126,7 @@ function DepositModalContent({ open, onClose, walletData, vaultAddress, wmntAddr
   const [syncingDashboard, setSyncingDashboard] = useState(false);
   const inFlightRef = useRef(false);
   const normalizedVaultAddress = normalizeAddress(vaultAddress);
-  const normalizedWmntAddress = normalizeAddress(wmntAddress);
+  const normalizedWmntAddress = effectiveWmntAddress;
   const walletBalance = walletData?.balances?.find((b) => b.asset_symbol === asset);
   const walletAddress = walletData?.user_address ?? "";
   const normalizedWalletAddress = normalizeAddress(walletAddress);
@@ -119,7 +136,7 @@ function DepositModalContent({ open, onClose, walletData, vaultAddress, wmntAddr
   // wmntAddress prop which comes directly from settings and is always reliable.
   const rawTokenAddress =
     walletBalance?.asset_address ??
-    (asset === "WMNT" ? wmntAddress : null) ??
+    (asset === "WMNT" ? effectiveWmntAddress : null) ??
     null;
   const tokenAddress = rawTokenAddress;
   const normalizedTokenAddress = normalizeAddress(tokenAddress);
@@ -153,11 +170,13 @@ function DepositModalContent({ open, onClose, walletData, vaultAddress, wmntAddr
   const exceedsWallet = numericAmount > walletBalanceNum;
   const hasVaultAddress = Boolean(normalizedVaultAddress);
   const hasDepositTokenAddress = asset === "MNT" ? Boolean(normalizedWmntAddress) : Boolean(normalizedTokenAddress);
+  const showContextPending = !walletContextReady;
   const signerMatchesWallet =
     Boolean(normalizedConnectedAddress) &&
     Boolean(normalizedWalletAddress) &&
     normalizedConnectedAddress === normalizedWalletAddress;
   const isValid =
+    walletContextReady &&
     amount.trim() &&
     Number.isFinite(numericAmount) &&
     numericAmount > 0 &&
@@ -299,8 +318,8 @@ function DepositModalContent({ open, onClose, walletData, vaultAddress, wmntAddr
       // For WMNT, fall back to the wmntAddress prop when the wallet balance
       // entry has no asset_address (covers 0-balance or loading state).
       let effectiveTokenAddress: `0x${string}` | null =
-        (normalizedTokenAddress ??
-          (asset === "WMNT" ? normalizeAddress(wmntAddress) : undefined)) ??
+          (normalizedTokenAddress ??
+          (asset === "WMNT" ? effectiveWmntAddress : undefined)) ??
         null;
       let effectiveSymbol = asset;
 
@@ -566,12 +585,17 @@ function DepositModalContent({ open, onClose, walletData, vaultAddress, wmntAddr
                 : "Only funds in the Portfolio Vault are managed by AI allocation."
               }
             </p>
-            {!hasVaultAddress && (
+            {showContextPending ? (
+              <p className="text-[0.6rem] text-muted-foreground">
+                Loading wallet balances and vault readiness before deposit.
+              </p>
+            ) : null}
+            {!showContextPending && !hasVaultAddress && (
               <p className="text-[0.6rem] text-destructive">
                 Vault address is unavailable, so deposits cannot be submitted from this modal yet.
               </p>
             )}
-            {!signerMatchesWallet && (
+            {!showContextPending && !signerMatchesWallet && (
               <p className="text-[0.6rem] text-destructive">
                 {!normalizedConnectedAddress
                   ? "Connect the same wallet shown in the dashboard before depositing."
@@ -600,7 +624,9 @@ function DepositModalContent({ open, onClose, walletData, vaultAddress, wmntAddr
                 disabled={!canSubmit || step === "approving"}
                 className="w-full"
               >
-                {step === "approving" ? (
+                {showContextPending ? (
+                  "Loading wallet context..."
+                ) : step === "approving" ? (
                   <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Approving...</>
                 ) : (
                   `Approve ${asset}`
@@ -612,7 +638,9 @@ function DepositModalContent({ open, onClose, walletData, vaultAddress, wmntAddr
                 disabled={!canSubmit || step === "depositing"}
                 className="w-full"
               >
-                {step === "depositing" ? (
+                {showContextPending ? (
+                  "Loading wallet context..."
+                ) : step === "depositing" ? (
                   <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Depositing...</>
                 ) : step === "approve_done" ? (
                   "Deposit into Portfolio Vault"

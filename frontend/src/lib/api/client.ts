@@ -14,7 +14,20 @@ export class ApiClientError extends Error {
   }
 }
 
-export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/+$/, "");
+function resolveApiBaseUrl(): string {
+  const configured = String(import.meta.env.VITE_API_BASE_URL ?? "").trim();
+  if (configured) {
+    return configured.replace(/\/+$/, "");
+  }
+
+  if (import.meta.env.PROD) {
+    throw new Error("VITE_API_BASE_URL is required for production builds.");
+  }
+
+  return "http://localhost:8000";
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
 
 function getAuthToken(): string | null {
   if (typeof window !== "undefined" && import.meta.env.VITE_API_TOKEN) {
@@ -70,4 +83,3 @@ export async function request<T>(path: string, method: HttpMethod = "GET", body?
   logger.debug("api.response.ok", { method, path, status: response.status, durationMs });
   return data;
 }
-

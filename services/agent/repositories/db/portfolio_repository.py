@@ -35,6 +35,27 @@ class PortfolioSnapshotRepository:
             records = session.scalars(statement).all()
         return [self._snapshot_from_record(record) for record in records]
 
+    def known_portfolio_addresses(self, limit: int = 100) -> list[str]:
+        statement = (
+            select(PortfolioSnapshotRecord.portfolio_address)
+            .where(PortfolioSnapshotRecord.portfolio_address.is_not(None))
+            .order_by(PortfolioSnapshotRecord.generated_at.desc())
+            .limit(limit)
+        )
+        with create_session() as session:
+            addresses = session.scalars(statement).all()
+        seen: set[str] = set()
+        result: list[str] = []
+        for address in addresses:
+            if not address:
+                continue
+            lower = address.lower()
+            if lower in seen:
+                continue
+            seen.add(lower)
+            result.append(address)
+        return result
+
     @staticmethod
     def _record_from_snapshot(snapshot: PortfolioSnapshotResponse) -> PortfolioSnapshotRecord:
         return PortfolioSnapshotRecord(

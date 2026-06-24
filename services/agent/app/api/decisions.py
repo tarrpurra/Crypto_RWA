@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from services.agent.app.core.cache import decision_cache, get_cache, set_cache
 from services.agent.app.api.investment_scope import InvestmentScopeInput, build_scoped_decision_response
 from services.agent.app.api.vault import get_vault_balance_snapshot
 from services.agent.app.core.settings import RuntimeMode, get_settings
@@ -22,6 +23,7 @@ from services.agent.app.schemas.recommendations import RecommendationResponse
 from services.agent.modules.oracle.freshness import utc_now
 from services.agent.modules.execution.vault_executor import submit_executor_vault_trade
 from services.agent.modules.proposals.investment_planner import build_investment_plan, get_cached_plan_for_proposal
+from services.agent.repositories.db.decision_repository import DecisionRecommendationRepository
 from services.agent.repositories.db.investment_plan_repository import InvestmentPlanRepository
 from services.agent.repositories.db.models import InvestmentPlanRecord, TradeExecutionRecord, TradeProposalRecord
 from services.agent.repositories.db.session import create_session, init_db
@@ -31,6 +33,7 @@ from services.agent.strategies.decision_templates.parser import generate_recomme
 
 logger = logging.getLogger("services.agent.decisions.api")
 router = APIRouter(tags=["decisions"])
+_DECISION_CACHE_PREFIX = "decisions:latest"
 
 
 def _ai_debug_value(payload: Any, field: str) -> Any:
@@ -89,6 +92,30 @@ def _ai_auto_execution_enabled() -> bool:
         settings.ai_decision_maker_enabled
         and settings.runtime_mode == RuntimeMode.LIVE
     )
+
+
+def _save_recommendation_snapshot(
+    response: RecommendationResponse,
+    *,
+    wallet_address: str | None,
+    scope_type: str,
+    deposit_asset_symbol: str | None = None,
+    deposit_amount: float | None = None,
+    risk_profile: str | None = None,
+    allocation_mode: str | None = None,
+) -> None:
+    try:
+        DecisionRecommendationRepository().save_recommendation(
+            response,
+            wallet_address=wallet_address,
+            scope_type=scope_type,
+            deposit_asset_symbol=deposit_asset_symbol,
+            deposit_amount=deposit_amount,
+            risk_profile=risk_profile,
+            allocation_mode=allocation_mode,
+        )
+    except Exception as exc:
+        logger.warning("Failed to persist decision recommendation snapshot: %s", exc)
 
 
 def _save_proposal_record(proposal: TradeProposal, calldata: str) -> None:
@@ -234,6 +261,7 @@ async def get_latest_decisions(
     deposit_amount: float | None = None,
     risk_profile: str | None = None,
     allocation_mode: str | None = None,
+    force_refresh: bool = False,
 ) -> RecommendationResponse:
     from services.agent.modules.decisions import build_decision_context
 
@@ -264,7 +292,28 @@ async def get_latest_decisions(
             _ai_debug_value(response.ai_debug, "mode"),
             _ai_debug_value(response.ai_debug, "used_fallback"),
         )
+        _save_recommendation_snapshot(
+            response,
+            wallet_address=wallet_address,
+            scope_type="deposit",
+            deposit_asset_symbol=deposit_asset_symbol,
+            deposit_amount=deposit_amount,
+            risk_profile=risk_profile,
+            allocation_mode=allocation_mode,
+        )
         return response
+    cache_key = f"{_DECISION_CACHE_PREFIX}:{(wallet_address or '').lower()}"
+    if not force_refresh:
+        cached = get_cache(decision_cache, cache_key)
+        if cached is not None:
+            return cached
+        latest = DecisionRecommendationRepository().latest_recommendation(
+            wallet_address=wallet_address,
+            scope_type="wallet",
+        )
+        if latest is not None:
+            set_cache(decision_cache, cache_key, latest)
+            return latest
     context = await build_decision_context(wallet_address=wallet_address)
     try:
         decision, actions = compute_rebalance(
@@ -286,6 +335,8 @@ async def get_latest_decisions(
         _ai_debug_value(response.ai_debug, "mode"),
         _ai_debug_value(response.ai_debug, "used_fallback"),
     )
+    _save_recommendation_snapshot(response, wallet_address=wallet_address, scope_type="wallet")
+    set_cache(decision_cache, cache_key, response)
     return response
 
 

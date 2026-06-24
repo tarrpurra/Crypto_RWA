@@ -4,11 +4,11 @@ import { LogIn, LogOut, Wallet } from "lucide-react";
 import { useAuth } from "@/components/auth/AuthProvider";
 
 export function LoginButton() {
-  const { logout } = useAuth();
+  const { login, logout } = useAuth();
 
   return (
     <ConnectButton.Custom>
-      {({ account, chain, openAccountModal, openConnectModal, mounted }) => {
+      {({ account, chain, openAccountModal, mounted }) => {
         if (!mounted) {
           return (
             <Button variant="outline" size="sm" disabled className="gap-2">
@@ -20,7 +20,7 @@ export function LoginButton() {
 
         if (!account) {
           return (
-            <Button variant="outline" size="sm" onClick={openConnectModal} className="gap-2">
+            <Button variant="outline" size="sm" onClick={login} className="gap-2">
               <LogIn className="h-4 w-4" />
               Connect Wallet
             </Button>
