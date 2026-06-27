@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-AI_DECISION_MAKER_ENABLED: bool = False
+AI_DECISION_MAKER_ENABLED: bool = True
 
 
 def get_ai_decision_maker_enabled() -> bool:

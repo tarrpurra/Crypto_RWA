@@ -25,7 +25,7 @@ import { useDecisions } from "@/hooks/useDecisions";
 import { useCurrentRisk } from "@/hooks/useRisk";
 import { useStrategyActive } from "@/hooks/useStrategy";
 import { useApproveProposal, useCreateProposal, useExecuteProposal, useProposalDetail, useProposals, useRejectProposal } from "@/hooks/useSwap";
-import { useSettings, useUpdateSettings } from "@/hooks/useSystem";
+import { useSettings } from "@/hooks/useSystem";
 import { useVaultBalance } from "@/hooks/useVault";
 import type { ProposalActivityEntry } from "@/hooks/useProposalActivity";
 import type { InvestmentPlanResponse, ProposalListItem } from "@/lib/api/types";
@@ -234,7 +234,6 @@ export default function DecisionLog() {
   const routesQuery = useMarketRoutes();
   const proposalsQuery = useProposals();
   const settingsQuery = useSettings();
-  const updateSettings = useUpdateSettings();
   const vaultBalanceQuery = useVaultBalance();
 
   const createPlan = useCreateProposal();
@@ -254,7 +253,7 @@ export default function DecisionLog() {
   const vaultData = vaultBalanceQuery.data;
   const proposals = useMemo(() => proposalsQuery.data?.proposals ?? [], [proposalsQuery.data?.proposals]);
   const aiDecisionMakerEnabled = settings?.ai_decision_maker_enabled ?? false;
-  const runtimeMode = settings?.runtime_mode ?? risk?.runtime_mode ?? "monitor_only";
+  const runtimeMode = settings?.runtime_mode ?? risk?.runtime_mode ?? "live";
   const autoCreatePlanRef = useRef<string | null>(null);
   const [draftHydrated, setDraftHydrated] = useState(false);
 
@@ -583,6 +582,19 @@ export default function DecisionLog() {
     setAmount(String(availableBalance));
   }, [actionableRecommendation, availableBalance, numericAmount, searchParams]);
 
+  useEffect(() => {
+    if (searchParams.has("amount")) {
+      return;
+    }
+    if (amount.trim()) {
+      return;
+    }
+    if (availableBalance === null || !Number.isFinite(availableBalance) || availableBalance <= 0) {
+      return;
+    }
+    setAmount(String(availableBalance));
+  }, [amount, availableBalance, searchParams]);
+
   // Bug 5 fix: wrap handleCreatePlan in useCallback so its identity is stable
   // across renders. The previous plain arrow function was a new reference every
   // render, and because it was listed in the auto-create useEffect's dependency
@@ -817,8 +829,10 @@ export default function DecisionLog() {
       : [activeProposalId];
 
     try {
+      const approvalResponses: Array<{ proposalId: string; response: Awaited<ReturnType<typeof approveProposal.mutateAsync>> }> = [];
       for (const proposalId of proposalIds) {
-        await approveProposal.mutateAsync(proposalId);
+        const response = await approveProposal.mutateAsync(proposalId);
+        approvalResponses.push({ proposalId, response });
         appendEntry({
           proposalId,
           type: "approved",
@@ -829,27 +843,28 @@ export default function DecisionLog() {
       }
 
       if (!aiDecisionMakerEnabled) {
-        if (runtimeMode === "live") {
-          for (const proposalId of proposalIds) {
-            const execution = await executeProposal.mutateAsync(proposalId);
-            appendEntry({
-              proposalId,
-              type: "executed",
-              actor: "user",
-              message: execution.tx_hash
-                ? `Investment plan execution submitted on-chain (${shortHash(execution.tx_hash)})`
-                : "Investment plan execution submitted on-chain",
-              timestamp: new Date().toISOString(),
-              hash: execution.tx_hash ?? undefined,
-            });
-          }
-          toast.success("Plan approved and execution submitted");
-        } else {
-          toast.success("Plan approved");
+        const requiresManualExecution = approvalResponses.filter(({ response }) => {
+          const autoExecutionAttempted = response.auto_execution?.attempted === true;
+          const terminalExecutionStatus = ["PROPOSAL_EXECUTING", "PROPOSAL_EXECUTED", "PROPOSAL_FAILED"].includes(response.status_code);
+          return !autoExecutionAttempted && !terminalExecutionStatus;
+        });
+        for (const { proposalId } of requiresManualExecution) {
+          const execution = await executeProposal.mutateAsync(proposalId);
+          appendEntry({
+            proposalId,
+            type: "executed",
+            actor: "user",
+            message: execution.tx_hash
+              ? `Investment plan execution submitted on-chain (${shortHash(execution.tx_hash)})`
+              : "Investment plan execution submitted on-chain",
+            timestamp: new Date().toISOString(),
+            hash: execution.tx_hash ?? undefined,
+          });
         }
+        toast.success(requiresManualExecution.length > 0 ? "Plan approved and execution submitted" : "Plan approved");
         return;
       }
-      toast.success("Plan approved. Funds remain in the vault and must execute through the ExecutorVault path.");
+      toast.success("Plan approved. AI execution follows the same ExecutorVault path.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to approve plan");
     }
@@ -858,10 +873,6 @@ export default function DecisionLog() {
   const handleExecute = async () => {
     if (!activeProposalId) {
       toast.error("Select an approved proposal before executing.");
-      return;
-    }
-    if (runtimeMode !== "live") {
-      toast.error("Switch runtime mode to Live before executing.");
       return;
     }
 
@@ -881,20 +892,6 @@ export default function DecisionLog() {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to execute plan");
     }
-  };
-
-  const handleMoveToLiveMode = () => {
-    updateSettings.mutate(
-      { runtime_mode: "live" },
-      {
-        onSuccess: () => {
-          toast.success("Runtime mode switched to Live");
-        },
-        onError: (error) => {
-          toast.error(error instanceof Error ? error.message : "Failed to switch runtime mode");
-        },
-      },
-    );
   };
 
   const handleReject = () => {
@@ -950,8 +947,7 @@ export default function DecisionLog() {
     createPlan.isPending ||
     approveProposal.isPending ||
     executeProposal.isPending ||
-    rejectProposal.isPending ||
-    updateSettings.isPending;
+    rejectProposal.isPending;
 
   const selectedSessionPlan = resolvedPlan ?? plan;
   const selectedLinkedProposals = selectedSessionPlan?.linked_proposals ?? [];
@@ -1060,7 +1056,7 @@ export default function DecisionLog() {
     : selectedSessionPlan?.status_label ?? "Draft";
   const selectedProposalStatusCode = selectedProposalLog?.status_code ?? selectedPlanProposal?.status_code ?? null;
   const selectedRuntimeMode = runtimeMode;
-  const selectedAiAutomationActive = aiDecisionMakerEnabled && selectedRuntimeMode === "live";
+  const selectedAiAutomationActive = aiDecisionMakerEnabled;
   const selectedProposalPendingApproval = selectedProposalStatusCode === "PROPOSAL_PENDING_APPROVAL";
   const selectedProposalApproved = selectedProposalStatusCode === "PROPOSAL_APPROVED";
   const selectedProposalFinalized = selectedProposalStatusCode
@@ -1528,15 +1524,6 @@ export default function DecisionLog() {
                 )}
 
                 <div className="flex flex-wrap gap-2">
-                  {selectedRuntimeMode !== "live" && !aiDecisionMakerEnabled && (
-                    <Button
-                      variant="outline"
-                      onClick={handleMoveToLiveMode}
-                      disabled={working}
-                    >
-                      {updateSettings.isPending ? "Switching..." : "Move to live mode"}
-                    </Button>
-                  )}
                   {!aiDecisionMakerEnabled && (
                     <>
                       <Button
@@ -1555,7 +1542,7 @@ export default function DecisionLog() {
                       </Button>
                     </>
                   )}
-                  {selectedRuntimeMode === "live" && selectedProposalStatusCode === "PROPOSAL_APPROVED" && (
+                  {selectedProposalStatusCode === "PROPOSAL_APPROVED" && (
                     <Button
                       variant="secondary"
                       onClick={() => void handleExecute()}
@@ -1566,13 +1553,7 @@ export default function DecisionLog() {
                   )}
                 </div>
 
-                {!aiDecisionMakerEnabled && selectedRuntimeMode !== "live" && (
-                  <div className="text-sm text-copper">
-                    Runtime mode is {runtimeModeLabel}. Manual approval will not execute on-chain until you switch to Live.
-                  </div>
-                )}
-
-                {aiDecisionMakerEnabled && selectedRuntimeMode === "live" && selectedProposalStatusCode === "PROPOSAL_APPROVED" && (
+                {aiDecisionMakerEnabled && selectedProposalStatusCode === "PROPOSAL_APPROVED" && (
                   <div className="text-sm text-copper">
                     AI mode is active. The backend should auto-submit execution, but you can trigger a manual fallback if the swap has not appeared yet.
                   </div>

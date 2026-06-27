@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from services.agent.app.core.settings import RuntimeMode, Settings, get_settings
+from services.agent.app.core.settings import Settings, get_settings
 from services.agent.app.core.status_codes import ExecutionEventType, ExecutionTrigger
 from services.agent.app.schemas.proposals import ProposalExecuteResponse
 from services.agent.modules.execution.vault_executor import submit_executor_vault_trade, VaultExecutionSubmission
@@ -45,9 +45,7 @@ class AutoExecutionResult:
 def is_auto_execute_on_approval_enabled(settings: Settings | None = None) -> bool:
     settings = settings or get_settings()
     return (
-        settings.ai_decision_maker_enabled
-        and settings.auto_execute_on_human_approval
-        and settings.runtime_mode == RuntimeMode.LIVE
+        settings.auto_execute_on_human_approval
         and bool(settings.executor_private_key)
         and bool(settings.executor_vault_address)
         and bool(settings.trade_approval_manager_address)
@@ -153,11 +151,6 @@ def validate_proposal_executable(
     if proposal.status_code not in {"PROPOSAL_APPROVED", "PROPOSAL_EXECUTION_FAILED_RETRYABLE"}:
         raise ExecutionBlocked(
             f"Proposal {proposal.proposal_id} is not approved (status={proposal.status_code})",
-            retryable=False,
-        )
-    if settings.runtime_mode != RuntimeMode.LIVE:
-        raise ExecutionBlocked(
-            f"Execution requires runtime_mode=live (current={settings.runtime_mode.value})",
             retryable=False,
         )
     if not settings.executor_private_key:

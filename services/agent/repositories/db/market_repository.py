@@ -15,8 +15,8 @@ logger = logging.getLogger("services.agent.db.market_repository")
 
 from services.agent.app.schemas.market_data import NormalizedPriceSnapshot, PriceHistoryPoint, RawPriceSnapshot
 from services.agent.app.schemas.quotes import NormalizedQuoteSnapshot, RawQuoteSnapshot
-from services.agent.repositories.db.normalization import normalize_asset_symbol
 from services.agent.repositories.db.models import PriceSnapshotRecord, QuoteSnapshotRecord
+from services.agent.repositories.db.normalization import normalize_asset_symbol
 from services.agent.repositories.db.session import create_session, init_db
 
 
@@ -46,9 +46,7 @@ class MarketDataRepository:
             stmt = select(PriceSnapshotRecord).where(PriceSnapshotRecord.record_kind == "normalized")
             if not include_null_prices:
                 stmt = stmt.where(PriceSnapshotRecord.price.is_not(None))
-            records = session.scalars(
-                stmt.order_by(PriceSnapshotRecord.created_at.desc())
-            ).all()
+            records = session.scalars(stmt.order_by(PriceSnapshotRecord.created_at.desc())).all()
         seen: set[str] = set()
         results: list[NormalizedPriceSnapshot] = []
         for record in records:
@@ -327,11 +325,7 @@ class MarketDataRepository:
 
     @staticmethod
     def _persist_price_record(session, record: PriceSnapshotRecord) -> None:
-        record_values = {
-            column.name: getattr(record, column.name)
-            for column in PriceSnapshotRecord.__table__.columns
-            if column.name != "id"
-        }
+        record_values = MarketDataRepository._price_record_values(record)
         try:
             if session.bind is not None and session.bind.dialect.name == "postgresql":
                 session.execute(
@@ -351,4 +345,23 @@ class MarketDataRepository:
             session.flush()
         except IntegrityError as exc:
             session.rollback()
-            logger.warning("Duplicate price snapshot skipped on persist: %s — %s", record.snapshot_id, exc)
+            if MarketDataRepository._is_duplicate_snapshot_error(exc):
+                logger.warning("Duplicate price snapshot skipped on persist: %s - %s", record.snapshot_id, exc)
+                return
+            raise
+
+    @staticmethod
+    def _price_record_values(record: PriceSnapshotRecord) -> dict[str, object]:
+        record_values = {
+            column.name: getattr(record, column.name)
+            for column in PriceSnapshotRecord.__table__.columns
+            if column.name != "id"
+        }
+        if record_values.get("created_at") is None:
+            record_values.pop("created_at", None)
+        return record_values
+
+    @staticmethod
+    def _is_duplicate_snapshot_error(exc: IntegrityError) -> bool:
+        message = str(exc).lower()
+        return "duplicate" in message or "unique constraint" in message or "uq_price_snapshots_snapshot_id" in message

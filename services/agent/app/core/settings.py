@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     app_env: str = "local"
     api_port: int = 8000
     cors_allowed_origins: str = "http://localhost:8080,http://localhost:5173"
-    runtime_mode: RuntimeMode = RuntimeMode.MONITOR_ONLY
+    runtime_mode: RuntimeMode = RuntimeMode.LIVE
     target_chain: TargetChain = TargetChain.MANTLE_SEPOLIA
 
     log_enabled: bool = True
@@ -160,8 +160,8 @@ class Settings(BaseSettings):
 
     simulation_fallback_enabled: bool = True
     ai_reasoning_enabled: bool = True
-    ai_decision_maker_enabled: bool = False
-    auto_execute_on_human_approval: bool = False
+    ai_decision_maker_enabled: bool = True
+    auto_execute_on_human_approval: bool = True
     ai_reasoning_provider: str = "gemini"
     ai_reasoning_model: str = "gemini-2.0-flash"
     gemini_api_key: str | None = None

@@ -6,10 +6,11 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from services.agent.app.core import runtime_config
 from services.agent.app.core.cache import decision_cache, get_cache, set_cache
 from services.agent.app.api.investment_scope import InvestmentScopeInput, build_scoped_decision_response
 from services.agent.app.api.vault import get_vault_balance_snapshot
-from services.agent.app.core.settings import RuntimeMode, Settings, get_settings
+from services.agent.app.core.settings import Settings, get_settings
 from services.agent.app.core.status_codes import ExecutionTrigger, ProposalStatusCode
 from services.agent.app.schemas.proposals import (
     InvestmentPlanRequest,
@@ -128,11 +129,7 @@ def _select_ai_winner_proposal_id(linked_proposals: list[Any]) -> str | None:
 
 
 def _ai_auto_execution_enabled() -> bool:
-    settings = get_settings()
-    return (
-        settings.ai_decision_maker_enabled
-        and settings.runtime_mode == RuntimeMode.LIVE
-    )
+    return runtime_config.get_ai_decision_maker_enabled()
 
 
 def _save_recommendation_snapshot(
@@ -464,7 +461,7 @@ async def create_investment_plan(request: InvestmentPlanRequest) -> InvestmentPl
         plan_response.status_code,
         len(plan_response.linked_proposals),
         plan_response.approval_enabled,
-        settings.ai_decision_maker_enabled,
+        runtime_config.get_ai_decision_maker_enabled(),
     )
     ai_auto_execution_enabled = _ai_auto_execution_enabled()
     if plan_response.linked_proposals:
