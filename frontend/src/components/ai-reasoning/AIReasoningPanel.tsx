@@ -195,7 +195,7 @@ function buildCardData(props: AIReasoningPanelProps) {
     ? "Execution is blocked until the guard condition clears and inputs return to a safe state."
     : aiDecisionMakerEnabled
       ? swapRecommendations.length > 0
-        ? `Full access AI can auto-approve and submit ${swapRecommendations.length} swap leg${swapRecommendations.length > 1 ? "s" : ""} once the proposal is created in live mode.`
+        ? `Full access AI can auto-approve and submit ${swapRecommendations.length} swap leg${swapRecommendations.length > 1 ? "s" : ""} once the proposal is created.`
         : "Full access AI is monitoring the portfolio. No execution step is required at this time."
       : needsApproval
         ? "A human review is required before the proposal can move into execution."

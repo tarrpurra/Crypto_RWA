@@ -11,6 +11,7 @@ from eth_hash.auto import keccak
 from fastapi import HTTPException
 from web3 import Web3
 
+from services.agent.app.core import runtime_config
 from services.agent.app.core.settings import Settings
 from services.agent.app.core.status_codes import DataStatusCode, ExecutionStatusCode, ProposalStatusCode, RuntimeMode, TargetChain
 from services.agent.app.schemas.portfolio import AssetBalance, PortfolioSnapshot, PortfolioSnapshotResponse
@@ -946,10 +947,7 @@ def build_investment_plan(
 
     transaction_steps: list[TransactionStep] = []
     step_index = 1
-    ai_managed_execution = (
-        settings.ai_decision_maker_enabled
-        and settings.runtime_mode == RuntimeMode.LIVE
-    )
+    ai_managed_execution = runtime_config.get_ai_decision_maker_enabled()
     # Bug D fix: emit the wrap step whenever native MNT is being deposited,
     # regardless of whether swap legs were built. Previously the condition
     # required swaps to exist with token_in_symbol=="WMNT", which meant an
