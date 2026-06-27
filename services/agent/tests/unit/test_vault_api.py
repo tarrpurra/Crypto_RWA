@@ -235,6 +235,71 @@ class VaultApiTests(unittest.TestCase):
     @patch("services.agent.app.api.vault.VaultFlowRepository")
     @patch("services.agent.app.api.vault.get_price_service")
     @patch("services.agent.app.api.vault.VaultShareReader")
+    def test_vault_balance_snapshot_falls_back_to_live_value_when_flow_history_is_missing(
+        self,
+        vault_share_reader_cls,
+        get_price_service,
+        vault_flow_repo_cls,
+        get_settings,
+    ) -> None:
+        settings = Settings(
+            target_chain=TargetChain.MANTLE_SEPOLIA,
+            sepolia_wmnt_address="0x0000000000000000000000000000000000000003",
+        )
+        get_settings.return_value = settings
+        vault_share_reader_cls.return_value.read_user_position.return_value = [
+            MagicMock(
+                asset_symbol="WMNT",
+                asset_address="0x0000000000000000000000000000000000000003",
+                balance="82",
+            )
+        ]
+
+        get_price_service.return_value.fetch_latest_prices = AsyncMock(
+            return_value=MagicMock(
+                normalized_snapshots=[
+                    NormalizedPriceSnapshot(
+                        snapshot_id="price-1",
+                        asset_key="SEPOLIA_WMNT",
+                        asset_symbol="WMNT",
+                        asset_address="0x0000000000000000000000000000000000000003",
+                        chain_id=5003,
+                        price_usd="0.44320770",
+                        confidence_interval_usd="0",
+                        publish_timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                        observed_timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                        age_seconds=1,
+                        freshness_status="fresh",
+                        status_code="DATA_FRESH",
+                        status_reason="fresh",
+                        derivation_method="test",
+                        data_sources_used=["test_price"],
+                        raw_snapshot_ids=["raw-1"],
+                    )
+                ]
+            )
+        )
+
+        summary = MagicMock(
+            flow_count=0,
+            last_flow_at=None,
+            net_invested_usd=Decimal("0"),
+            total_deposits_usd=Decimal("0"),
+            total_withdrawals_usd=Decimal("0"),
+        )
+        vault_flow_repo_cls.return_value.summarize.return_value = summary
+
+        response = asyncio.run(get_vault_balance_snapshot("0xuser"))
+
+        self.assertEqual(response.invested_amount_usd, response.total_value_usd)
+        self.assertEqual(response.pnl_usd, "0")
+        self.assertEqual(response.pnl_percent, "0")
+        self.assertEqual(response.metadata["cost_basis_tracking_mode"], "live_value_fallback")
+
+    @patch("services.agent.app.api.vault.get_settings")
+    @patch("services.agent.app.api.vault.VaultFlowRepository")
+    @patch("services.agent.app.api.vault.get_price_service")
+    @patch("services.agent.app.api.vault.VaultShareReader")
     def test_vault_balance_snapshot_reconciles_absurd_stale_cost_basis(
         self,
         vault_share_reader_cls,

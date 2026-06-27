@@ -20,6 +20,7 @@ from services.agent.modules.market_data.balances import (
 from services.agent.modules.oracle.freshness import utc_now
 from services.agent.repositories.db.market_repository import MarketDataRepository
 from services.agent.repositories.db.portfolio_repository import PortfolioSnapshotRepository
+from services.agent.repositories.db.vault_repository import VaultFlowRepository
 
 
 logger = logging.getLogger("services.agent.portfolio.api")
@@ -128,6 +129,104 @@ def _format_decimal(value: Decimal | None) -> str | None:
     if value is None:
         return None
     return format(value.normalize(), "f")
+
+
+def _compute_pnl(total_value_usd: Decimal, net_invested_usd: Decimal) -> tuple[str | None, str | None]:
+    pnl_usd = total_value_usd - net_invested_usd
+    pnl_usd_str = _format_decimal(pnl_usd)
+    if net_invested_usd <= 0:
+        return pnl_usd_str, None
+    pnl_percent = (pnl_usd / net_invested_usd) * Decimal("100")
+    return pnl_usd_str, _format_decimal(pnl_percent)
+
+
+def _reconcile_dashboard_cost_basis(total_value_usd: Decimal, net_invested_usd: Decimal) -> tuple[Decimal, str | None]:
+    if net_invested_usd < 0:
+        return Decimal("0"), "clamped_negative_basis"
+    if total_value_usd <= 0 or net_invested_usd <= 0:
+        return net_invested_usd, None
+    if net_invested_usd <= (total_value_usd * Decimal("5")):
+        return net_invested_usd, None
+    return total_value_usd, "reconciled_live_value"
+
+
+def _flow_summary_metadata(summary) -> dict[str, object]:
+    return {
+        "flow_count": summary.flow_count,
+        "last_flow_at": summary.last_flow_at.isoformat() if summary.last_flow_at else None,
+        "cost_basis_tracking": summary.flow_count > 0,
+    }
+
+
+def _with_invested_fields(snapshot: PortfolioSnapshotResponse, *, vault_address: str | None) -> PortfolioSnapshotResponse:
+    if not vault_address or not snapshot.portfolio_address:
+        return snapshot
+
+    total_value = _decimal_or_none(snapshot.total_value_usd) or Decimal("0")
+    metadata = dict(snapshot.metadata)
+
+    try:
+        summary = VaultFlowRepository().summarize(vault_address=vault_address, user_address=snapshot.portfolio_address)
+    except Exception as exc:
+        logger.warning("Portfolio flow summary lookup failed: %s", exc)
+        summary = None
+
+    invested_amount_usd = None
+    total_deposits_usd = None
+    total_withdrawals_usd = None
+    pnl_usd = None
+    pnl_percent = None
+
+    if summary is not None:
+        metadata.update(_flow_summary_metadata(summary))
+        total_deposits_usd = _format_decimal(summary.total_deposits_usd)
+        total_withdrawals_usd = _format_decimal(summary.total_withdrawals_usd)
+        if summary.flow_count == 0 and total_value > 0:
+            invested_amount_usd = _format_decimal(total_value)
+            pnl_usd = "0"
+            pnl_percent = "0"
+            metadata["cost_basis_tracking_mode"] = "live_value_fallback"
+            metadata["cost_basis_reconciled"] = True
+            metadata["cost_basis_reconciliation_reason"] = (
+                "No recorded vault deposit or withdrawal history was available, so the portfolio snapshot is using the current live vault value as invested capital."
+            )
+        else:
+            effective_invested_usd, reconciliation_mode = _reconcile_dashboard_cost_basis(total_value, summary.net_invested_usd)
+            invested_amount_usd = _format_decimal(effective_invested_usd)
+            pnl_usd, pnl_percent = _compute_pnl(total_value, effective_invested_usd)
+            if reconciliation_mode == "reconciled_live_value":
+                metadata["cost_basis_tracking_mode"] = "reconciled_live_value"
+                metadata["cost_basis_reconciled"] = True
+                metadata["cost_basis_reconciliation_reason"] = (
+                    "Historical vault flow basis was far above current live vault ownership, so the dashboard capped invested capital to live value."
+                )
+            elif reconciliation_mode == "clamped_negative_basis":
+                metadata["cost_basis_tracking_mode"] = "clamped_negative_basis"
+                metadata["cost_basis_reconciled"] = True
+                metadata["cost_basis_reconciliation_reason"] = (
+                    "Historical vault flow basis became negative after withdrawals exceeded recorded deposits, so the dashboard reset invested capital to zero."
+                )
+    elif total_value > 0:
+        invested_amount_usd = _format_decimal(total_value)
+        pnl_usd = "0"
+        pnl_percent = "0"
+        metadata["cost_basis_tracking"] = False
+        metadata["cost_basis_tracking_mode"] = "live_value_fallback"
+        metadata["cost_basis_reconciled"] = True
+        metadata["cost_basis_reconciliation_reason"] = (
+            "No recorded vault deposit or withdrawal history was available, so the portfolio snapshot is using the current live vault value as invested capital."
+        )
+
+    return snapshot.model_copy(
+        update={
+            "invested_amount_usd": invested_amount_usd,
+            "total_deposits_usd": total_deposits_usd,
+            "total_withdrawals_usd": total_withdrawals_usd,
+            "pnl_usd": pnl_usd,
+            "pnl_percent": pnl_percent,
+            "metadata": metadata,
+        }
+    )
 
 
 def _normalize_zero_position(position):
@@ -251,7 +350,10 @@ async def current_portfolio(
             served_snapshot = _normalize_zero_snapshot(persisted_snapshot)
             served_metadata = dict(served_snapshot.metadata)
             served_metadata.update({"served_from": "latest_snapshot", "force_refresh": False})
-            return served_snapshot.model_copy(update={"metadata": served_metadata})
+            return _with_invested_fields(
+                served_snapshot.model_copy(update={"metadata": served_metadata}),
+                vault_address=settings.executor_vault_address,
+            )
 
         if persisted_snapshot is not None:
             logger.info(
@@ -297,7 +399,7 @@ async def current_portfolio(
 
     if not balances:
         try:
-                balances = await asyncio.to_thread(
+            balances = await asyncio.to_thread(
                 lambda: _read_vault_portfolio(settings, portfolio_address),
             )
         except Exception as exc:
@@ -373,8 +475,12 @@ async def current_portfolio(
                 "served_from": "persisted_snapshot",
             }
         )
-        return persisted_snapshot.model_copy(update={"metadata": merged_metadata})
+        return _with_invested_fields(
+            persisted_snapshot.model_copy(update={"metadata": merged_metadata}),
+            vault_address=settings.executor_vault_address,
+        )
 
+    snapshot = _with_invested_fields(snapshot, vault_address=settings.executor_vault_address)
     _save_snapshot_best_effort(snapshot)
     return snapshot
 

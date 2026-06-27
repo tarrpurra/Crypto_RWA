@@ -128,9 +128,10 @@ async def refresh_market_snapshots() -> dict:
 
 async def refresh_risk_snapshots(wallet_address: str | None = None) -> dict:
     async def work() -> dict:
+        from services.agent.app.api.portfolio import current_portfolio
+
         settings = get_settings()
         price_repo = MarketDataRepository()
-        portfolio_repo = PortfolioSnapshotRepository()
         risk_repo = RiskAssessmentRepository()
         wallets = [wallet_address] if wallet_address else _known_wallet_addresses()
         refreshed: list[str] = []
@@ -138,7 +139,7 @@ async def refresh_risk_snapshots(wallet_address: str | None = None) -> dict:
         quotes = price_repo.latest_normalized_quotes()
         quote_validation_status = "QUOTE_FRESH" if any(quote.amount_out is not None for quote in quotes) else "DATA_MISSING"
         for wallet in wallets:
-            snapshot = portfolio_repo.latest_snapshot(portfolio_address=wallet)
+            snapshot = await current_portfolio(wallet_address=wallet, allow_env_fallback=False, force_refresh=True)
             if snapshot is None:
                 continue
             assessment = RiskEngine().evaluate(
@@ -159,14 +160,15 @@ async def refresh_risk_snapshots(wallet_address: str | None = None) -> dict:
 
 async def refresh_allocation_snapshots(wallet_address: str | None = None) -> dict:
     async def work() -> dict:
+        from services.agent.app.api.portfolio import current_portfolio
+
         settings = get_settings()
-        portfolio_repo = PortfolioSnapshotRepository()
         risk_repo = RiskAssessmentRepository()
         allocation_repo = AllocationDecisionRepository()
         wallets = [wallet_address] if wallet_address else _known_wallet_addresses()
         refreshed: list[str] = []
         for wallet in wallets:
-            portfolio_response = portfolio_repo.latest_snapshot(portfolio_address=wallet)
+            portfolio_response = await current_portfolio(wallet_address=wallet, allow_env_fallback=False, force_refresh=True)
             risk_response = risk_repo.latest_assessment()
             if portfolio_response is None or risk_response is None:
                 continue

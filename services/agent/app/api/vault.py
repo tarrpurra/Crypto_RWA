@@ -92,6 +92,20 @@ def _summary_metadata(summary) -> dict[str, object]:
     }
 
 
+def _fallback_invested_to_live_value(total_value_usd: Decimal, metadata: dict[str, object]) -> tuple[str | None, str | None, dict[str, object]]:
+    if total_value_usd <= 0:
+        return None, None, metadata
+    enriched = dict(metadata)
+    enriched["cost_basis_tracking"] = False
+    enriched["cost_basis_tracking_mode"] = "live_value_fallback"
+    enriched["cost_basis_reconciled"] = True
+    enriched["cost_basis_reconciliation_reason"] = (
+        "No recorded vault deposit or withdrawal history was available, so the dashboard is using the current live vault value as invested capital."
+    )
+    value = _format_decimal(total_value_usd)
+    return value, "0", enriched
+
+
 async def _refresh_portfolio_snapshot_after_flow(user_address: str) -> None:
     try:
         await current_portfolio(wallet_address=user_address, force_refresh=True)
@@ -391,6 +405,12 @@ async def get_vault_balance_snapshot(user_address: str | None = None) -> VaultBa
             metadata["cost_basis_reconciliation_reason"] = (
                 "Historical vault flow basis became negative after withdrawals exceeded recorded deposits, so the dashboard reset invested capital to zero."
             )
+        elif summary.flow_count == 0:
+            invested_amount_usd, pnl_usd, metadata = _fallback_invested_to_live_value(total_value, metadata)
+            pnl_percent = "0" if invested_amount_usd is not None else None
+    elif total_value > 0:
+        invested_amount_usd, pnl_usd, metadata = _fallback_invested_to_live_value(total_value, metadata)
+        pnl_percent = "0" if invested_amount_usd is not None else None
 
     return VaultBalanceResponse(
         status="ok",
